@@ -38,6 +38,12 @@ catch { Write-Warning "Server did not answer yet. Check: Get-Service ThirdWheel 
 if ($Domain) {
     $caddyDir = "$root\caddy"; New-Item -ItemType Directory -Force $caddyDir | Out-Null
     Set-Content "$caddyDir\Caddyfile" "$Domain {`n    reverse_proxy 127.0.0.1:5173`n}`n" -Encoding ascii
+    if (-not (Test-Path "$caddyDir\caddy.exe")) {
+        Write-Host "Downloading Caddy from caddyserver.com ..."
+        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+        try { Invoke-WebRequest "https://caddyserver.com/api/download?os=windows&arch=amd64" -OutFile "$caddyDir\caddy.exe" -UseBasicParsing }
+        catch { Write-Warning "Download failed ($($_.Exception.Message)). Save caddy.exe into $caddyDir manually and re-run." }
+    }
     if (Test-Path "$caddyDir\caddy.exe") {
         if (-not (Get-Service caddy -ErrorAction SilentlyContinue)) { sc.exe create caddy start= auto binPath= "$caddyDir\caddy.exe run --config $caddyDir\Caddyfile" | Out-Null }
         Restart-Service caddy -ErrorAction SilentlyContinue; if ((Get-Service caddy).Status -ne 'Running') { Start-Service caddy }
