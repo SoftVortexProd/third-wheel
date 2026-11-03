@@ -36,6 +36,12 @@ From then on:
 .\deploy\sync.ps1           # build, upload, install and restart (data is kept)
 .\deploy\sync.ps1 -Watch    # keep running and redeploy automatically whenever server code changes
 .\deploy\sync.ps1 -DryRun   # build and show what would happen, without connecting
+.\deploy\sync.ps1 -TenorKey <your key>   # turn on the GIF picker; the key is stored on the server and later syncs keep it
+```
+
+(You can also set `$env:TW_TENOR_KEY` on your PC instead of typing the key each time. It's never printed or saved in a file.)
+
+```powershell
 ```
 
 Without the SSH setup, update manually by repeating steps 1–3 above (data is kept).
