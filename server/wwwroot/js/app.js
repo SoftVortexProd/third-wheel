@@ -1,4 +1,4 @@
-﻿/* Third Wheel — client. DOM is built with createElement/textContent only (no innerHTML). */
+/* Third Wheel — client. DOM is built with createElement/textContent only (no innerHTML). */
 (() => {
 'use strict';
 
@@ -57,7 +57,9 @@ function ink(c) {
   const [r, g, b] = [0, 2, 4].map(i => parseInt(x.substr(i, 2), 16) || 0);
   return (0.299 * r + 0.587 * g + 0.114 * b) > 150 ? '#000000' : '#ffffff';
 }
-const STATUS = { online: 'Online', idle: 'Idle', dnd: 'Do not disturb', offline: 'Offline', invisible: 'Offline' };
+/* Translate a UI string (English text is the key). tr('Hi {name}', { name }) interpolates. Falls back to English. */
+const tr = (key, v) => (window.TWPrefs ? TWPrefs.t(key, v) : (v && typeof v === 'object' ? key.replace(/\{(\w+)\}/g, (m, k) => (k in v ? v[k] : m)) : (v || key)));
+const STATUS = { get online() { return tr('Online'); }, get idle() { return tr('Idle'); }, get dnd() { return tr('Do not disturb'); }, get offline() { return tr('Offline'); }, get invisible() { return tr('Offline'); } };
 const statusKey = (s) => (STATUS[s] ? (s === 'invisible' ? 'offline' : s) : 'offline');
 const reduceMotion = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
 let uid = 0;
@@ -566,22 +568,22 @@ const USER_RE = /^[A-Za-z0-9_.-]{3,20}$/;
 function renderAuth() {
   clearTimers(); S.me = null;
   let mode = 'login';
-  const user = h('input', { class: 'input', type: 'text', autocomplete: 'username', maxlength: 20, autocapitalize: 'none', spellcheck: 'false', placeholder: 'your_name' });
-  const pass = h('input', { class: 'input', type: 'password', autocomplete: 'current-password', maxlength: 128, placeholder: 'At least 8 characters' });
-  const fu = field('Username', user, '3–20 letters, numbers, . _ -');
-  const fp = field('Password', pass);
+  const user = h('input', { class: 'input', type: 'text', autocomplete: 'username', maxlength: 20, autocapitalize: 'none', spellcheck: 'false', placeholder: tr('your_name') });
+  const pass = h('input', { class: 'input', type: 'password', autocomplete: 'current-password', maxlength: 128, placeholder: tr('At least 8 characters') });
+  const fu = field(tr('Username'), user, tr('3–20 letters, numbers, . _ -'));
+  const fp = field(tr('Password'), pass);
   const err = h('div', { class: 'form-error', role: 'alert' });
-  const submit = h('button', { class: 'btn block', type: 'submit' }, 'Log in');
-  const tb = tabs([['login', 'Log in'], ['signup', 'Sign up']], 'login', (k) => {
-    mode = k; submit.textContent = k === 'login' ? 'Log in' : 'Create account'; err.textContent = '';
+  const submit = h('button', { class: 'btn block', type: 'submit' }, tr('Log in'));
+  const tb = tabs([['login', tr('Log in')], ['signup', tr('Sign up')]], 'login', (k) => {
+    mode = k; submit.textContent = k === 'login' ? tr('Log in') : tr('Create account'); err.textContent = '';
     pass.autocomplete = k === 'login' ? 'current-password' : 'new-password';
     fu.setError(''); fp.setError('');
-  }, 'Account');
+  }, tr('Account'));
   const form = h('form', { novalidate: true, onsubmit: async (e) => {
     e.preventDefault(); err.textContent = '';
     const u = user.value.trim(), p = pass.value;
-    const okU = fu.setError(USER_RE.test(u) ? '' : 'Use 3–20 letters, numbers, . _ or -');
-    const okP = fp.setError(p.length >= 8 ? '' : 'Password must be at least 8 characters');
+    const okU = fu.setError(USER_RE.test(u) ? '' : tr('Use 3–20 letters, numbers, . _ or -'));
+    const okP = fp.setError(p.length >= 8 ? '' : tr('Password must be at least 8 characters'));
     if (!okU || !okP) return;
     submit.disabled = true; const idle = TWM.busyBtn(submit);
     try {
@@ -593,7 +595,7 @@ function renderAuth() {
   document.title = 'Third Wheel';
   const card = h('div', { class: 'card auth-card' },
     h('div', { class: 'brand' }, h('img', { src: 'icon.svg', alt: '', width: 32, height: 32 }), 'Third Wheel'),
-    h('p', { class: 'muted', style: 'margin-top:8px', text: 'Find a group that plays the way you do.' }),
+    h('p', { class: 'muted', style: 'margin-top:8px', text: tr('Find a group that plays the way you do.') }),
     tb, form);
   TWM.transition(() => $('#app').replaceChildren(h('main', { class: 'center-screen' }, card)));
   user.focus();
@@ -673,33 +675,33 @@ function buildShell() {
   E.fList = h('div', { class: 'friends-scroll' });
   E.fCount = h('span', { class: 'muted small' });
   E.user = h('div', { class: 'userpanel' });
-  E.q = h('input', { class: 'input qinput', type: 'search', placeholder: 'Search groups and people', 'aria-label': 'Search groups and people', autocomplete: 'off', maxlength: 60 });
+  E.q = h('input', { class: 'input qinput', type: 'search', placeholder: tr('Search groups and people'), 'aria-label': tr('Search groups and people'), autocomplete: 'off', maxlength: 60 });
   E.q.addEventListener('input', () => setQuery(E.q.value, E.q));
   E.q.addEventListener('focus', () => { if (!location.hash.startsWith('#/search')) go('#/search'); });
   E.q.addEventListener('keydown', (e) => { if (e.key === 'Enter') runSearch(true); });
 
   const rail = h('nav', { class: 'rail', 'aria-label': 'Main' },
     h('div', { class: 'brand' }, h('img', { src: 'icon.svg', alt: '', width: 32, height: 32 }), 'Third Wheel'),
-    h('div', { class: 'nav-main' }, navLink('#/feed', 'feed', 'Feed'), navLink('#/search', 'search', 'Find groups'), navLink('#/friends', 'users', 'Friends & invites')),
-    h('div', { class: 'rail-head' }, 'My groups', h('button', { class: 'icon-btn', type: 'button', 'aria-label': 'Create a group', onclick: openCreate }, icon('plus', 16))),
+    h('div', { class: 'nav-main' }, navLink('#/feed', 'feed', tr('Feed')), navLink('#/search', 'search', tr('Find groups')), navLink('#/friends', 'users', tr('Friends & invites'))),
+    h('div', { class: 'rail-head' }, tr('My groups'), h('button', { class: 'icon-btn', type: 'button', 'aria-label': tr('Create a group'), onclick: openCreate }, icon('plus', 16))),
     E.railGroups, E.user);
 
   const topbar = h('header', { class: 'topbar' },
     h('div', { class: 'brand brand-mobile' }, h('img', { src: 'icon.svg', alt: '', width: 28, height: 28 }), 'Third Wheel'),
     h('div', { class: 'searchbox', role: 'search' }, h('span', { class: 'ico' }, icon('search', 18)), E.q),
     h('div', { class: 'actions' },
-      S.me.isAdmin ? h('a', { class: 'icon-btn', href: '#/admin', 'aria-label': 'Admin panel' }, icon('shield')) : null,
-      h('a', { class: 'icon-btn', href: '#/friends', 'aria-label': 'Friend requests and invites' }, icon('bell'), E.badge),
-      h('a', { class: 'icon-btn', href: '#/settings', 'aria-label': 'Settings' }, icon('gear'))));
+      S.me.isAdmin ? h('a', { class: 'icon-btn', href: '#/admin', 'aria-label': tr('Admin panel') }, icon('shield')) : null,
+      h('a', { class: 'icon-btn', href: '#/friends', 'aria-label': tr('Friend requests and invites') }, icon('bell'), E.badge),
+      h('a', { class: 'icon-btn', href: '#/settings', 'aria-label': tr('Settings') }, icon('gear'))));
 
-  const panel = h('aside', { class: 'friends-panel', 'aria-label': 'Friends' },
-    h('header', {}, h('h3', { text: 'Friends' }), E.fCount), E.fList);
+  const panel = h('aside', { class: 'friends-panel', 'aria-label': tr('Friends') },
+    h('header', {}, h('h3', { text: tr('Friends') }), E.fCount), E.fList);
 
   const bnItem = (href, ico, label) => h('a', { class: 'bn-item', href, 'data-route': href }, h('span', { class: 'bn-ico' }, icon(ico, 24)), label);
   const bottom = h('nav', { class: 'bottom-nav', 'aria-label': 'Main' },
-    bnItem('#/feed', 'feed', 'Feed'),
-    h('a', { class: 'bn-search', href: '#/search', 'data-route': '#/search', 'aria-label': 'Search' }, icon('search', 28)),
-    bnItem('#/friends', 'user', 'Friends'));
+    bnItem('#/feed', 'feed', tr('Feed')),
+    h('a', { class: 'bn-search', href: '#/search', 'data-route': '#/search', 'aria-label': tr('Search') }, icon('search', 28)),
+    bnItem('#/friends', 'user', tr('Friends')));
 
   const shell = h('div', { class: 'shell enter' }, rail, h('div', { class: 'main' }, topbar, E.view), panel, bottom);
   $('#app').replaceChildren(shell);
@@ -709,8 +711,8 @@ function buildShell() {
 function renderUserPanel() {
   const me = S.me; if (!me || !S.el.user) return;
   S.el.user.replaceChildren(avatar(me, 'sm', false),
-    h('div', { class: 'meta' }, h('b', { text: nm(me) }), h('span', { class: 'muted small', text: me.playing ? 'Playing ' + T(me.playing) : STATUS[statusKey(me.status)] })),
-    h('a', { class: 'icon-btn', href: '#/settings', 'aria-label': 'Settings' }, icon('gear', 20)));
+    h('div', { class: 'meta' }, h('b', { text: nm(me) }), h('span', { class: 'muted small', text: me.playing ? tr('Playing {game}', { game: T(me.playing) }) : STATUS[statusKey(me.status)] })),
+    h('a', { class: 'icon-btn', href: '#/settings', 'aria-label': tr('Settings') }, icon('gear', 20)));
 }
 function renderRail() {
   const rg = S.el.railGroups; if (!rg) return;
@@ -724,7 +726,7 @@ function renderRail() {
       tile.style.background = safeColor(g.color); tile.style.color = ink(g.color);
       return h('a', { class: 'nav-link', href: '#/group/' + enc(g.id), title: T(g.name), 'data-key': 'g' + g.id, 'data-gid': g.id }, tile, h('span', { class: 't', text: T(g.name) }));
     });
-    TWM.flip(rg, '.nav-link', () => rg.replaceChildren(...(list.length ? list : [h('p', { class: 'muted small', style: 'padding:8px 12px', text: 'No groups yet. Find one or create your own.' })])));
+    TWM.flip(rg, '.nav-link', () => rg.replaceChildren(...(list.length ? list : [h('p', { class: 'muted small', style: 'padding:8px 12px', text: tr('No groups yet. Find one or create your own.') })])));
   }
   rg.querySelectorAll('.nav-link[data-gid]').forEach(a => {
     if (onGroup && a.dataset.gid === cur) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current');
@@ -736,10 +738,10 @@ function renderFriends() {
   const playing = fs.filter(f => on(f) && f.playing), online = fs.filter(f => on(f) && !f.playing), off = fs.filter(f => !on(f));
   const frag = [];
   const grp = (t, a) => { if (a.length) frag.push(h('div', { class: 'fgroup-title', text: `${t} — ${a.length}` }), ...a.map(f => personRow(f, { href: '#/dm/' + enc(f.id) }))); };
-  grp('Playing now', playing); grp('Online', online); grp('Offline', off);
-  if (!fs.length) frag.push(emptyState('No friends yet', 'Search for people and send a request.'));
+  grp(tr('Playing now'), playing); grp(tr('Online'), online); grp(tr('Offline'), off);
+  if (!fs.length) frag.push(emptyState(tr('No friends yet'), tr('Search for people and send a request.')));
   TWM.flip(S.el.fList, '.frow', () => S.el.fList.replaceChildren(...frag));
-  S.el.fCount.textContent = `${fs.filter(on).length} online`;
+  S.el.fCount.textContent = tr('{n} online', { n: fs.filter(on).length });
 }
 function renderBadge() {
   const n = S.invites.length + S.reqs.incoming.length;
@@ -814,7 +816,7 @@ async function feedView(_, tok) {
   const list = h('div', { class: 'grid' + (back ? '' : ' stagger') });
   const recSlot = h('div', { class: 'rec-slot' });   // "Recommended for you" (profile.js)
   const empty =() => emptyState('Nothing here yet', 'Try searching for a game, or start a group of your own.', btn('Find groups', { onclick: () => go('#/search') }));
-  page.append(h('div', { class: 'page-head' }, h('div', {}, h('h1', { text: 'Your feed' }), h('p', { class: 'muted', text: 'Groups picked for your games, region and age.' })),
+  page.append(h('div', { class: 'page-head' }, h('div', {}, h('h1', { text: tr('Your feed') }), h('p', { class: 'muted', text: tr('Groups picked for your games, region and age.') })),
     btn('Create group', { icon: 'plus', onclick: openCreate })), recSlot, list);
   if (cached) { list.append(...cached.map(groupCard)); if (!back) stagger(list); }
   else list.append(h('span', { class: 'spinner', role: 'status', 'aria-label': 'Loading' }));
@@ -888,7 +890,7 @@ async function searchView(_, tok) {
   }
   renderResults = (r) => { last = { groups: r.groups || [], people: r.people || [] }; loaded = true; draw(); };
   const page = h('div', { class: 'page' },
-    h('div', { class: 'page-head' }, h('div', {}, h('h1', { text: 'Find your people' }), h('p', { class: 'muted', text: 'Filter by game, play style, region and age.' }))),
+    h('div', { class: 'page-head' }, h('div', {}, h('h1', { text: tr('Find your people') }), h('p', { class: 'muted', text: tr('Filter by game, play style, region and age.') }))),
     h('div', { class: 'searchbox search-query', role: 'search' }, h('span', { class: 'ico' }, icon('search', 18)), mq),
     filters, tb, results);
   show(page); draw();
@@ -1293,7 +1295,7 @@ async function friendsView(_, tok) {
         return h('a', { class: 'frow big', href: '#/group/' + enc(g.id) }, t, h('div', { class: 'meta' }, h('b', { text: T(g.name) }), h('span', { text: T(g.game) }))); })) : emptyState('No groups yet', 'Join one from the feed.'));
   }
   const peopleSlot = h('div', { class: 'rec-slot' });   // "People you may like" (profile.js)
-  show(h('div', { class: 'page' }, h('div', { class: 'page-head' }, h('div', {}, h('h1', { text: 'Friends & invites' }), h('p', { class: 'muted', text: 'Requests, group invites and the people you play with.' }))), profile, invBox, reqBox, addForm, peopleSlot, friendBox, groupBox));
+  show(h('div', { class: 'page' }, h('div', { class: 'page-head' }, h('div', {}, h('h1', { text: tr('Friends & invites') }), h('p', { class: 'muted', text: tr('Requests, group invites and the people you play with.') }))), profile, invBox, reqBox, addForm, peopleSlot, friendBox, groupBox));
   if (window.TWProfile) TWProfile.peopleRecs(peopleSlot, () => stale(tok));
   S.onData = draw; draw();
   await loadSocial(); if (stale(tok)) S.onData = null;
@@ -1327,82 +1329,10 @@ async function sendAvatar(blob) {
   return data;
 }
 
-async function settingsView() {
-  const me = S.me;
-  /* ----- profile picture ----- */
-  const prev = h('div', { class: 'avatar-preview' });
-  const drawPrev = () => prev.replaceChildren(avatar(S.me, 'xl'));
-  drawPrev();
-  const file = h('input', { type: 'file', accept: 'image/png,image/jpeg,image/gif,image/webp', class: 'sr-only', tabindex: '-1', 'aria-label': 'Choose a profile picture' });
-  const upBtn = btn('Upload picture', { icon: 'plus', onclick: () => file.click() });
-  const rmBtn = btn('Remove', { cls: 'ghost', onclick: () => busy(rmBtn, async () => { S.me = await api('DELETE', '/api/me/avatar'); drawPrev(); renderUserPanel(); toast('Picture removed'); }) });
-  const who = h('p', { class: 'muted', text: 'Signed in as @' + T(me.username) });
-  const applyUser = () => { drawPrev(); renderUserPanel(); rmBtn.hidden = !S.me.avatar; who.textContent = 'Signed in as @' + T(S.me.username); };
-  file.addEventListener('change', () => {
-    const f = file.files && file.files[0]; file.value = ''; if (!f) return;
-    busy(upBtn, async () => { S.me = await sendAvatar(await prepAvatar(f)); applyUser(); toast('Profile picture updated'); });
-  });
-  rmBtn.hidden = !me.avatar;
-  const picCard = h('div', { class: 'card pic-card' }, prev,
-    h('div', { class: 'pic-meta' }, h('h3', { text: 'Profile picture' }),
-      h('p', { class: 'muted small', text: 'PNG, JPG, WebP or GIF up to 5 MB. GIFs stay animated.' }),
-      h('div', { class: 'row', style: 'gap:8px;flex:none;flex-wrap:wrap' }, upBtn, rmBtn), file));
-
-  /* ----- display name + username (password required) ----- */
-  const dn = h('input', { class: 'input', type: 'text', maxlength: 32, value: T(me.displayName || ''), placeholder: T(me.username), autocomplete: 'nickname' });
-  const un = h('input', { class: 'input', type: 'text', maxlength: 20, value: T(me.username), autocapitalize: 'none', spellcheck: 'false', autocomplete: 'off' });
-  const pw = h('input', { class: 'input', type: 'password', maxlength: 128, placeholder: 'Your current password', autocomplete: 'current-password' });
-  const fdn = field('Display name', dn, 'Shown to friends and in chats. Leave empty to use your username.');
-  const fun = field('Username', un, '3–20 letters, numbers or underscores. Friends find you with this.');
-  const fpw = field('Current password', pw, 'Required to change your display name or username.');
-  const idSave = h('button', { class: 'btn', type: 'submit' }, 'Save name');
-  const idForm = h('form', { class: 'stack', novalidate: true, onsubmit: async (e) => {
-    e.preventDefault();
-    const okU = fun.setError(/^[A-Za-z0-9_]{3,20}$/.test(un.value.trim()) ? '' : 'Use 3–20 letters, numbers or underscores');
-    const okD = fdn.setError(dn.value.trim().length <= 32 ? '' : 'At most 32 characters');
-    const okP = fpw.setError(pw.value ? '' : 'Enter your password to confirm');
-    if (!(okU && okD && okP)) return;
-    idSave.disabled = true; const idle = TWM.busyBtn(idSave);
-    try {
-      S.me = await api('PUT', '/api/me/profile', { displayName: dn.value.trim(), username: un.value.trim(), password: pw.value });
-      pw.value = ''; applyUser(); loadSocial().catch(() => {}); toast('Name updated');
-    } catch (ex) {
-      if (/password/i.test(ex.message)) fpw.setError(ex.message); else if (/username/i.test(ex.message)) fun.setError(ex.message); else toast(ex.message, 'error');
-    } finally { idSave.disabled = false; idle(); }
-  } }, h('div', { class: 'row' }, fdn, fun), fpw, h('div', {}, idSave));
-  const idCard = h('div', { class: 'card', style: 'padding:24px' }, h('h3', { text: 'Name', style: 'margin-bottom:12px' }), idForm);
-
-  const region = selectEl(S.meta.regions, me.region || '', 'Choose a region');
-  const age = h('input', { class: 'input', type: 'number', min: 13, max: 99, value: me.age || '', inputmode: 'numeric' });
-  const status = selectEl([['online', 'Online'], ['idle', 'Idle'], ['dnd', 'Do not disturb'], ['offline', 'Appear offline']], statusKey(me.status) || 'online');
-  const playing = h('input', { class: 'input', type: 'text', maxlength: 40, value: T(me.playing || ''), placeholder: 'What are you playing right now?', autocomplete: 'off' });
-  suggestInput(playing, () => S.meta.games.map(g => [gname(g), gname(g)]));
-  const gp = gamePicker({ multi: true, value: me.favoriteGames || [] });
-  const fr = field('Region', region), fa = field('Age', age), fs = field('Status', status), fp = field('Currently playing', playing, 'Shown next to your name in friends lists.');
-  const motion = selectEl([['system', 'Follow system'], ['on', 'Always on'], ['off', 'Off']], TWM.motionPref());
-  motion.addEventListener('change', () => { TWM.setMotionPref(motion.value); toast(motion.value === 'off' ? 'Animations off' : motion.value === 'on' ? 'Animations always on' : 'Animations follow your system'); });
-  const fm = field('Animations', motion, 'Use “Always on” if your system turns animations off.');
-  const detect = window.__TW_DESKTOP ? h('div', { class: 'field' }, h('span', { class: 'label', text: 'Game detection' }),
-    h('div', { class: 'switch-row' }, switchEl(autoOn(), (v) => { try { localStorage.setItem('tw_autogame', v ? 'on' : 'off'); } catch { /* ignore */ } applyAutoGame(); }, 'Detect the game I’m playing automatically'),
-      h('span', { class: 'muted small', text: 'Shows the game you’re playing as your status. Only the game’s name is shared.' }))) : null;
-  const save = h('button', { class: 'btn', type: 'submit' }, 'Save changes');
-  const form = h('form', { class: 'stack', novalidate: true, onsubmit: async (e) => {
-    e.preventDefault();
-    const a = parseInt(age.value, 10);
-    const ok = [fr.setError(region.value ? '' : 'Choose a region'), fa.setError(a >= 13 && a <= 99 ? '' : 'Enter an age from 13 to 99')].every(Boolean);
-    if (!ok) return;
-    await busy(save, async () => {
-      await api('PUT', '/api/me/settings', { region: region.value, age: a, favoriteGames: gp.value, playing: playing.value.trim(), status: status.value, onboarded: true });
-      S.me = await api('GET', '/api/me'); renderUserPanel(); toast('Settings saved'); document.dispatchEvent(new Event('tw:me'));
-    });
-  } }, h('div', { class: 'row' }, fr, fa), h('div', { class: 'row' }, fs, fp), detect, fm,
-    h('div', { class: 'field' }, h('span', { class: 'label', text: 'Favorite games' }), gp), h('div', {}, save));
-  const extrasSlot = h('div', { class: 'stack', style: 'gap:16px' });   // game ranks/roles, play style, availability (profile.js)
-  if (window.TWProfile) TWProfile.settings(extrasSlot);
-  const out = btn('Log out', { cls: 'danger', onclick: async (e) => { try { await api('POST', '/api/auth/logout'); } catch { /* ignore */ } loggedOut(); } });
-  show(h('div', { class: 'page', style: 'max-width:720px' }, h('div', { class: 'page-head' }, h('div', {}, h('h1', { text: 'Settings' }), who)),
-    picCard, idCard, window.TWAccount ? TWAccount.card() : null,
-    h('div', { class: 'card', style: 'padding:24px' }, form), extrasSlot, h('div', { class: 'card', style: 'padding:20px;display:flex;justify-content:space-between;align-items:center;gap:12px' }, h('div', {}, h('h3', { text: 'Log out' }), h('p', { class: 'muted small', text: 'You’ll need your password to come back.' })), out)));
+/* The Settings page lives in js/settings.js (left sidebar of tabs). `tab` comes from #/settings/<tab>. */
+async function settingsView(tab) {
+  if (window.TWSettings) return TWSettings.view(tab);
+  show(h('div', { class: 'page' }, emptyState(tr('That didn’t load'), tr('Please try again.'))));
 }
 
 /* ================= data + polling ================= */
@@ -1469,6 +1399,7 @@ async function start() {
     showMaintenance(); return;
   }
   S.maint = false;
+  if (window.TWPrefs) await TWPrefs.load();   // accent colour, text size, language: applied before the first screen is built
   if (!S.me.onboarded) { renderOnboarding(); return; }
   buildShell();
   try { await Promise.all([loadSocial(), refreshMine()]); } catch (e) { toast(e.message, 'error'); }
@@ -1480,6 +1411,11 @@ async function start() {
 
 document.addEventListener('click', (e) => { const c = e.target.closest && e.target.closest('.gcard'); if (c) S.morphFrom = c; }, true);
 window.addEventListener('hashchange', route);
+/* Language switched (Settings -> Language): rebuild whatever is on screen in the new language. */
+document.addEventListener('tw:lang', () => {
+  if (!S.me) { renderAuth(); return; }
+  if (S.el.view) { buildShell(); route(); }
+});
 document.addEventListener('visibilitychange', () => { if (!document.hidden) poll(); });
 /* Shared helpers for the feature modules (js/chat.js, groups.js, profile.js, notify.js), which load after this file.
    Read S/me through the getters; they change after login. */
@@ -1488,7 +1424,8 @@ window.TW = {
   openSheet, confirmSheet, btn, busy, field, tabs, selectEl, suggestInput, gamePicker, switchEl, emptyState, stagger, when,
   personRow, groupCard, makeChat, openProfile, go, show, route, stale,
   loadSocial, refreshMine, renderFriends, renderBadge, renderUserPanel, applyAutoGame,
-  get S() { return S; }, get me() { return S.me; }
+  t: tr, loggedOut, prepAvatar, sendAvatar, autoOn,
+  get S() { return S; }, get me() { return S.me; }, set me(u) { S.me = u; }
 };
 
 (async function boot() {

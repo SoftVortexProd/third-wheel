@@ -323,11 +323,10 @@ function make(cfg) {
 /* ======================================================================== */
 const untilText = (u) => u === 'forever' ? 'Active, no expiry' : 'Active until ' + new Date(u).toLocaleDateString(undefined, { day: 'numeric', month: 'long', year: 'numeric' });
 
-function settingsCard() {
-  const page = document.querySelector('#view .page');
-  if (!page || page.querySelector('.rckt-card')) return;
-  const title = page.querySelector('.page-head h1');
-  if (!title || title.textContent !== 'Settings') return;
+/* The Settings page announces each tab as it is built (`tw:settings-tab`); the RCKT card lives in "Account & security". */
+document.addEventListener('tw:settings-tab', (e) => { if (e.detail.tab === 'account') settingsCard(e.detail.root); });
+function settingsCard(root) {
+  if (root.querySelector('.rckt-card')) return;
   const status = h('p', { class: 'muted' });
   const paint = (me) => {
     status.textContent = me.rckt ? untilText(me.rcktUntil || 'forever') : 'Not active. Ask an admin to give you RCKT.';
@@ -336,8 +335,7 @@ function settingsCard() {
   const card = h('div', { class: 'card rckt-card' }, h('div', { class: 'rckt-top' }, rcktBadge(), h('h3', { text: 'RCKT' })), status,
     h('ul', { class: 'perks' }, h('li', { text: 'Send GIFs in chats' }), h('li', { text: 'Upload files up to 250 MB (20 MB without RCKT)' })));
   paint(TW.me);
-  const anchor = page.querySelector('.pic-card') || page.querySelector('.page-head');
-  anchor.after(card);
+  root.prepend(card);
   refreshMe().then(paint);
 }
 
@@ -384,7 +382,7 @@ function profileBadge() {
 let queued = false;
 new MutationObserver(() => {
   if (queued) return; queued = true;
-  setTimeout(() => { queued = false; settingsCard(); adminButtons(); profileBadge(); }, 30);   // a timer, not rAF: rAF stops in hidden windows
+  setTimeout(() => { queued = false; adminButtons(); profileBadge(); }, 30);   // a timer, not rAF: rAF stops in hidden windows
 }).observe(document.body, { childList: true, subtree: true });
 
 window.TWChat = { make };

@@ -1,34 +1,35 @@
-﻿/* Account + admin tools: users change their password; admins edit a user's profile/settings/password and rename groups.
+/* Account + admin tools: users change their password; admins edit a user's profile/settings/password and rename groups.
    Loaded after app.js and uses its helpers through window.TW. */
 (() => {
 'use strict';
 const TW = window.TW;
+const t = TW.t;
 const { h, api, toast, btn, busy, field, selectEl, suggestInput, openSheet, confirmSheet, T, nm, avatar, enc } = TW;
 const gname = (g) => (typeof g === 'string' ? g : (g && g.name) || '');
 
 /* ---- Settings: change my password ---- */
 window.TWAccount = {
   card() {
-    const cur = h('input', { class: 'input', type: 'password', maxlength: 128, autocomplete: 'current-password', placeholder: 'Your current password' });
-    const next = h('input', { class: 'input', type: 'password', maxlength: 72, autocomplete: 'new-password', placeholder: 'At least 8 characters' });
-    const again = h('input', { class: 'input', type: 'password', maxlength: 72, autocomplete: 'new-password', placeholder: 'Type it again' });
-    const fc = field('Current password', cur), fn = field('New password', next, '8–72 characters.'), fa = field('Repeat new password', again);
-    const save = h('button', { class: 'btn', type: 'submit' }, 'Change password');
+    const cur = h('input', { class: 'input', type: 'password', maxlength: 128, autocomplete: 'current-password', placeholder: t('Your current password') });
+    const next = h('input', { class: 'input', type: 'password', maxlength: 72, autocomplete: 'new-password', placeholder: t('At least 8 characters') });
+    const again = h('input', { class: 'input', type: 'password', maxlength: 72, autocomplete: 'new-password', placeholder: t('Type it again') });
+    const fc = field(t('Current password'), cur), fn = field(t('New password'), next, t('8–72 characters.')), fa = field(t('Repeat new password'), again);
+    const save = h('button', { class: 'btn', type: 'submit' }, t('Change password'));
     const form = h('form', { class: 'stack', novalidate: true, onsubmit: async (e) => {
       e.preventDefault();
-      const ok = [fc.setError(cur.value ? '' : 'Enter your current password'),
-        fn.setError(next.value.length >= 8 && next.value.length <= 72 ? '' : 'Use 8–72 characters'),
-        fa.setError(again.value === next.value ? '' : 'The passwords don’t match')].every(Boolean);
+      const ok = [fc.setError(cur.value ? '' : t('Enter your current password')),
+        fn.setError(next.value.length >= 8 && next.value.length <= 72 ? '' : t('Use 8–72 characters')),
+        fa.setError(again.value === next.value ? '' : t('The passwords don’t match'))].every(Boolean);
       if (!ok) return;
       save.disabled = true; const idle = TWM.busyBtn(save);
       try {
         await api('POST', '/api/me/password', { current: cur.value, password: next.value });
         cur.value = next.value = again.value = '';
-        toast('Password changed. Other devices were signed out.');
+        toast(t('Password changed. Other devices were signed out.'));
       } catch (ex) { if (/current/i.test(ex.message)) fc.setError(ex.message); else toast(ex.message, 'error'); }
       finally { save.disabled = false; idle(); }
     } }, fc, h('div', { class: 'row' }, fn, fa), h('div', {}, save));
-    return h('div', { class: 'card', style: 'padding:24px' }, h('h3', { text: 'Password', style: 'margin-bottom:12px' }), form);
+    return h('div', { class: 'card', style: 'padding:24px' }, h('h3', { text: t('Password'), style: 'margin-bottom:12px' }), form);
   }
 };
 

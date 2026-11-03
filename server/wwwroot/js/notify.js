@@ -290,13 +290,13 @@ function fillMuted(box) {
     : [h('p', { class: 'muted small', text: 'Join a group to mute it here.' })]));
 }
 
-function injectSettings() {
-  if (location.hash !== '#/settings') return;
-  const page = document.querySelector('#view .page');
-  if (!page) return;
-  const existing = page.querySelector('.notify-settings');
-  if (existing) { fillMuted(existing.querySelector('.muted-groups')); return; }
-  const h1 = page.querySelector('h1'); if (!h1 || h1.textContent !== 'Settings') return;
+/* The Settings page announces each tab as it is built (`tw:settings-tab`); Notifications live in "Account & security". */
+document.addEventListener('tw:settings-tab', (e) => { if (e.detail.tab === 'account') e.detail.root.append(buildSettingsCard()); });
+function injectSettings() {   // keeps the muted-groups list in sync as my groups load
+  const existing = document.querySelector('#view .notify-settings');
+  if (existing) fillMuted(existing.querySelector('.muted-groups'));
+}
+function buildSettingsCard() {
   const row = (label, hint, key) => h('div', { class: 'nrow' }, h('div', { class: 'nrow-text' }, h('b', { text: label }), h('span', { class: 'muted small', text: hint })),
     TW.switchEl(!!prefs[key], (v) => { prefs[key] = v; savePrefs(); }, label));
   const muted = h('div', { class: 'stack muted-groups', style: 'gap:6px' });
@@ -310,8 +310,7 @@ function injectSettings() {
     row('Alerts when away', 'Show Windows / browser notifications while the app is in the background', 'system'),
     permissionBlock(),
     h('div', { class: 'section-title', text: 'Muted groups' }), muted);
-  const last = page.lastElementChild;
-  page.insertBefore(card, last && last.classList.contains('card') ? last : null);
+  return card;
 }
 
 /* ---------- keep everything decorated as the app re-renders lists ---------- */
