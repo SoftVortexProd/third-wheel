@@ -490,9 +490,10 @@ button.member:active { transform: scale(.94); }
 .profile-top.with-banner .avatar { border: 3px solid var(--color-raised); }
 
 /* Chips with game icons */
-.game-picker-chip .gp-thumb, .chip .gp-thumb { width: 18px; height: 18px; border-radius: 4px; overflow: hidden; display: inline-grid; place-items: center; flex: none; vertical-align: middle; margin-right: 2px; }
-.game-picker-chip .gp-thumb img, .chip .gp-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
-.game-picker-chip .gp-thumb svg, .chip .gp-thumb svg { width: 12px; height: 12px; }
+.game-picker-chip .gp-thumb, .chip .gp-thumb, .playing .gp-thumb, .status-line .gp-thumb { width: 16px; height: 16px; border-radius: 4px; overflow: hidden; display: inline-grid; place-items: center; flex: none; vertical-align: middle; margin-right: 3px; }
+.game-picker-chip .gp-thumb img, .chip .gp-thumb img, .playing .gp-thumb img, .status-line .gp-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.game-picker-chip .gp-thumb svg, .chip .gp-thumb svg, .playing .gp-thumb svg, .status-line .gp-thumb svg { width: 12px; height: 12px; }
+.status-line.playing { display: flex; align-items: center; gap: 4px; }
 
 /* Group icons in tiles */
 .gtile img { width: 100%; height: 100%; object-fit: cover; border-radius: inherit; display: block; }

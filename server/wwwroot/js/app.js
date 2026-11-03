@@ -630,7 +630,7 @@ function emptyState(title, text, action) {
 function stagger(list) { [...list.children].forEach((c, i) => c.style.setProperty('--i', Math.min(i, 12))); return list; }
 function personRow(p, o = {}) {
   const sk = statusKey(p.status);
-  const sub = p.playing ? h('span', { class: 'playing' }, icon('pad', 13), playingStatusText(p))
+  const sub = p.playing ? h('span', { class: 'playing' }, gameThumb(p.playing), h('span', { class: 'playing-txt', text: playingStatusText(p) }))
     : h('span', {}, o.region && p.region ? T(p.region) : STATUS[sk]);
 
   const av = avatar(p, o.big ? 'lg' : 'md', true);
@@ -820,7 +820,7 @@ function renderUserPanel() {
   av.addEventListener('click', () => openProfile(me.id));
   const meta = h('div', { class: 'meta', style: 'cursor:pointer', title: tr('View profile') },
     h('b', { text: nm(me) }),
-    h('span', { class: 'muted small', text: me.playing ? playingStatusText(me) : STATUS[statusKey(me.status)] })
+    me.playing ? h('span', { class: 'playing' }, gameThumb(me.playing), h('span', { class: 'playing-txt', text: playingStatusText(me) })) : h('span', { class: 'muted small', text: STATUS[statusKey(me.status)] })
   );
   meta.addEventListener('click', () => openProfile(me.id));
   S.el.user.replaceChildren(av, meta,
@@ -1127,7 +1127,7 @@ async function openProfile(id, opts) {
     bannerHeader,
     h('div', { class: 'profile-top' + (more ? ' has-more' : '') + (p.banner ? ' with-banner' : '') }, avatar(p, 'xl', true),
       h('div', { class: 'profile-names' }, h('h2', { text: nm(p) }), h('p', { class: 'muted', text: '@' + T(p.username) }),
-        h('p', { class: 'status-line' + (p.playing ? ' playing' : ''), text: p.playing ? playingStatusText(p) : STATUS[sk] })), more),
+        h('p', { class: 'status-line' + (p.playing ? ' playing' : '') }, p.playing ? gameThumb(p.playing) : null, h('span', { class: 'status-txt', text: p.playing ? playingStatusText(p) : STATUS[sk] }))), more),
     h('div', { class: 'prows' }, row('Region', T(p.region)), row('Age', p.ageRange), row('Member since', isNaN(joined) ? '' : joined.toLocaleDateString(undefined, { month: 'long', year: 'numeric' }))),
     games.length ? h('div', { class: 'section' }, h('div', { class: 'section-title', text: 'Favorite games' }), h('div', { class: 'chips favgames' }, games.map(g => h('span', { class: 'chip', style: 'display:inline-flex;align-items:center;gap:4px;' }, gameThumb(g), h('span', { class: 'chip-txt', text: T(g) }))))) : null,
     extra, actions);
@@ -1193,7 +1193,7 @@ async function dmView(id, tok) {
   const [p, first] = await Promise.all([api('GET', '/api/users/' + enc(id)), api('GET', '/api/dms/' + enc(id))]);
   if (stale(tok)) return;
   const sub = h('span', { class: 'muted small' });
-  const paintSub = () => { const f = S.friends.find(x => x.id === p.id) || p; sub.textContent = f.playing ? playingStatusText(f) : STATUS[statusKey(f.status)]; };
+  const paintSub = () => { const f = S.friends.find(x => x.id === p.id) || p; if (f.playing) { sub.className = 'playing'; sub.replaceChildren(gameThumb(f.playing), h('span', { class: 'playing-txt', text: playingStatusText(f) })); } else { sub.className = 'muted small'; sub.textContent = STATUS[statusKey(f.status)]; } };
   paintSub();
   const who = h('button', { class: 'dm-who', type: 'button', 'aria-label': 'View ' + nm(p) + '’s profile', onclick: () => openProfile(p.id) },
     avatar(p, 'md', true), h('span', { class: 'dm-names' }, h('b', { text: nm(p) }), sub));

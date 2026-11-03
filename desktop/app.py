@@ -6,10 +6,13 @@ import os
 import subprocess
 import sys
 import threading
+import shutil
+import tempfile
 import urllib.request
+import zipfile
 from pathlib import Path
 
-from PySide6.QtCore import QObject, QSettings, QTimer, QUrl, Qt, Signal
+from PySide6.QtCore import QObject, QSettings, QTimer, QUrl, Qt, Signal, QThread
 from PySide6.QtGui import QColor, QDesktopServices, QIcon, QPalette
 import re
 
@@ -27,7 +30,7 @@ except ImportError:  # pragma: no cover
 ROUTE_RE = re.compile(r"^#/(dm|group)/\d{1,12}$")
 
 # ---- update check: compares this version with the latest GitHub release (bump APP_VERSION when you publish a release) ----
-APP_VERSION = os.environ.get("TW_APP_VERSION", "0.4.0")
+APP_VERSION = os.environ.get("TW_APP_VERSION", "0.5.2")
 UPDATE_REPO = "SoftVortexProd/third-wheel"
 
 
@@ -35,8 +38,8 @@ def version_tuple(v: str) -> tuple:
     return tuple(int(p) for p in re.findall(r"\d+", v)[:4])
 
 
-def latest_release() -> tuple[str, str] | None:
-    """(version, release page url) of the newest GitHub release, or None. Network errors just mean 'no update info'."""
+def latest_release() -> tuple[str, str, str | None] | None:
+    """(version, release page url, download url) or None. Network errors just mean 'no update info'."""
     try:
         req = urllib.request.Request(f"https://api.github.com/repos/{UPDATE_REPO}/releases/latest",
                                      headers={"User-Agent": "ThirdWheel-Desktop", "Accept": "application/vnd.github+json"})
@@ -44,16 +47,126 @@ def latest_release() -> tuple[str, str] | None:
             data = json.load(r)
         tag = str(data.get("tag_name", "")).strip().lstrip("vV")
         url = str(data.get("html_url", ""))
-        # Only ever open links that really point at our own repository.
         if not tag or not url.startswith(f"https://github.com/{UPDATE_REPO}/"):
             return None
-        return tag, url
+
+        download_url = None
+        for asset in data.get("assets", []):
+            name = str(asset.get("name", "")).lower()
+            if name.endswith(".zip") and ("win64" in name or "desktop" in name):
+                download_url = str(asset.get("browser_download_url", ""))
+                break
+        if not download_url:
+            download_url = f"https://github.com/{UPDATE_REPO}/releases/download/v{tag}/ThirdWheel-desktop-v{tag}-win64.zip"
+
+        return tag, url, download_url
     except Exception:
         return None
 
 
 class UpdateBus(QObject):
-    found = Signal(str, str)   # version, release url (emitted from the worker thread, delivered on the UI thread)
+    found = Signal(str, str, str)   # version, release url, download url
+
+
+class UpdateInstaller(QThread):
+    progress = Signal(int, str)
+    finished = Signal(str)
+    failed = Signal(str)
+
+    def __init__(self, download_url: str):
+        super().__init__()
+        self.download_url = download_url
+
+    def run(self):
+        try:
+            self.progress.emit(5, "Connecting…")
+            tmp_dir = Path(tempfile.gettempdir()) / "ThirdWheel_update"
+            if tmp_dir.exists():
+                shutil.rmtree(tmp_dir, ignore_errors=True)
+            tmp_dir.mkdir(parents=True, exist_ok=True)
+            zip_path = tmp_dir / "update.zip"
+
+            req = urllib.request.Request(self.download_url, headers={"User-Agent": "ThirdWheel-Desktop"})
+            with urllib.request.urlopen(req, timeout=40) as resp:
+                total_size = int(resp.headers.get("content-length", 0))
+                downloaded = 0
+                chunk_size = 65536
+                with open(zip_path, "wb") as f:
+                    while True:
+                        chunk = resp.read(chunk_size)
+                        if not chunk:
+                            break
+                        f.write(chunk)
+                        downloaded += len(chunk)
+                        if total_size > 0:
+                            pct = min(85, int((downloaded / total_size) * 80) + 5)
+                            mb_done = downloaded / (1024 * 1024)
+                            mb_total = total_size / (1024 * 1024)
+                            self.progress.emit(pct, f"{mb_done:.1f} / {mb_total:.1f} MB")
+                        else:
+                            self.progress.emit(50, "Downloading…")
+
+            self.progress.emit(88, "Extracting files…")
+            extract_dir = tmp_dir / "extracted"
+            with zipfile.ZipFile(zip_path, "r") as zf:
+                zf.extractall(extract_dir)
+
+            src_dir = extract_dir
+            if not (src_dir / "ThirdWheel.exe").exists():
+                sub = src_dir / "ThirdWheel"
+                if (sub / "ThirdWheel.exe").exists():
+                    src_dir = sub
+                else:
+                    for p in extract_dir.glob("**/ThirdWheel.exe"):
+                        src_dir = p.parent
+                        break
+
+            if not (src_dir / "ThirdWheel.exe").exists():
+                self.failed.emit("Update archive does not contain ThirdWheel.exe.")
+                return
+
+            self.progress.emit(100, "Update ready.")
+            self.finished.emit(str(src_dir))
+        except Exception as ex:
+            self.failed.emit(str(ex))
+
+
+def apply_update_and_restart(src_dir: str):
+    app_dir = base_dir()
+    exe_path = sys.executable if getattr(sys, "frozen", False) else app_dir / "ThirdWheel.exe"
+    pid = os.getpid()
+
+    tmp = Path(tempfile.gettempdir()) / "ThirdWheel_update"
+    tmp.mkdir(parents=True, exist_ok=True)
+    helper_bat = tmp / "apply_update.bat"
+
+    bat_content = f"""@echo off
+set "PID={pid}"
+set "SRC={src_dir}"
+set "DST={app_dir}"
+set "EXE={exe_path}"
+
+:wait_loop
+tasklist /fi "pid eq %PID%" 2>NUL | findstr /i "%PID%" >NUL
+if not errorlevel 1 (
+    timeout /t 1 /nobreak >NUL
+    goto wait_loop
+)
+timeout /t 1 /nobreak >NUL
+
+robocopy "%SRC%" "%DST%" /e /r:5 /w:1 /np >NUL
+if errorlevel 8 (
+    xcopy /s /e /y /q "%SRC%\\*" "%DST%\\" >NUL
+)
+
+start "" "%EXE%"
+exit
+"""
+    helper_bat.write_text(bat_content, encoding="ascii", errors="replace")
+
+    flags = 0x08000000 | 0x00000200  # CREATE_NO_WINDOW | DETACHED_PROCESS
+    subprocess.Popen(["cmd.exe", "/c", str(helper_bat)], creationflags=flags)
+    QApplication.quit()
 
 
 LOCAL_URL = "http://127.0.0.1:5173"
@@ -268,6 +381,8 @@ class Main(QMainWindow):
         # A slim banner above the page announces new releases (hidden until the update check finds one).
         self.update_url = ""
         self.update_version = ""
+        self.download_url = ""
+        self.update_installer = None
         self.update_bar = QWidget()
         self.update_bar.setStyleSheet(f"background:#1b1e45;")
         bar = QHBoxLayout(self.update_bar)
@@ -277,15 +392,26 @@ class Main(QMainWindow):
         self.update_label.setWordWrap(True)
         self.update_label.setStyleSheet("color:#e8eaf2;font:600 13px 'Segoe UI';")
         bar.addWidget(self.update_label, 1)
-        flat = "QPushButton{border:0;border-radius:6px;padding:6px 12px;font:600 12px 'Segoe UI';%s}QPushButton:hover{background:%s;}"
-        for text, slot, style, hover in (("Download", self.open_update, "background:#4f5ee6;color:#fff;", "#6270ee"),
-                                         ("Skip this version", self.skip_update, "background:transparent;color:#aab2ff;", "#26294f"),
-                                         ("Later", self.hide_update, "background:transparent;color:#aab2ff;", "#26294f")):
-            b = QPushButton(text)
-            b.setCursor(Qt.PointingHandCursor)
-            b.setStyleSheet(flat % (style, hover))
-            b.clicked.connect(slot)
-            bar.addWidget(b)
+
+        flat = "QPushButton{border:0;border-radius:6px;padding:6px 12px;font:600 12px 'Segoe UI';%s}QPushButton:hover{background:%s;}QPushButton:disabled{opacity:0.6;background:#32366b;color:#8f97cc;}"
+        self.btn_update = QPushButton("Update & restart")
+        self.btn_update.setCursor(Qt.PointingHandCursor)
+        self.btn_update.setStyleSheet(flat % ("background:#4f5ee6;color:#fff;", "#6270ee"))
+        self.btn_update.clicked.connect(self.start_update)
+
+        self.btn_skip = QPushButton("Skip this version")
+        self.btn_skip.setCursor(Qt.PointingHandCursor)
+        self.btn_skip.setStyleSheet(flat % ("background:transparent;color:#aab2ff;", "#26294f"))
+        self.btn_skip.clicked.connect(self.skip_update)
+
+        self.btn_later = QPushButton("Later")
+        self.btn_later.setCursor(Qt.PointingHandCursor)
+        self.btn_later.setStyleSheet(flat % ("background:transparent;color:#aab2ff;", "#26294f"))
+        self.btn_later.clicked.connect(self.hide_update)
+
+        bar.addWidget(self.btn_update)
+        bar.addWidget(self.btn_skip)
+        bar.addWidget(self.btn_later)
         self.update_bar.hide()
         holder = QWidget()
         col = QVBoxLayout(holder)
@@ -456,12 +582,59 @@ class Main(QMainWindow):
         if info and version_tuple(info[0]) > version_tuple(APP_VERSION):
             self.update_bus.found.emit(*info)
 
-    def show_update(self, version: str, url: str):
+    def show_update(self, version: str, url: str, download_url: str = ""):
         if self.settings.value("skippedVersion") == version:
             return
-        self.update_version, self.update_url = version, url
+        self.update_version, self.update_url, self.download_url = version, url, download_url
         self.update_label.setText(f"Third Wheel {version} is available (you have {APP_VERSION}).")
+        self.btn_update.setText("Update & restart")
+        self.btn_update.setEnabled(True)
+        self.btn_skip.show()
+        self.btn_later.show()
         self.update_bar.show()
+
+    def start_update(self):
+        if not getattr(sys, "frozen", False):
+            if self.update_url:
+                QDesktopServices.openUrl(QUrl(self.update_url))
+            self.update_bar.hide()
+            return
+        if not self.download_url:
+            if self.update_url:
+                QDesktopServices.openUrl(QUrl(self.update_url))
+            self.update_bar.hide()
+            return
+
+        self.btn_update.setEnabled(False)
+        self.btn_update.setText("Connecting…")
+        self.btn_skip.hide()
+        self.btn_later.hide()
+
+        self.update_installer = UpdateInstaller(self.download_url)
+        self.update_installer.progress.connect(self._on_update_progress)
+        self.update_installer.finished.connect(self._on_update_ready)
+        self.update_installer.failed.connect(self._on_update_failed)
+        self.update_installer.start()
+
+    def _on_update_progress(self, pct: int, msg: str):
+        self.update_label.setText(f"Updating to {self.update_version}… {msg}")
+        self.btn_update.setText(f"{pct}%")
+
+    def _on_update_ready(self, src_dir: str):
+        self.update_label.setText("Update ready! Restarting Third Wheel…")
+        self.btn_update.setText("Restarting…")
+        QTimer.singleShot(500, lambda: apply_update_and_restart(src_dir))
+
+    def _on_update_failed(self, err: str):
+        self.update_label.setText(f"Auto-update failed ({err[:60]}).")
+        self.btn_update.setText("Download manually")
+        self.btn_update.setEnabled(True)
+        try:
+            self.btn_update.clicked.disconnect()
+        except Exception:
+            pass
+        self.btn_update.clicked.connect(self.open_update)
+        self.btn_later.show()
 
     def open_update(self):
         if self.update_url:

@@ -186,7 +186,6 @@ public static class GamesApi
             if (r["cover"] is byte[] cachedCover && cachedCover.Length > 0)
             {
                 c.Response.Headers["Cache-Control"] = "public, max-age=604800, immutable";
-                c.Response.Headers["Content-Security-Policy"] = "default-src 'none'; sandbox";
                 return Results.File(cachedCover, (string?)r["coverMime"] ?? "image/jpeg");
             }
 
@@ -205,7 +204,6 @@ public static class GamesApi
                             Db.Exec("UPDATE games SET cover=@c, coverMime='image/jpeg' WHERE id=@i",
                                 ("@c", bytes), ("@i", id));
                             c.Response.Headers["Cache-Control"] = "public, max-age=604800, immutable";
-                            c.Response.Headers["Content-Security-Policy"] = "default-src 'none'; sandbox";
                             return Results.File(bytes, "image/jpeg");
                         }
                     }
@@ -245,19 +243,79 @@ public static class GamesApi
 
     static IResult SvgPlaceholder(HttpContext c, string name)
     {
-        var words = name.Split(new[] { ' ', '-', '_' }, StringSplitOptions.RemoveEmptyEntries);
-        var initials = string.Join("", words.Take(3).Select(w => char.ToUpperInvariant(w[0])));
-        if (string.IsNullOrEmpty(initials)) initials = "G";
+        var lower = name.Trim().ToLowerInvariant();
+        string svg;
+        if (lower.Contains("minecraft") || lower.Contains("lunar client"))
+        {
+            svg = @"<svg xmlns=""http://www.w3.org/2000/svg"" width=""231"" height=""87"" viewBox=""0 0 231 87"">
+  <rect width=""100%"" height=""100%"" fill=""#151912""/>
+  <g transform=""translate(18, 19)"">
+    <rect width=""48"" height=""48"" rx=""6"" fill=""#573d26""/>
+    <rect width=""48"" height=""18"" rx=""3"" fill=""#5c9e31""/>
+    <rect x=""6"" y=""18"" width=""8"" height=""8"" fill=""#5c9e31""/>
+    <rect x=""22"" y=""18"" width=""10"" height=""10"" fill=""#5c9e31""/>
+    <rect x=""36"" y=""18"" width=""8"" height=""6"" fill=""#5c9e31""/>
+  </g>
+  <text x=""78"" y=""51"" fill=""#8dd95b"" font-family=""system-ui, -apple-system, sans-serif"" font-size=""19"" font-weight=""700"">Minecraft</text>
+</svg>";
+        }
+        else if (lower.Contains("roblox"))
+        {
+            svg = @"<svg xmlns=""http://www.w3.org/2000/svg"" width=""231"" height=""87"" viewBox=""0 0 231 87"">
+  <rect width=""100%"" height=""100%"" fill=""#121316""/>
+  <g transform=""translate(20, 19) rotate(-14, 24, 24)"">
+    <rect x=""2"" y=""2"" width=""44"" height=""44"" rx=""8"" fill=""#e2231a""/>
+    <rect x=""17"" y=""17"" width=""14"" height=""14"" rx=""3"" fill=""#121316""/>
+  </g>
+  <text x=""78"" y=""51"" fill=""#ffffff"" font-family=""system-ui, -apple-system, sans-serif"" font-size=""20"" font-weight=""700"">Roblox</text>
+</svg>";
+        }
+        else if (lower.Contains("valorant"))
+        {
+            svg = @"<svg xmlns=""http://www.w3.org/2000/svg"" width=""231"" height=""87"" viewBox=""0 0 231 87"">
+  <rect width=""100%"" height=""100%"" fill=""#0f1923""/>
+  <g transform=""translate(20, 20)"">
+    <path d=""M5 6 L23 42 L32 42 L46 6 L33 6 L23 28 L17 6 Z"" fill=""#ff4655""/>
+  </g>
+  <text x=""78"" y=""51"" fill=""#ece8e1"" font-family=""system-ui, -apple-system, sans-serif"" font-size=""19"" font-weight=""700"">Valorant</text>
+</svg>";
+        }
+        else if (lower.Contains("fortnite"))
+        {
+            svg = @"<svg xmlns=""http://www.w3.org/2000/svg"" width=""231"" height=""87"" viewBox=""0 0 231 87"">
+  <rect width=""100%"" height=""100%"" fill=""#11162b""/>
+  <g transform=""translate(20, 18)"">
+    <rect width=""44"" height=""50"" rx=""9"" fill=""#2756ff""/>
+    <text x=""12"" y=""39"" fill=""#ffffff"" font-family=""sans-serif"" font-size=""38"" font-style=""italic"" font-weight=""900"">F</text>
+  </g>
+  <text x=""78"" y=""51"" fill=""#4ec5ff"" font-family=""system-ui, -apple-system, sans-serif"" font-size=""19"" font-style=""italic"" font-weight=""800"">FORTNITE</text>
+</svg>";
+        }
+        else if (lower.Contains("league of legends") || lower.Contains("lol"))
+        {
+            svg = @"<svg xmlns=""http://www.w3.org/2000/svg"" width=""231"" height=""87"" viewBox=""0 0 231 87"">
+  <rect width=""100%"" height=""100%"" fill=""#091428""/>
+  <g transform=""translate(22, 19)"">
+    <path d=""M6 6 L18 6 L18 36 L38 36 L38 46 L6 46 Z"" fill=""#c89b3c""/>
+  </g>
+  <text x=""78"" y=""51"" fill=""#f0e6d2"" font-family=""system-ui, -apple-system, sans-serif"" font-size=""18"" font-weight=""700"">League</text>
+</svg>";
+        }
+        else
+        {
+            var words = name.Split(new[] { ' ', '-', '_' }, StringSplitOptions.RemoveEmptyEntries);
+            var initials = string.Join("", words.Take(3).Select(w => char.ToUpperInvariant(w[0])));
+            if (string.IsNullOrEmpty(initials)) initials = "G";
 
-        var svg = $@"<svg xmlns=""http://www.w3.org/2000/svg"" width=""231"" height=""87"" viewBox=""0 0 231 87"">
+            svg = $@"<svg xmlns=""http://www.w3.org/2000/svg"" width=""231"" height=""87"" viewBox=""0 0 231 87"">
   <rect width=""100%"" height=""100%"" fill=""#1e2029""/>
   <circle cx=""36"" cy=""43"" r=""22"" fill=""#2d3270""/>
   <path d=""M28 43h16M36 35v16"" stroke=""#9ea8ff"" stroke-width=""3.5"" stroke-linecap=""round""/>
   <text x=""72"" y=""49"" fill=""#e0e2ec"" font-family=""system-ui, -apple-system, sans-serif"" font-size=""16"" font-weight=""600"">{WebUtility.HtmlEncode(name)}</text>
 </svg>";
+        }
 
         c.Response.Headers["Cache-Control"] = "public, max-age=86400";
-        c.Response.Headers["Content-Security-Policy"] = "default-src 'none'; sandbox";
         return Results.Content(svg, "image/svg+xml");
     }
 }
