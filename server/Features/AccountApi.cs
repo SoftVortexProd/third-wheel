@@ -23,6 +23,10 @@ public static class AccountApi
         Db.Exec(@"CREATE TABLE IF NOT EXISTS user_blocks(userId INTEGER, blockedId INTEGER, at TEXT, PRIMARY KEY(userId, blockedId));
 CREATE TABLE IF NOT EXISTS user_reports(id INTEGER PRIMARY KEY, reporterId INTEGER, reportedUserId INTEGER, messageId INTEGER, groupId INTEGER, reason TEXT, details TEXT, status TEXT DEFAULT 'pending', at TEXT);
 CREATE TABLE IF NOT EXISTS user_prefs(userId INTEGER PRIMARY KEY, accentColor TEXT DEFAULT '#7c8cff', fontScale REAL DEFAULT 1.0, language TEXT DEFAULT 'en', nsfwFilter INTEGER DEFAULT 1, profanityFilter INTEGER DEFAULT 1, favGifs TEXT DEFAULT '[]', gamerTags TEXT DEFAULT '{}');");
+        // A report about a chat message records which chat it came from ('g' group / 'd' DM) and a snapshot of the text, so admins still see it after a delete.
+        var rcols = Db.Rows("PRAGMA table_info(user_reports)").Select(r => (string)r["name"]!).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        if (!rcols.Contains("messageKind")) Db.Exec("ALTER TABLE user_reports ADD COLUMN messageKind TEXT");
+        if (!rcols.Contains("snippet")) Db.Exec("ALTER TABLE user_reports ADD COLUMN snippet TEXT");
     }
 
     public static void Map(RouteGroupBuilder api)
@@ -80,7 +84,8 @@ CREATE TABLE IF NOT EXISTS user_prefs(userId INTEGER PRIMARY KEY, accentColor TE
             var lang = Clean(b.Language ?? (existing?["language"] as string ?? "en"), 10);
             var nsfw = b.NsfwFilter ?? (existing == null || Convert.ToInt32(existing["nsfwFilter"]) == 1);
             var prof = b.ProfanityFilter ?? (existing == null || Convert.ToInt32(existing["profanityFilter"]) == 1);
-            var favGifs = b.FavGifs != null ? JsonSerializer.Serialize(b.FavGifs) : (existing?["favGifs"] as string ?? "[]");
+            if (b.FavGifs != null && Limited($"prefs:{uid}", 60, TimeSpan.FromMinutes(1), true)) return Err("Slow down a little.", 429);
+            var favGifs = b.FavGifs != null ? JsonSerializer.Serialize(GifRules.SanitizeFavorites(b.FavGifs)) : (existing?["favGifs"] as string ?? "[]");
             var gamerTags = b.GamerTags != null ? JsonSerializer.Serialize(b.GamerTags) : (existing?["gamerTags"] as string ?? "{}");
             Db.Exec(@"INSERT INTO user_prefs(userId, accentColor, fontScale, language, nsfwFilter, profanityFilter, favGifs, gamerTags)
                       VALUES(@u, @ac, @fs, @l, @nf, @pf, @fg, @gt)
@@ -97,8 +102,36 @@ CREATE TABLE IF NOT EXISTS user_prefs(userId INTEGER PRIMARY KEY, accentColor TE
             var reason = Clean(b.Reason, 60);
             if (string.IsNullOrWhiteSpace(reason)) return Err("Report reason required.");
             var details = Clean(b.Details, 500);
-            Db.Exec("INSERT INTO user_reports(reporterId, reportedUserId, messageId, groupId, reason, details, status, at) VALUES(@r, @ru, @m, @g, @rs, @d, 'pending', @at)",
-                ("@r", uid), ("@ru", b.ReportedUserId), ("@m", b.MessageId), ("@g", b.GroupId), ("@rs", Enc(reason)), ("@d", Enc(details)), ("@at", Now()));
+            long? reportedUser = b.ReportedUserId, groupId = b.GroupId; string? kind = null, snippet = null;
+            if (b.MessageId != null)
+            {
+                // A report about a message: work out the author and chat from the message itself (never trust the client), and make sure the reporter can actually see it.
+                if (b.MessageKind is not ("g" or "d")) return Err("Say which chat the message is from.");
+                if (reason is not ("spam" or "harassment" or "hate" or "sexual" or "other")) return Err("Pick a reason from the list.");
+                Dictionary<string, object?>? msg;
+                if (b.MessageKind == "g")
+                {
+                    if (b.GroupId == null || !IsMember(b.GroupId.Value, uid)) return Err("You can only report messages from groups you're in.", 403);
+                    msg = Db.Row("SELECT userId author, text, deletedAt FROM messages WHERE id=@m AND groupId=@g", ("@m", b.MessageId), ("@g", b.GroupId));
+                }
+                else
+                {
+                    if (b.ReportedUserId == null || b.ReportedUserId == uid) return Err("Message not found.", 404);
+                    msg = Db.Row("SELECT fromId author, text, deletedAt FROM dms WHERE id=@m AND a=@a AND b=@b", ("@m", b.MessageId), ("@a", Math.Min(uid, b.ReportedUserId.Value)), ("@b", Math.Max(uid, b.ReportedUserId.Value)));
+                    groupId = null;
+                }
+                if (msg == null) return Err("Message not found.", 404);
+                if (msg["deletedAt"] != null) return Err("That message has already been deleted.", 409);
+                var author = Convert.ToInt64(msg["author"]);
+                if (author == uid) return Err("You can't report your own message.");
+                reportedUser = author; kind = b.MessageKind;
+                var plain = WebUtility.HtmlDecode((string)msg["text"]!);
+                snippet = Enc(plain.Length > 300 ? plain[..300] : plain);
+                if (Db.Scalar("SELECT 1 FROM user_reports WHERE reporterId=@r AND messageKind=@k AND messageId=@m AND status='pending'", ("@r", uid), ("@k", kind), ("@m", b.MessageId)) != null)
+                    return Results.Json(new { ok = true, already = true });
+            }
+            Db.Exec("INSERT INTO user_reports(reporterId, reportedUserId, messageId, groupId, reason, details, status, at, messageKind, snippet) VALUES(@r, @ru, @m, @g, @rs, @d, 'pending', @at, @mk, @sn)",
+                ("@r", uid), ("@ru", reportedUser), ("@m", b.MessageId), ("@g", groupId), ("@rs", Enc(reason)), ("@d", Enc(details)), ("@at", Now()), ("@mk", kind), ("@sn", snippet));
             return Results.Json(new { ok = true });
         }));
 
@@ -227,9 +260,14 @@ CREATE TABLE IF NOT EXISTS user_prefs(userId INTEGER PRIMARY KEY, accentColor TE
         // ---- free translation endpoint ----
         api.MapPost("translate", async (HttpContext c, TranslateIn b) =>
         {
+            var uid = CurrentUser(c);
+            if (uid is null) return Err("Not signed in.", 401);
+            if (Limited($"tr:{uid}", 40, TimeSpan.FromMinutes(1), true)) return Err("Slow down a little.", 429);
             var text = (b.Text ?? "").Trim();
             var toLang = Clean(b.ToLang ?? "en", 8).ToLowerInvariant();
-            if (string.IsNullOrEmpty(text)) return Results.Json(new { text = "" });
+            if (!Regex.IsMatch(toLang, "^[a-z]{2,3}(-[a-z]{2,4})?$")) return Err("Unknown language.");
+            if (string.IsNullOrEmpty(text)) return Results.Json(new { text = "", unchanged = true });
+            if (text.Length > 480) return Err("That message is too long to translate (480 characters max).");
             try
             {
                 var uri = $"https://api.mymemory.translated.net/get?q={Uri.EscapeDataString(text)}&langpair=autodetect|{toLang}";
@@ -237,18 +275,30 @@ CREATE TABLE IF NOT EXISTS user_prefs(userId INTEGER PRIMARY KEY, accentColor TE
                 if (resp.IsSuccessStatusCode)
                 {
                     using var doc = await JsonDocument.ParseAsync(await resp.Content.ReadAsStreamAsync());
-                    if (doc.RootElement.TryGetProperty("responseData", out var rd) &&
-                        rd.TryGetProperty("translatedText", out var tt))
+                    var root = doc.RootElement;
+                    int status = 200;
+                    if (root.TryGetProperty("responseStatus", out var st)) status = st.ValueKind == JsonValueKind.Number ? st.GetInt32() : (int.TryParse(st.GetString(), out var sv) ? sv : 200);
+                    if (root.TryGetProperty("responseData", out var rd) && rd.TryGetProperty("translatedText", out var tt))
                     {
                         var translated = tt.GetString() ?? text;
-                        return Results.Json(new { text = translated });
+                        // MyMemory answers with an English sentence instead of a translation when the text is already in the target language.
+                        if (translated.Contains("PLEASE SELECT TWO DISTINCT LANGUAGES", StringComparison.OrdinalIgnoreCase))
+                            return Results.Json(new { text, from = toLang, to = toLang, unchanged = true });
+                        if (status == 200 && !translated.Contains("MYMEMORY WARNING", StringComparison.OrdinalIgnoreCase))
+                        {
+                            string? from = rd.TryGetProperty("detectedLanguage", out var dl) && dl.ValueKind == JsonValueKind.String ? dl.GetString() : null;
+                            if (from == null && root.TryGetProperty("matches", out var ms) && ms.ValueKind == JsonValueKind.Array && ms.GetArrayLength() > 0
+                                && ms[0].TryGetProperty("source", out var so) && so.ValueKind == JsonValueKind.String) from = so.GetString();
+                            if (from != null) from = from.Split('-')[0].ToLowerInvariant();
+                            var same = string.Equals(translated.Trim(), text, StringComparison.OrdinalIgnoreCase) || from == toLang;
+                            return Results.Json(new { text = translated, from, to = toLang, unchanged = same });
+                        }
                     }
                 }
             }
-            catch { }
-            return Results.Json(new { text });
-        });
-        // ---- a user changes their own password ----
+            catch { /* fall through to the error below */ }
+            return Err("Translation isn't available right now. Try again later.", 502);
+        });        // ---- a user changes their own password ----
         api.MapPost("me/password", (HttpContext c, PasswordIn b) => WithUser(c, uid =>
         {
             var key = $"pw:{uid}";
@@ -379,5 +429,5 @@ public record PasswordIn(string? Current, string? Password);
 public record AdminPasswordIn(string? Password);
 public record GroupRenameIn(string? Name);
 public record PrefsIn(string? AccentColor, double? FontScale, string? Language, bool? NsfwFilter, bool? ProfanityFilter, string[]? FavGifs, Dictionary<string, string>? GamerTags);
-public record ReportIn(long? ReportedUserId, long? MessageId, long? GroupId, string? Reason, string? Details);
+public record ReportIn(long? ReportedUserId, long? MessageId, long? GroupId, string? Reason, string? Details, string? MessageKind = null);
 public record TranslateIn(string? Text, string? ToLang);

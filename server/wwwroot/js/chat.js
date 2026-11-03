@@ -5,7 +5,7 @@
 'use strict';
 const TW = window.TW;
 if (!TW) return;
-const { h, api, toast, T, nm, avatar, openSheet, confirmSheet, btn } = TW;
+const { h, api, toast, T, nm, avatar, openSheet, confirmSheet, btn, field, selectEl } = TW;
 const MB = 1024 * 1024;
 const EMOJI = ['👍', '❤️', '😂', '😮', '😢', '🔥', '🎉', '👀'];
 const FILE_URL = /^\/api\/files\/\d+$/;
@@ -22,7 +22,10 @@ const PATHS = {
   file: 'M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9zM13 2v7h7',
   download: 'M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3',
   x: 'M18 6L6 18M6 6l12 12',
-  send: 'M22 2L11 13M22 2l-7 20-4-9-9-4z'
+  send: 'M22 2L11 13M22 2l-7 20-4-9-9-4z',
+  heart: 'M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z',
+  globe: 'M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20zM2 12h20M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z',
+  flag: 'M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1zM4 22v-7'
 };
 function ico(name, size = 18) {
   const s = document.createElementNS(SVGNS, 'svg');
@@ -36,6 +39,171 @@ async function refreshMe() {
 }
 const rcktBadge = () => h('span', { class: 'rckt-badge', title: 'RCKT subscriber', text: 'RCKT' });
 const iconBtn = (name, label, onclick, cls = '') => h('button', { class: 'act-btn ' + cls, type: 'button', 'aria-label': label, title: label, onclick }, ico(name, 16));
+
+/* ---------- Tenor GIFs ---------- */
+/* A GIF message's text is exactly "[gif:<tenor url>]". It is only ever shown through /api/media/proxy (the page's CSP allows no other host),
+   and only when the URL is a Tenor media URL. The server enforces the same rules and that the sender has RCKT. */
+const TENOR = /^https:\/\/(media|media1|c)\.tenor\.com\/[A-Za-z0-9_\-./~%]{1,240}$/;
+const GIF_TOKEN = /^\[gif:(https:\/\/[^\]\s]{1,260})\]$/;
+const proxied = (raw) => '/api/media/proxy?url=' + encodeURIComponent(raw);
+const gifOf = (text) => { const m = GIF_TOKEN.exec(T(text || '')); return m && TENOR.test(m[1]) ? m[1] : null; };
+const rawFromProxy = (p) => { try { return new URL(p, location.origin).searchParams.get('url'); } catch { return null; } };
+
+/* preferences are read once and cached (favourite GIFs + the language used for translation) */
+let prefs = null, prefsLoad = null;
+function loadPrefs() {
+  if (prefs) return Promise.resolve(prefs);
+  return prefsLoad || (prefsLoad = api('GET', '/api/me/preferences').then(p => (prefs = p)).catch(e => { prefsLoad = null; throw e; }));
+}
+const userLang = async () => { try { return ((await loadPrefs()).language || 'en').toLowerCase(); } catch { return 'en'; } };
+const langName = (code) => { try { return new Intl.DisplayNames(['en'], { type: 'language' }).of(code) || code.toUpperCase(); } catch { return String(code).toUpperCase(); } };
+
+let favs = null;   // [{ i: id, t: title, p: preview url, u: full url, w, h }]; urls are raw Tenor urls
+function parseFavs(list) {
+  const out = [];
+  for (const s of list || []) {
+    try {
+      const o = String(s).trim().startsWith('{') ? JSON.parse(s) : { u: String(s) };
+      if (!TENOR.test(o.u || '')) continue;
+      out.push({ i: String(o.i || ''), t: String(o.t || '').slice(0, 80), p: TENOR.test(o.p || '') ? o.p : o.u, u: o.u, w: +o.w || 200, h: +o.h || 150 });
+    } catch { /* skip an unreadable entry */ }
+  }
+  return out;
+}
+async function getFavs() { if (!favs) favs = parseFavs((await loadPrefs()).favGifs); return favs; }
+const isFav = (it) => !!favs && favs.some(f => f.u === it.u);
+let saveChain = Promise.resolve();
+function saveFavs() {
+  const body = favs.map(f => JSON.stringify({ i: f.i, t: f.t, p: f.p, u: f.u, w: f.w, h: f.h }));
+  const p = saveChain.catch(() => {}).then(() => api('PUT', '/api/me/preferences', { favGifs: body }));   // the full list; the server keeps the other preferences
+  saveChain = p.catch(() => {});
+  return p;
+}
+/** Optimistic favourite toggle: the heart flips at once and is put back if the server says no. */
+async function toggleFav(it, heart, onChange) {
+  await getFavs().catch(() => { favs = []; });
+  const idx = favs.findIndex(f => f.u === it.u);
+  const adding = idx < 0, removed = adding ? null : favs[idx];
+  if (adding) favs.unshift({ i: it.i, t: it.t, p: it.p, u: it.u, w: it.w, h: it.h }); else favs.splice(idx, 1);
+  heart.setAttribute('aria-pressed', String(adding)); heart.setAttribute('aria-label', (adding ? 'Remove from favorites: ' : 'Add to favorites: ') + (it.t || 'GIF'));
+  if (onChange) onChange();
+  try { await saveFavs(); }
+  catch (e) {
+    if (adding) { const j = favs.findIndex(f => f.u === it.u); if (j >= 0) favs.splice(j, 1); } else favs.splice(Math.min(idx, favs.length), 0, removed);
+    heart.setAttribute('aria-pressed', String(!adding)); heart.setAttribute('aria-label', (!adding ? 'Remove from favorites: ' : 'Add to favorites: ') + (it.t || 'GIF'));
+    if (onChange) onChange();
+    toast(e.message || 'Couldn’t update favorites.', 'error');
+  }
+}
+/** The API returns /api/media/proxy paths; turn a result into the raw-url form we store and send. */
+function normGif(r) {
+  const u = rawFromProxy(r.url), p = rawFromProxy(r.preview) || u;
+  if (!u || !TENOR.test(u)) return null;
+  return { i: String(r.id || ''), t: String(r.title || '').slice(0, 80), p: TENOR.test(p || '') ? p : u, u, w: (r.width | 0) || 200, h: (r.height | 0) || 150 };
+}
+
+let trendingCache = null, gifClose = null;
+function openGifPicker({ anchor, onPick }) {
+  if (gifClose) { const same = gifClose.anchor === anchor; gifClose(); if (same) return; }
+  const search = h('input', { class: 'input gif-search', type: 'search', placeholder: 'Search GIFs', 'aria-label': 'Search GIFs', maxlength: 60, autocomplete: 'off' });
+  const msg = h('div', { class: 'gif-msg', role: 'status', hidden: true });
+  const grid = h('div', { class: 'gif-grid stagger' });
+  const scroller = h('div', { class: 'gif-scroll' }, msg, grid);
+  const note = h('p', { class: 'gif-note', text: 'Anyone can browse, but sending a GIF needs RCKT.', hidden: !!TW.me.rckt });
+  let tab = 'trending', seq = 0, timer = 0, busy = false;
+  const tabsEl = TW.tabs([['trending', 'Trending'], ['search', 'Search'], ['favs', 'Favorites']], tab, (k) => { tab = k; load(); }, 'GIF sections');
+  const pop = h('div', { class: 'gif-pop', role: 'dialog', 'aria-label': 'GIF picker' }, h('div', { class: 'gif-head' }, search), tabsEl, note, scroller);
+
+  const say = (text, retry) => {
+    grid.replaceChildren(); msg.replaceChildren(...[h('span', { text }), retry ? h('button', { class: 'btn small ghost', type: 'button', onclick: retry }, 'Try again') : null].filter(Boolean)); msg.hidden = false;
+  };
+  const loading = () => { grid.replaceChildren(); msg.replaceChildren(h('span', { class: 'spinner', role: 'status', 'aria-label': 'Loading GIFs' })); msg.hidden = false; };
+
+  async function choose(it) {
+    if (busy) return; busy = true; pop.setAttribute('aria-busy', 'true');
+    const ok = await onPick(it);
+    busy = false; pop.removeAttribute('aria-busy');
+    if (ok) close();
+  }
+  function tile(it) {
+    const img = h('img', { src: proxied(it.p), alt: it.t || 'GIF', loading: 'lazy', decoding: 'async' });
+    const pick = h('button', { class: 'gif-tile', type: 'button', 'aria-label': 'Send GIF: ' + (it.t || 'untitled'), onclick: () => choose(it) }, img);
+    const fav = isFav(it);
+    const heart = h('button', { class: 'gif-heart', type: 'button', 'aria-pressed': String(fav), 'aria-label': (fav ? 'Remove from favorites: ' : 'Add to favorites: ') + (it.t || 'GIF') }, ico('heart', 16));
+    heart.addEventListener('click', (e) => { e.stopPropagation(); toggleFav(it, heart, () => { if (tab === 'favs') load(true); }); });
+    return h('div', { class: 'gif-cell' }, pick, heart);
+  }
+  function paint(items, emptyText) {
+    if (!items.length) { say(emptyText); return; }
+    msg.hidden = true; grid.replaceChildren(...items.map(tile)); TW.stagger(grid);
+  }
+  async function fetchGifs(url) {
+    const r = await api('GET', url);
+    if (r && r.notConfigured) return { notConfigured: true, items: [] };
+    return { items: (r.results || []).map(normGif).filter(Boolean) };
+  }
+  const NOT_SET = 'GIF search isn’t set up on this server yet. Ask whoever runs it to add a Tenor key. Your saved favorites still work.';
+  async function load(quiet) {
+    const my = ++seq;
+    try {
+      if (tab === 'favs') {
+        if (!quiet) loading();
+        const f = await getFavs(); if (my !== seq) return;
+        paint(f, 'No favorites yet. Tap the heart on any GIF to save it here.'); return;
+      }
+      if (tab === 'search') {
+        const q = search.value.trim();
+        if (!q) { say('Type something above to search GIFs.'); return; }
+        loading(); const r = await fetchGifs('/api/media/gifs/search?q=' + encodeURIComponent(q)); if (my !== seq) return;
+        if (r.notConfigured) { say(NOT_SET); return; }
+        paint(r.items, `No GIFs found for “${q}”. Try another word.`); return;
+      }
+      if (trendingCache && Date.now() - trendingCache.at < 5 * 60 * 1000) { await getFavs().catch(() => {}); if (my !== seq) return; paint(trendingCache.items, 'No trending GIFs right now.'); return; }
+      loading(); const r = await fetchGifs('/api/media/gifs/trending'); await getFavs().catch(() => {}); if (my !== seq) return;
+      if (r.notConfigured) { say(NOT_SET); return; }
+      if (r.items.length) trendingCache = { at: Date.now(), items: r.items };
+      paint(r.items, 'Couldn’t load trending GIFs. Check your connection and try again.');
+    } catch (e) { if (my === seq) say('Couldn’t load GIFs. ' + (e.message || ''), () => load()); }
+  }
+
+  search.addEventListener('input', () => {
+    clearTimeout(timer);
+    timer = setTimeout(() => {
+      if (search.value.trim()) { if (tab !== 'search') { tab = 'search'; tabsEl.set('search'); } load(); }
+      else if (tab === 'search') load();
+    }, 300);
+  });
+  search.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); clearTimeout(timer); if (search.value.trim()) { tab = 'search'; tabsEl.set('search'); load(); } } });
+
+  const place = () => {
+    const r = anchor.getBoundingClientRect(), small = innerWidth < 900;
+    pop.style.left = small ? '8px' : Math.max(8, Math.min(innerWidth - 408, r.left - 8)) + 'px';
+    pop.style.width = small ? 'auto' : '400px';
+    pop.style.right = small ? '8px' : 'auto';
+    pop.style.bottom = Math.max(8, innerHeight - r.top + 8) + 'px';
+    pop.style.maxHeight = Math.max(220, Math.min(520, r.top - 16)) + 'px';
+  };
+  const outside = (e) => { if (!pop.contains(e.target) && !anchor.contains(e.target)) close(); };
+  const key = (e) => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close(); anchor.focus(); } };
+  const onResize = () => { if (!anchor.isConnected) close(); else place(); };
+  function close() {
+    document.removeEventListener('pointerdown', outside, true); document.removeEventListener('keydown', key, true);
+    removeEventListener('hashchange', close); removeEventListener('resize', onResize); clearTimeout(timer); seq++;
+    anchor.setAttribute('aria-expanded', 'false');
+    const p = pop; if (gifClose === close) gifClose = null;
+    if (reduce()) { p.remove(); return; }
+    p.style.pointerEvents = 'none';
+    const gone = () => p.remove(); setTimeout(gone, 260);
+    p.animate([{ opacity: 1, transform: 'none' }, { opacity: 0, transform: 'translateY(8px) scale(.96)' }], { duration: 160, easing: 'ease-in' }).finished.then(gone, gone);
+  }
+  close.anchor = anchor; gifClose = close;
+  document.body.append(pop); place();
+  anchor.setAttribute('aria-expanded', 'true');
+  if (!reduce()) pop.animate([{ opacity: 0, transform: 'translateY(14px) scale(.94)' }, { opacity: 1, transform: 'none' }], { duration: 340, easing: TWM.SPRING });
+  document.addEventListener('pointerdown', outside, true); document.addEventListener('keydown', key, true);
+  addEventListener('hashchange', close); addEventListener('resize', onResize);
+  search.focus(); load();
+}
 
 /* ---------- image lightbox ---------- */
 function lightbox(file) {
@@ -96,11 +264,14 @@ function make(cfg) {
   const send = h('button', { class: 'btn', type: 'submit', 'aria-label': 'Send message' }, ico('send', 18));
   const fileInput = h('input', { type: 'file', class: 'sr-only', tabindex: '-1', 'aria-label': 'Choose a file to share' });
   const attach = h('button', { class: 'icon-btn attach', type: 'button', 'aria-label': 'Attach a file', title: 'Attach a file' }, ico('clip', 20));
-  const form = h('form', { class: 'composer' }, attach, input, send);
+  const gifBtn = h('button', { class: 'icon-btn gif-btn', type: 'button', 'aria-label': 'Send a GIF', title: 'GIFs', 'aria-haspopup': 'dialog', 'aria-expanded': 'false' }, h('span', { class: 'gif-glyph', 'aria-hidden': 'true', text: 'GIF' }));
+  const form = h('form', { class: 'composer' }, attach, gifBtn, input, send);
   const wrap = h('div', { class: 'composer-wrap' }, typingEl, replyBar, chip, form, fileInput);
 
   const els = new Map(), data = new Map();
   let lastId = 0, since = '', initial = true, replying = null, pending = null, editingId = null, lastTyping = 0;
+  const trState = new Map();   // message id -> { src, text, from, to, shown, unchanged }  (translations are kept while you stay in this chat)
+  const preview = (m) => gifOf(m.text) ? 'GIF' : (T(m.text) || 'Attachment');
 
   /* ----- rendering ----- */
   const canDelete = (m) => m.userId === TW.me.id || TW.me.isAdmin || (typeof cfg.canModerate === 'function' && cfg.canModerate());
@@ -116,11 +287,20 @@ function make(cfg) {
     if (m.replyTo) {
       const r = m.replyTo;
       body.append(h('button', { class: 'quote', type: 'button', 'aria-label': 'Jump to the message from ' + T(r.name), onclick: () => jumpTo(r.id) },
-        h('b', { text: T(r.name) }), h('span', { text: r.deleted ? 'Message deleted' : (T(r.text) || 'Attachment') })));
+        h('b', { text: T(r.name) }), h('span', { text: r.deleted ? 'Message deleted' : (gifOf(r.text) || /^\[gif:/.test(T(r.text)) ? 'GIF' : (T(r.text) || 'Attachment')) })));
     }
     if (m.deleted) body.append(h('p', { class: 'gone', text: 'Message deleted' }));
     else {
-      if (m.text) body.append(h('p', { class: 'txt', text: T(m.text) }));
+      const gifUrl = gifOf(m.text), tr = trState.get(m.id);
+      const showTr = !!(tr && tr.shown && !tr.unchanged && tr.src === T(m.text));
+      if (gifUrl) {
+        body.append(h('button', { class: 'gif-card', type: 'button', 'aria-label': 'Open GIF', onclick: () => lightbox({ url: proxied(gifUrl), name: 'animated.gif' }) },
+          h('img', { src: proxied(gifUrl), alt: 'GIF', loading: 'lazy', decoding: 'async' }), h('span', { class: 'gif-tag', 'aria-hidden': 'true', text: 'GIF' })));
+      } else if (m.text) {
+        body.append(h('p', { class: 'txt' + (showTr ? ' translated' : ''), text: showTr ? tr.text : T(m.text) }));
+        if (showTr) body.append(h('div', { class: 'tr-note' }, h('span', { text: tr.from && tr.from !== tr.to ? `Translated from ${langName(tr.from)} to ${langName(tr.to)}` : `Translated to ${langName(tr.to)}` }),
+          h('button', { class: 'linklike', type: 'button', onclick: () => translate(m, null) }, 'Show original')));
+      }
       const f = m.file;
       if (f && FILE_URL.test(f.url)) {
         if (f.kind === 'image' || f.kind === 'gif') {
@@ -143,7 +323,10 @@ function make(cfg) {
       const acts = h('div', { class: 'actions', role: 'toolbar', 'aria-label': 'Message actions' });
       const reactBtn = iconBtn('smile', 'Add a reaction', () => pickEmoji(reactBtn, (e) => react(m, e)));
       acts.append(reactBtn, iconBtn('reply', 'Reply', () => setReply(m)));
-      if (own) acts.append(iconBtn('edit', 'Edit message', () => startEdit(m)));
+      const isGif = !!gifOf(m.text);
+      if (!own && m.text && !isGif) { const trBtn = iconBtn('globe', trState.get(m.id)?.shown ? 'Show original' : 'Translate this message', () => translate(m, trBtn)); acts.append(trBtn); }
+      if (own && !isGif) acts.append(iconBtn('edit', 'Edit message', () => startEdit(m)));
+      if (!own) acts.append(iconBtn('flag', 'Report this message', () => reportMessage(m), 'danger'));
       if (canDelete(m)) acts.append(iconBtn('trash', 'Delete message', () => askDelete(m), 'danger'));
       el.append(acts);
     }
@@ -218,12 +401,69 @@ function make(cfg) {
   }
 
   function setReply(m) {
-    replying = { id: m.id, name: nm(m), text: T(m.text) || 'Attachment' };
+    replying = { id: m.id, name: nm(m), text: preview(m) };
     replyBar.replaceChildren(ico('reply', 16), h('span', { class: 't' }, 'Replying to ', h('b', { text: replying.name }), ': ', replying.text.length > 80 ? replying.text.slice(0, 80) + '…' : replying.text),
       h('button', { class: 'icon-btn', type: 'button', 'aria-label': 'Cancel reply', onclick: clearReply }, ico('x', 16)));
     replyBar.hidden = false; input.focus();
   }
   function clearReply() { replying = null; replyBar.hidden = true; }
+
+  /* ----- GIFs ----- */
+  async function sendGif(it) {
+    if (!TW.me.rckt) await refreshMe();   // RCKT may have been granted since login
+    if (!TW.me.rckt) { toast('GIFs need RCKT. Ask an admin for RCKT.', 'error'); return false; }
+    const rect = input.getBoundingClientRect();
+    try {
+      const m = await api('POST', listUrl, { text: `[gif:${it.u}]`, replyTo: replying ? replying.id : undefined });
+      clearReply(); lastTyping = 0; upsert([m], true, rect);
+      return true;
+    } catch (ex) { toast(ex.message, 'error'); return false; }
+  }
+  gifBtn.addEventListener('click', () => openGifPicker({ anchor: gifBtn, onPick: sendGif }));
+
+  /* ----- translate (replaces the text in place; click again to go back to the original) ----- */
+  function redraw(id) {
+    const old = els.get(id), m = data.get(id);
+    if (!old || !m || editingId === id) return;
+    const el = render(m); el.style.animation = 'none'; old.replaceWith(el); els.set(id, el);
+  }
+  async function translate(m, trBtn) {
+    const src = T(m.text), st = trState.get(m.id);
+    if (st && st.src === src) {
+      if (st.unchanged) { toast(`That message is already in ${langName(st.to)}.`); return; }
+      st.shown = !st.shown; redraw(m.id); return;
+    }
+    if (trBtn) { trBtn.disabled = true; trBtn.classList.add('loading'); trBtn.setAttribute('aria-busy', 'true'); }
+    try {
+      const to = await userLang();
+      const r = await api('POST', '/api/translate', { text: src, toLang: to });
+      if (r.unchanged || !r.text) { trState.set(m.id, { src, text: src, to, unchanged: true, shown: false }); toast(`That message is already in ${langName(to)}.`); }
+      else { trState.set(m.id, { src, text: T(r.text), from: r.from || '', to, shown: true }); }
+      redraw(m.id);
+    } catch (e) { toast(e.message || 'Couldn’t translate that.', 'error'); }
+    finally { if (trBtn && trBtn.isConnected) { trBtn.disabled = false; trBtn.classList.remove('loading'); trBtn.removeAttribute('aria-busy'); } }
+  }
+
+  /* ----- report ----- */
+  function reportMessage(m) {
+    const reasons = [['spam', 'Spam or scam'], ['harassment', 'Harassment or bullying'], ['hate', 'Hate speech'], ['sexual', 'Sexual content'], ['other', 'Something else']];
+    const reason = selectEl(reasons, '', 'Choose a reason');
+    const details = h('textarea', { class: 'textarea', maxlength: 300, placeholder: 'Anything else we should know? (optional)', 'aria-label': 'Details' });
+    const fr = field('Reason', reason), fd = field('Details', details);
+    const submit = btn('Send report', { cls: 'danger' });
+    let close = () => {};
+    submit.addEventListener('click', () => {
+      if (!fr.setError(reason.value ? '' : 'Choose a reason')) return;
+      TW.busy(submit, async () => {
+        await api('POST', '/api/reports', { messageId: m.id, messageKind: k, groupId: k === 'g' ? Number(cid) : undefined, reportedUserId: m.userId, reason: reason.value, details: details.value.trim() });
+        toast('Report sent. Thanks for helping keep Third Wheel safe.'); close();
+      });
+    });
+    const snip = preview(m);
+    close = openSheet('Report message', h('div', { class: 'stack' },
+      h('div', { class: 'report-quote' }, h('b', { text: nm(m) }), h('span', { text: snip.length > 160 ? snip.slice(0, 160) + '…' : snip })),
+      fr, fd, h('div', { class: 'row' }, btn('Cancel', { cls: 'ghost', onclick: () => close() }), submit)));
+  }
 
   /* ----- attachments ----- */
   function paintChip() {

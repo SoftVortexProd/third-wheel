@@ -168,6 +168,8 @@ CREATE TABLE IF NOT EXISTS files(id INTEGER PRIMARY KEY, ownerId INTEGER, name T
                 else if (IsBlocked(cv.Me, cv.Id)) return Err("Cannot send messages to this user.", 403);
                 var text = Clean(b.Text, 1000);
                 if (text.Length == 0 && b.FileId == null) return Err("Message is empty.");
+                var gifErr = GifRules.Check(text, IsRcktUser(cv.Me), b.FileId != null);   // "[gif:<tenor url>]" messages: well-formed, RCKT only
+                if (gifErr.HasValue) return Err(gifErr.Value.msg, gifErr.Value.code);
                 if (Limited(cv.G ? $"msg:{cv.Me}" : $"dm:{cv.Me}", cv.G ? 30 : 40, TimeSpan.FromMinutes(1), true)) return Err("Slow down a little.", 429);
                 if (b.ReplyTo != null && Fetch(cv, " AND m.id=@mid", ("@mid", b.ReplyTo)).Count == 0) return Err("The message you're replying to is gone.", 404);
                 if (b.FileId != null)
@@ -194,6 +196,7 @@ CREATE TABLE IF NOT EXISTS files(id INTEGER PRIMARY KEY, ownerId INTEGER, name T
                 if (row["deletedAt"] != null) return Err("That message was deleted.", 409);
                 var text = Clean(b.Text, 1000);
                 if (text.Length == 0) return Err("Message is empty.");
+                if (text.Contains("[gif:", StringComparison.OrdinalIgnoreCase) || ((string)row["text"]!).StartsWith("[gif:")) return Err("GIF messages can't be edited. Delete it and send another.");
                 if (Limited($"edit:{cv.Me}", 30, TimeSpan.FromMinutes(1), true)) return Err("Slow down a little.", 429);
                 var now = Now();
                 Db.Exec($"UPDATE {cv.Table} SET text=@t, editedAt=@n, updatedAt=@n WHERE id=@i", ("@t", Enc(text)), ("@n", now), ("@i", mid));
@@ -387,5 +390,64 @@ CREATE TABLE IF NOT EXISTS files(id INTEGER PRIMARY KEY, ownerId INTEGER, name T
             if (username == null || !userRx.IsMatch(username)) return Results.Json(new { rckt = false });
             return Results.Json(new { rckt = IsRckt(Db.Scalar("SELECT rcktUntil FROM users WHERE username=@u COLLATE NOCASE", ("@u", username))) });
         }));
+    }
+}
+
+/// <summary>
+/// GIF messages and saved favourites. A GIF message's text is exactly "[gif:https://media.tenor.com/...]" (the UI renders it through
+/// /api/media/proxy); only Tenor media hosts are accepted and sending one needs RCKT, the same rule as uploading a GIF.
+/// </summary>
+public static class GifRules
+{
+    public static readonly System.Text.RegularExpressions.Regex TenorUrl = new(@"^https://(media|media1|c)\.tenor\.com/[A-Za-z0-9_\-./~%]{1,240}$", System.Text.RegularExpressions.RegexOptions.Compiled);
+    static readonly System.Text.RegularExpressions.Regex Token = new(@"^\[gif:(https://[^\]\s]{1,260})\]$", System.Text.RegularExpressions.RegexOptions.Compiled);
+    public static bool IsTenor(string? u) => u != null && u.Length <= 300 && TenorUrl.IsMatch(u);
+
+    /// <summary>Null when the text may be sent; otherwise the HTTP code and a friendly message.</summary>
+    public static (int code, string msg)? Check(string text, bool rckt, bool hasFile)
+    {
+        if (!text.Contains("[gif:", StringComparison.OrdinalIgnoreCase)) return null;
+        var m = Token.Match(text);
+        if (!m.Success || !IsTenor(m.Groups[1].Value)) return (400, "That GIF link isn't valid.");
+        if (hasFile) return (400, "Send a GIF on its own, without a file.");
+        return rckt ? null : (403, "GIFs need RCKT. Ask an admin for RCKT.");
+    }
+
+    /// <summary>
+    /// Favourites are stored as small JSON strings {i,t,p,u,w,h}: id, title, preview url, full url, size. Anything that isn't a
+    /// Tenor media URL is dropped, so the preferences endpoint can't be used to store arbitrary data or link elsewhere.
+    /// </summary>
+    public static string[] SanitizeFavorites(string[]? raw)
+    {
+        var seen = new HashSet<string>(); var list = new List<string>();
+        foreach (var s in (raw ?? Array.Empty<string>()).Take(200))
+        {
+            if (s == null || s.Length > 800) continue;
+            string? u = null, p = null, id = "", title = ""; int w = 200, h = 150;
+            try
+            {
+                if (s.TrimStart().StartsWith("{"))
+                {
+                    using var d = System.Text.Json.JsonDocument.Parse(s); var r = d.RootElement;
+                    if (r.ValueKind != System.Text.Json.JsonValueKind.Object) continue;
+                    u = r.TryGetProperty("u", out var uu) ? uu.GetString() : null;
+                    p = r.TryGetProperty("p", out var pp) ? pp.GetString() : null;
+                    id = r.TryGetProperty("i", out var ii) && ii.ValueKind == System.Text.Json.JsonValueKind.String ? ii.GetString() ?? "" : "";
+                    title = r.TryGetProperty("t", out var tt) && tt.ValueKind == System.Text.Json.JsonValueKind.String ? tt.GetString() ?? "" : "";
+                    if (r.TryGetProperty("w", out var ww) && ww.TryGetInt32(out var wi)) w = Math.Clamp(wi, 1, 4000);
+                    if (r.TryGetProperty("h", out var hh) && hh.TryGetInt32(out var hi)) h = Math.Clamp(hi, 1, 4000);
+                }
+                else u = s;   // a bare URL from an older client
+            }
+            catch { continue; }
+            if (!IsTenor(u)) continue;
+            if (!IsTenor(p)) p = u;
+            if (!seen.Add(u!)) continue;
+            id = new string(id.Where(ch => char.IsLetterOrDigit(ch) || ch is '_' or '-').Take(80).ToArray());
+            title = new string(title.Where(ch => !char.IsControl(ch)).ToArray()); if (title.Length > 80) title = title[..80];
+            list.Add(System.Text.Json.JsonSerializer.Serialize(new { i = id, t = title, p, u, w, h }));
+            if (list.Count >= 100) break;
+        }
+        return list.ToArray();
     }
 }
