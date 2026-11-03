@@ -1,1 +1,35 @@
-/* groups feature styles */
+/* groups feature styles: roles, moderation menu, rules, requests. Flat colours only, no gradients, nothing pulses. */
+
+.group-actions { align-items: center; }
+
+.role-badge { display: inline-block; margin-left: 6px; padding: 1px 7px; border-radius: 999px; font-size: 10px; line-height: 16px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; vertical-align: 1px; }
+.role-badge.owner { background: var(--color-accent-soft); color: var(--color-accent-text); border: 1px solid #2d3270; }
+.role-badge.mod { background: #12251b; color: #7ddc9a; border: 1px solid #1f4a33; }
+
+.member-wrap { flex: none; display: inline-flex; align-items: center; gap: 2px; }
+.member-more { flex: none; width: 28px; height: 28px; display: inline-grid; place-items: center; padding: 0; border: 1px solid var(--color-border); border-radius: 50%; background: var(--color-raised); color: var(--color-text-2); font-size: 16px; line-height: 1; cursor: pointer;
+  transition: background var(--dur-fast), color var(--dur-fast), transform .35s cubic-bezier(.34, 1.56, .64, 1); }
+.member-more:hover { background: var(--color-strong); color: var(--color-text); }
+.member-more:active { transform: scale(.88); }
+.member-more[aria-expanded="true"] { background: var(--color-accent-soft); color: #fff; border-color: var(--color-accent); }
+.mute-flag { margin-left: 6px; padding: 1px 6px; border-radius: 999px; background: #2a1215; color: var(--color-danger-text); border: 1px solid #5a2328; font-size: 10px; line-height: 14px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; }
+
+.count-badge { display: inline-block; min-width: 18px; height: 18px; margin-left: 8px; padding: 0 5px; border-radius: 999px; background: var(--color-danger); color: #fff; font-size: 11px; line-height: 18px; font-weight: 700; text-align: center; }
+
+.gmenu { position: fixed; z-index: 95; min-width: 220px; max-width: calc(100vw - 16px); padding: 4px; background: #14141a; border: 1px solid #34343c; border-radius: var(--radius-md); box-shadow: 0 18px 40px -12px rgba(0, 0, 0, .85); }
+.gmenu-item { display: flex; align-items: center; justify-content: space-between; width: 100%; padding: 9px 12px; border: 0; border-radius: var(--radius-sm); background: none; color: var(--color-text); text-align: left; font-size: var(--fs-md); line-height: 20px; cursor: pointer; }
+.gmenu-item:hover, .gmenu-item:focus-visible { background: var(--color-strong); outline: none; }
+.gmenu-item:focus-visible { box-shadow: inset 0 0 0 2px var(--color-focus); }
+.gmenu-item.danger { color: var(--color-danger-text); }
+.gmenu-sep { height: 1px; margin: 4px 6px; background: var(--color-border); }
+
+.rules-text { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 22px; }
+.ban-reason { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--color-text-2); font-size: var(--fs-sm); }
+.audience-note { margin-top: 6px; }
+
+@media (max-width: 899px) {
+  .group-actions { flex: 1 1 100%; order: 3; }
+  /* beats the generic ".ghead .top .row > .btn { flex: 1 }" so buttons keep their width and wrap onto a new line instead of being clipped */
+  .ghead .top .group-actions > .btn { flex: 1 1 auto; min-width: max-content; }
+  .ghead .top .group-actions > .chip { flex: none; }
+}
