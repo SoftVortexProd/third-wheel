@@ -24,7 +24,7 @@ cd server
 dotnet run --no-launch-profile   # http://127.0.0.1:5173
 ```
 
-Demo accounts (seeded on first run): `nova_fox`, `kairo`, `pixelpanda`... password `Demo1234!`.
+The app starts empty: no pre-made accounts, groups or friends. Sign up to create the first account.
 Data lives in `%LOCALAPPDATA%\ThirdWheel\tw.db` (delete it to reset).
 
 ## Phone

@@ -1,4 +1,4 @@
-using System.Collections.Concurrent;
+﻿using System.Collections.Concurrent;
 using System.Net;
 using System.Security.Cryptography;
 using System.Text;
@@ -131,7 +131,6 @@ api.MapPost("auth/signup", (HttpContext c, Creds b) =>
     if (pw.Length < 8 || pw.Length > 72) return Err("Password must be 8-72 characters.");
     if (Db.Scalar("SELECT 1 FROM users WHERE username=@u COLLATE NOCASE", ("@u", name)) != null) return Err("That username is taken.", 409);
     var id = Db.CreateUser(name, pw, "NA-East", 0, Array.Empty<string>(), "online", null, false);
-    Db.WelcomeData(id);
     StartSession(c, id);
     return Results.Json(new { user = UserDto(id) });
 });
@@ -444,19 +443,6 @@ static class Db
             ("@o", onboarded ? 1 : 0), ("@st", status), ("@p", playing), ("@t", DateTime.UtcNow.ToString("o")));
     }
 
-    // New accounts get a couple of friend requests and a group invite so the UI isn't empty.
-    public static void WelcomeData(long id)
-    {
-        var demo = Rows("SELECT id FROM users WHERE username IN ('nova_fox','kairo','pixelpanda') ORDER BY id").Select(r => (long)r["id"]!).ToList();
-        for (int i = 0; i < Math.Min(2, demo.Count); i++) Exec("INSERT OR IGNORE INTO frequests(fromId,toId) VALUES(@f,@t)", ("@f", demo[i]), ("@t", id));
-        var g = Scalar("SELECT id FROM grps ORDER BY id LIMIT 1");
-        if (g != null && demo.Count > 2)
-        {
-            Exec("INSERT OR IGNORE INTO friends(a,b) VALUES(@a,@b)", ("@a", Math.Min(demo[2], id)), ("@b", Math.Max(demo[2], id)));
-            Exec("INSERT OR IGNORE INTO invites(groupId,fromId,toId) VALUES(@g,@f,@t)", ("@g", g), ("@f", demo[2]), ("@t", id));
-        }
-    }
-
     public static void Init()
     {
         Exec(@"PRAGMA journal_mode=WAL;
@@ -469,57 +455,5 @@ CREATE INDEX IF NOT EXISTS ix_msg ON messages(groupId,id);
 CREATE TABLE IF NOT EXISTS friends(a INTEGER, b INTEGER, PRIMARY KEY(a,b));
 CREATE TABLE IF NOT EXISTS frequests(id INTEGER PRIMARY KEY, fromId INTEGER, toId INTEGER, UNIQUE(fromId,toId));
 CREATE TABLE IF NOT EXISTS invites(id INTEGER PRIMARY KEY, groupId INTEGER, fromId INTEGER, toId INTEGER, UNIQUE(groupId,toId));");
-        if ((long)Scalar("SELECT COUNT(*) FROM users")! == 0) Seed();
-    }
-
-    static void Seed()
-    {
-        const string pw = "Demo1234!";
-        (string n, string r, int age, string[] g, string st, string? p)[] us = {
-            ("nova_fox", "NA-East", 21, new[]{"Valorant","Apex Legends"}, "online", "Valorant"),
-            ("kairo", "EU", 24, new[]{"Minecraft","Lunar Client"}, "online", "Lunar Client"),
-            ("pixelpanda", "NA-West", 19, new[]{"Roblox","Minecraft"}, "online", "Roblox"),
-            ("glitch_3025", "NA-East", 23, new[]{"Counter-Strike 2","Valorant"}, "online", null),
-            ("hide_on_bush", "Asia", 27, new[]{"League of Legends","Lunar Client"}, "online", "Lunar Client"),
-            ("duderino", "OCE", 31, new[]{"Elden Ring","Helldivers 2"}, "idle", null),
-            ("gay_dhd", "EU", 22, new[]{"Overwatch 2","Marvel Rivals"}, "dnd", null),
-            ("requiem_rex", "NA-East", 26, new[]{"Resident Evil Requiem","Destiny 2"}, "online", "Resident Evil Requiem"),
-            ("luckey444", "EU", 17, new[]{"Fortnite","Rocket League"}, "online", null),
-            ("milu", "SA", 20, new[]{"Genshin Impact","Stardew Valley"}, "offline", null),
-            ("sraec", "ME", 28, new[]{"Call of Duty","Rainbow Six Siege"}, "online", "Rainbow Six Siege"),
-            ("moss_tea", "NA-West", 25, new[]{"Stardew Valley","Terraria","Palworld"}, "idle", null),
-        };
-        var ids = us.Select(u => CreateUser(u.n, pw, u.r, u.age, u.g, u.st, u.p, true)).ToList();
-
-        (string n, string g, string m, string r, int lo, int hi, string d, int owner)[] gs = {
-            ("Radiant Grind", "Valorant", "competitive", "NA-East", 18, 30, "Ranked-only stack hunting for Diamond+ players. Comms required.", 0),
-            ("Block Party", "Minecraft", "casual", "EU", 13, 99, "Survival world, relaxed builders, weekly events.", 1),
-            ("Obby Squad", "Roblox", "casual", "NA-West", 13, 20, "Hop between obbies and tycoons together.", 2),
-            ("Lunar Bedwars", "Lunar Client", "competitive", "Asia", 16, 30, "Bedwars scrims and practice every night.", 4),
-            ("Raccoon City Survivors", "Resident Evil Requiem", "casual", "NA-East", 18, 40, "Co-op runs, story talk, no spoilers in chat.", 7),
-            ("Fortnite Zero Build Chill", "Fortnite", "casual", "EU", 13, 25, "Zero build duos and squads.", 8),
-            ("Tarnished Together", "Elden Ring", "casual", "OCE", 21, 45, "Boss summons and lore chats.", 5),
-            ("Overwatch Climbers", "Overwatch 2", "competitive", "EU", 18, 28, "Gold to Master climb, VOD reviews.", 6),
-            ("Cozy Farmers", "Stardew Valley", "casual", "NA-West", 18, 99, "Share farm layouts and co-op seasons.", 11),
-            ("Siege Night Ops", "Rainbow Six Siege", "competitive", "ME", 18, 35, "Five-stack seeking an anchor and entry.", 10),
-        };
-        string[] chat = { "gg, who's up for another round?", "I'm on in 10!", "Anyone have a spare slot?", "Welcome to the group!", "Let's run it tonight." };
-        for (int i = 0; i < gs.Length; i++)
-        {
-            var x = gs[i];
-            var gid = Insert("INSERT INTO grps(name,game,mode,region,ageMin,ageMax,description,color,ownerId,created) VALUES(@n,@g,@m,@r,@lo,@hi,@d,@c,@o,@t)",
-                ("@n", x.n), ("@g", x.g), ("@m", x.m), ("@r", x.r), ("@lo", x.lo), ("@hi", x.hi), ("@d", x.d), ("@c", Palette[i % Palette.Length]), ("@o", ids[x.owner]), ("@t", DateTime.UtcNow.ToString("o")));
-            var mem = new HashSet<int> { x.owner, (x.owner + 1) % ids.Count, (x.owner + 3) % ids.Count, (x.owner + 5) % ids.Count };
-            foreach (var m in mem) Exec("INSERT OR IGNORE INTO members(groupId,userId) VALUES(@g,@u)", ("@g", gid), ("@u", ids[m]));
-            int k = 0;
-            foreach (var m in mem)
-                Exec("INSERT INTO messages(groupId,userId,text,createdAt) VALUES(@g,@u,@t,@c)", ("@g", gid), ("@u", ids[m]), ("@t", chat[(i + k++) % chat.Length]), ("@c", DateTime.UtcNow.AddMinutes(-30 + k * 3).ToString("o")));
-        }
-        for (int i = 0; i < ids.Count; i++)
-            foreach (var j in new[] { 1, 2 })
-            {
-                long a = ids[i], b = ids[(i + j) % ids.Count];
-                Exec("INSERT OR IGNORE INTO friends(a,b) VALUES(@a,@b)", ("@a", Math.Min(a, b)), ("@b", Math.Max(a, b)));
-            }
     }
 }
