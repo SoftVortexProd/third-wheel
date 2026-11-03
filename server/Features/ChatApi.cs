@@ -1,14 +1,391 @@
-﻿using static Core;
+﻿using System.Collections.Concurrent;
+using System.Net;
+using System.Text;
+using Microsoft.AspNetCore.Http.Features;
+using static Core;
 
-/// <summary>replies, reactions, edit/delete, attachments, GIFs, typing, RCKT subscription. Owns its routes and tables; Program.cs only calls Migrate() and Map().</summary>
+/// <summary>
+/// Everything about messages: listing/sending for groups and DMs, replies, reactions, edit/delete (soft), typing indicators,
+/// attachments (files on disk), and the admin-granted RCKT subscription. Group chats are kind "g" (messages table),
+/// DMs are kind "d" (dms table); both share one code path through <see cref="Conv"/>.
+/// </summary>
 public static class ChatApi
 {
-    /// <summary>Create tables / add columns. Runs on every start, so it must be idempotent (CREATE IF NOT EXISTS, check PRAGMA table_info before ALTER).</summary>
+    static readonly string[] Emoji = { "👍", "❤️", "😂", "😮", "😢", "🔥", "🎉", "👀" };
+    const long NormalLimit = 20L * 1024 * 1024, RcktLimit = 250L * 1024 * 1024;
+    const long NormalQuota = 1L << 30, RcktQuota = 10L << 30;
+    static string UploadDir => Path.Combine(Environment.GetEnvironmentVariable("TW_DATA")
+        ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "ThirdWheel"), "uploads");
+
+    // ---------------- schema ----------------
     public static void Migrate()
     {
+        foreach (var t in new[] { "messages", "dms" })
+        {
+            var cols = Db.Rows($"PRAGMA table_info({t})").Select(r => (string)r["name"]!).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            if (!cols.Contains("replyTo")) Db.Exec($"ALTER TABLE {t} ADD COLUMN replyTo INTEGER");
+            if (!cols.Contains("editedAt")) Db.Exec($"ALTER TABLE {t} ADD COLUMN editedAt TEXT");
+            if (!cols.Contains("deletedAt")) Db.Exec($"ALTER TABLE {t} ADD COLUMN deletedAt TEXT");
+            if (!cols.Contains("fileId")) Db.Exec($"ALTER TABLE {t} ADD COLUMN fileId INTEGER");
+            if (!cols.Contains("updatedAt")) { Db.Exec($"ALTER TABLE {t} ADD COLUMN updatedAt TEXT"); }
+            Db.Exec($"UPDATE {t} SET updatedAt=createdAt WHERE updatedAt IS NULL");
+        }
+        var ucols = Db.Rows("PRAGMA table_info(users)").Select(r => (string)r["name"]!).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        if (!ucols.Contains("rcktUntil")) Db.Exec("ALTER TABLE users ADD COLUMN rcktUntil TEXT");
+        Db.Exec(@"CREATE TABLE IF NOT EXISTS reactions(kind TEXT NOT NULL, msgId INTEGER NOT NULL, userId INTEGER NOT NULL, emoji TEXT NOT NULL, PRIMARY KEY(kind,msgId,userId,emoji));
+CREATE TABLE IF NOT EXISTS files(id INTEGER PRIMARY KEY, ownerId INTEGER, name TEXT, mime TEXT, size INTEGER, kind TEXT, path TEXT, convKind TEXT, convKey TEXT, msgId INTEGER, createdAt TEXT, deletedAt TEXT);");
+        Directory.CreateDirectory(UploadDir);
     }
+
+    // ---------------- conversations ----------------
+    /// <summary>One chat: a group ("g", Id = group id) or a DM with a friend ("d", Id = the other user's id), seen by user Me.</summary>
+    readonly record struct Conv(string K, long Id, long Me)
+    {
+        public bool G => K == "g";
+        public string Table => G ? "messages" : "dms";
+        public string Author => G ? "userId" : "fromId";
+        public bool Allowed => G ? IsMember(Id, Me) : (Id != Me && AreFriends(Me, Id));
+        public string Where => G ? "m.groupId=@k" : "m.a=@a AND m.b=@b";
+        public string Key => G ? Id.ToString() : $"{Math.Min(Me, Id)}:{Math.Max(Me, Id)}";
+        public (string, object?)[] P => G ? new (string, object?)[] { ("@k", Id) } : new (string, object?)[] { ("@a", Math.Min(Me, Id)), ("@b", Math.Max(Me, Id)) };
+        public string Sel => $"SELECT m.id, m.{Author} uid, m.text, m.createdAt, m.replyTo, m.editedAt, m.deletedAt, m.fileId, m.updatedAt FROM {Table} m WHERE {Where}";
+    }
+    static (string, object?)[] With(Conv c, params (string, object?)[] extra) => c.P.Concat(extra).ToArray();
+
+    static IResult WithConv(HttpContext ctx, string k, long id, Func<Conv, IResult> f) => WithUser(ctx, uid =>
+    {
+        var cv = new Conv(k, id, uid);
+        return cv.Allowed ? f(cv) : Err(k == "g" ? "Join the group to chat." : "You can only message friends.", 403);
+    });
+
+    /// <summary>Like WithConv, but site admins may act in groups they haven't joined (moderation).</summary>
+    static IResult WithConvMod(HttpContext ctx, string k, long id, Func<Conv, IResult> f) => WithUser(ctx, uid =>
+    {
+        var cv = new Conv(k, id, uid);
+        return cv.Allowed || (cv.G && IsAdmin(uid)) ? f(cv) : Err(k == "g" ? "Join the group to chat." : "You can only message friends.", 403);
+    });
+
+    static string Ids(IEnumerable<long> ids) => string.Join(",", ids.Distinct());   // ids come from our own DB (longs), never from the request text
+
+    // ---------------- building message objects ----------------
+    static List<object> Build(Conv c, List<Dictionary<string, object?>> rows)
+    {
+        var result = new List<object>();
+        if (rows.Count == 0) return result;
+        var msgIds = rows.Select(r => (long)r["id"]!).ToList();
+        var replyIds = rows.Where(r => r["replyTo"] != null).Select(r => Convert.ToInt64(r["replyTo"])).ToList();
+        var fileIds = rows.Where(r => r["fileId"] != null && r["deletedAt"] == null).Select(r => Convert.ToInt64(r["fileId"])).ToList();
+
+        var replies = replyIds.Count == 0 ? new() : Db.Rows($"SELECT m.id, m.{c.Author} uid, m.text, m.deletedAt FROM {c.Table} m WHERE {c.Where} AND m.id IN ({Ids(replyIds)})", c.P)
+            .ToDictionary(r => (long)r["id"]!);
+        var files = fileIds.Count == 0 ? new() : Db.Rows($"SELECT id,name,size,kind FROM files WHERE id IN ({Ids(fileIds)}) AND deletedAt IS NULL").ToDictionary(r => (long)r["id"]!);
+        var reacts = Db.Rows($"SELECT msgId, emoji, userId FROM reactions WHERE kind=@k AND msgId IN ({Ids(msgIds)})", ("@k", c.K));
+
+        var uids = rows.Select(r => (long)r["uid"]!).Concat(replies.Values.Select(r => (long)r["uid"]!)).Concat(reacts.Select(r => (long)r["userId"]!)).ToList();
+        var users = Db.Rows($"SELECT id,username,display,avatarVer,color,rcktUntil FROM users WHERE id IN ({Ids(uids)})").ToDictionary(r => (long)r["id"]!);
+        string NameOf(long id) => users.TryGetValue(id, out var u) ? ((u["display"] as string) ?? (string)u["username"]!) : "someone";
+
+        foreach (var r in rows)
+        {
+            long id = (long)r["id"]!, uid = (long)r["uid"]!;
+            var u = users.GetValueOrDefault(uid);
+            bool deleted = r["deletedAt"] != null;
+            object? reply = null;
+            if (r["replyTo"] != null && replies.TryGetValue(Convert.ToInt64(r["replyTo"]), out var rp))
+            {
+                bool rd = rp["deletedAt"] != null;
+                var plain = WebUtility.HtmlDecode((string)rp["text"]!);
+                reply = new { id = (long)rp["id"]!, userId = (long)rp["uid"]!, name = NameOf((long)rp["uid"]!), deleted = rd, text = rd ? "" : Enc(plain.Length > 120 ? plain[..120] + "…" : plain) };
+            }
+            object? file = null;
+            if (!deleted && r["fileId"] != null && files.TryGetValue(Convert.ToInt64(r["fileId"]), out var f))
+                file = new { id = (long)f["id"]!, name = (string)f["name"]!, size = Convert.ToInt64(f["size"]), kind = (string)f["kind"]!, url = $"/api/files/{(long)f["id"]!}" };
+            var rx = deleted ? new List<object>() : Emoji.Select(e =>
+            {
+                var who = reacts.Where(x => (long)x["msgId"]! == id && (string)x["emoji"]! == e).Select(x => (long)x["userId"]!).ToList();
+                return who.Count == 0 ? null : (object)new { emoji = e, count = who.Count, mine = who.Contains(c.Me), users = who.Take(12).Select(NameOf).ToList() };
+            }).Where(x => x != null).ToList()!;
+            result.Add(new
+            {
+                id, userId = uid, username = (string?)u?["username"] ?? "deleted", displayName = u?["display"] as string,
+                avatar = u == null ? null : AvatarUrl(uid, u["avatarVer"]), avatarColor = (string?)u?["color"] ?? "#6b6b75", rckt = u != null && IsRckt(u["rcktUntil"]),
+                text = deleted ? "" : (string)r["text"]!, createdAt = (string)r["createdAt"]!, editedAt = r["editedAt"] as string, updatedAt = (string)r["updatedAt"]!,
+                deleted, replyTo = reply, file, reactions = rx
+            });
+        }
+        return result;
+    }
+
+    static List<Dictionary<string, object?>> Fetch(Conv c, string extraSql, params (string, object?)[] extra) => Db.Rows(c.Sel + extraSql, With(c, extra));
+    static object? One(Conv c, long mid) { var rows = Fetch(c, " AND m.id=@mid", ("@mid", mid)); return rows.Count == 0 ? null : Build(c, rows)[0]; }
+
+    // ---------------- typing indicators (memory only) ----------------
+    static readonly ConcurrentDictionary<string, ConcurrentDictionary<long, (DateTime At, string Name)>> Typing = new();
+    static List<string> TypingNames(Conv c)
+    {
+        if (!Typing.TryGetValue(c.K + ":" + c.Key, out var d)) return new();
+        var now = DateTime.UtcNow;
+        foreach (var kv in d.Where(x => now - x.Value.At > TimeSpan.FromSeconds(5)).ToList()) d.TryRemove(kv.Key, out _);
+        return d.Where(x => x.Key != c.Me).Select(x => x.Value.Name).Take(4).ToList();
+    }
+
+    // ---------------- routes ----------------
+    record ChatIn(string? Text, long? ReplyTo, long? FileId);
+    record EditIn(string? Text);
+    record ReactIn(string? Emoji);
+    record RcktIn(int? Days, bool? Forever, bool? Revoke);
 
     public static void Map(RouteGroupBuilder api)
     {
+        foreach (var kind in new[] { "g", "d" })
+        {
+            var k = kind;
+            var list = k == "g" ? "groups/{id:long}/messages" : "dms/{id:long}";   // GET list + POST send (unchanged URLs)
+            var root = k == "g" ? "groups/{id:long}" : "dms/{id:long}";
+
+            // history (array). Old clients and first load.
+            api.MapGet(list, (HttpContext c, long id, long? after) => WithConv(c, k, id, cv =>
+            {
+                List<Dictionary<string, object?>> rows;
+                if (after != null) rows = Fetch(cv, " AND m.id>@after ORDER BY m.id ASC LIMIT 200", ("@after", after));
+                else { rows = Fetch(cv, " ORDER BY m.id DESC LIMIT 100"); rows.Reverse(); }
+                return Results.Json(Build(cv, rows));
+            }));
+
+            // poll: new messages, edited/deleted/reacted ones, and who is typing
+            api.MapGet(root + "/sync", (HttpContext c, long id, long? after, string? since) => WithConv(c, k, id, cv =>
+            {
+                var t0 = Now();
+                var fresh = Fetch(cv, " AND m.id>@after ORDER BY m.id ASC LIMIT 200", ("@after", after ?? 0));
+                var changed = string.IsNullOrEmpty(since) || since.Length > 40 ? new() :
+                    Fetch(cv, " AND m.id<=@after AND m.updatedAt>@since ORDER BY m.updatedAt ASC LIMIT 100", ("@after", after ?? 0), ("@since", since));
+                return Results.Json(new { messages = Build(cv, fresh), changed = Build(cv, changed), typing = TypingNames(cv), serverTime = t0 });
+            }));
+
+            api.MapPost(list, (HttpContext c, long id, ChatIn b) => WithConv(c, k, id, cv =>
+            {
+                if (cv.G) { var blocked = GroupPostBlock(cv.Id, cv.Me); if (blocked != null) return Err(blocked, 403); }
+                var text = Clean(b.Text, 1000);
+                if (text.Length == 0 && b.FileId == null) return Err("Message is empty.");
+                if (Limited(cv.G ? $"msg:{cv.Me}" : $"dm:{cv.Me}", cv.G ? 30 : 40, TimeSpan.FromMinutes(1), true)) return Err("Slow down a little.", 429);
+                if (b.ReplyTo != null && Fetch(cv, " AND m.id=@mid", ("@mid", b.ReplyTo)).Count == 0) return Err("The message you're replying to is gone.", 404);
+                if (b.FileId != null)
+                {
+                    var f = Db.Row("SELECT * FROM files WHERE id=@i AND deletedAt IS NULL", ("@i", b.FileId));
+                    if (f == null || (long)f["ownerId"]! != cv.Me || f["msgId"] != null || (string)f["convKind"]! != cv.K || (string)f["convKey"]! != cv.Key) return Err("That upload can't be attached here.", 400);
+                    if ((string)f["kind"]! == "gif" && !IsRcktUser(cv.Me)) return Err("GIFs need RCKT. Ask an admin for RCKT.", 403);
+                }
+                var now = Now();
+                long mid = cv.G
+                    ? Db.Insert("INSERT INTO messages(groupId,userId,text,createdAt,updatedAt,replyTo,fileId) VALUES(@g,@u,@t,@c,@c,@r,@f)", ("@g", cv.Id), ("@u", cv.Me), ("@t", Enc(text)), ("@c", now), ("@r", b.ReplyTo), ("@f", b.FileId))
+                    : Db.Insert("INSERT INTO dms(a,b,fromId,text,createdAt,updatedAt,replyTo,fileId) VALUES(@a,@b,@u,@t,@c,@c,@r,@f)", ("@a", Math.Min(cv.Me, cv.Id)), ("@b", Math.Max(cv.Me, cv.Id)), ("@u", cv.Me), ("@t", Enc(text)), ("@c", now), ("@r", b.ReplyTo), ("@f", b.FileId));
+                if (b.FileId != null) Db.Exec("UPDATE files SET msgId=@m WHERE id=@f", ("@m", mid), ("@f", b.FileId));
+                if (Typing.TryGetValue(cv.K + ":" + cv.Key, out var ty)) ty.TryRemove(cv.Me, out _);
+                if (cv.G) Hooks.GroupMessage(cv.Id, mid, cv.Me, Enc(text)); else Hooks.DirectMessage(cv.Id, mid, cv.Me, Enc(text));
+                return Results.Json(One(cv, mid));
+            }));
+
+            // edit own message
+            api.MapPatch(root + "/messages/{mid:long}", (HttpContext c, long id, long mid, EditIn b) => WithConv(c, k, id, cv =>
+            {
+                var row = Fetch(cv, " AND m.id=@mid", ("@mid", mid)).FirstOrDefault();
+                if (row == null) return Err("Message not found.", 404);
+                if ((long)row["uid"]! != cv.Me) return Err("You can only edit your own messages.", 403);
+                if (row["deletedAt"] != null) return Err("That message was deleted.", 409);
+                var text = Clean(b.Text, 1000);
+                if (text.Length == 0) return Err("Message is empty.");
+                if (Limited($"edit:{cv.Me}", 30, TimeSpan.FromMinutes(1), true)) return Err("Slow down a little.", 429);
+                var now = Now();
+                Db.Exec($"UPDATE {cv.Table} SET text=@t, editedAt=@n, updatedAt=@n WHERE id=@i", ("@t", Enc(text)), ("@n", now), ("@i", mid));
+                return Results.Json(One(cv, mid));
+            }));
+
+            // delete (soft). Own messages; in groups also moderators/owners/site admins.
+            api.MapDelete(root + "/messages/{mid:long}", (HttpContext c, long id, long mid) => WithConvMod(c, k, id, cv =>
+            {
+                var row = Fetch(cv, " AND m.id=@mid", ("@mid", mid)).FirstOrDefault();
+                if (row == null) return Err("Message not found.", 404);
+                bool own = (long)row["uid"]! == cv.Me;
+                if (!own && !(cv.G && CanModerateGroup(cv.Id, cv.Me))) return Err("You can't delete that message.", 403);
+                if (row["deletedAt"] != null) return Results.Json(One(cv, mid));
+                var now = Now();
+                Db.Exec($"UPDATE {cv.Table} SET text='', deletedAt=@n, updatedAt=@n, fileId=NULL WHERE id=@i", ("@n", now), ("@i", mid));
+                if (row["fileId"] != null)
+                {
+                    var f = Db.Row("SELECT path FROM files WHERE id=@i", ("@i", row["fileId"]));
+                    Db.Exec("UPDATE files SET deletedAt=@n WHERE id=@i", ("@n", now), ("@i", row["fileId"]));
+                    try { if (f != null) File.Delete((string)f["path"]!); } catch { /* disk cleanup is best effort */ }
+                }
+                Db.Exec("DELETE FROM reactions WHERE kind=@k AND msgId=@m", ("@k", cv.K), ("@m", mid));
+                return Results.Json(One(cv, mid));
+            }));
+
+            // toggle a reaction
+            api.MapPost(root + "/messages/{mid:long}/react", (HttpContext c, long id, long mid, ReactIn b) => WithConv(c, k, id, cv =>
+            {
+                if (b.Emoji == null || !Emoji.Contains(b.Emoji)) return Err("Pick one of the reaction emoji.");
+                var row = Fetch(cv, " AND m.id=@mid", ("@mid", mid)).FirstOrDefault();
+                if (row == null) return Err("Message not found.", 404);
+                if (row["deletedAt"] != null) return Err("That message was deleted.", 409);
+                if (Limited($"react:{cv.Me}", 90, TimeSpan.FromMinutes(1), true)) return Err("Slow down a little.", 429);
+                var had = Db.Scalar("SELECT 1 FROM reactions WHERE kind=@k AND msgId=@m AND userId=@u AND emoji=@e", ("@k", cv.K), ("@m", mid), ("@u", cv.Me), ("@e", b.Emoji)) != null;
+                if (had) Db.Exec("DELETE FROM reactions WHERE kind=@k AND msgId=@m AND userId=@u AND emoji=@e", ("@k", cv.K), ("@m", mid), ("@u", cv.Me), ("@e", b.Emoji));
+                else Db.Exec("INSERT OR IGNORE INTO reactions(kind,msgId,userId,emoji) VALUES(@k,@m,@u,@e)", ("@k", cv.K), ("@m", mid), ("@u", cv.Me), ("@e", b.Emoji));
+                Db.Exec($"UPDATE {cv.Table} SET updatedAt=@n WHERE id=@i", ("@n", Now()), ("@i", mid));
+                return Results.Json(One(cv, mid));
+            }));
+
+            // "X is typing…" (memory only; entries expire after 5 s)
+            api.MapPost(root + "/typing", (HttpContext c, long id) => WithConv(c, k, id, cv =>
+            {
+                if (Limited($"typing:{cv.Me}", 90, TimeSpan.FromMinutes(1), true)) return Results.Json(new { ok = true });
+                var u = Db.Row("SELECT username,display FROM users WHERE id=@i", ("@i", cv.Me))!;
+                Typing.GetOrAdd(cv.K + ":" + cv.Key, _ => new())[cv.Me] = (DateTime.UtcNow, (u["display"] as string) ?? (string)u["username"]!);
+                return Results.Json(new { ok = true });
+            }));
+        }
+
+        MapFiles(api);
+        MapRckt(api);
+    }
+
+    // ---------------- attachments ----------------
+    static string SafeName(string? raw)
+    {
+        var s = new string((raw ?? "").Where(ch => !char.IsControl(ch) && ch is not ('/' or '\\' or ':' or '*' or '?' or '"' or '<' or '>' or '|')).ToArray()).Trim().Trim('.');
+        if (s.Length > 100) s = s[..100];
+        return s.Length == 0 ? "file" : s;
+    }
+
+    /// <summary>Decides the file kind from the first bytes, never from the client's Content-Type.</summary>
+    static (string kind, string mime) Sniff(byte[] d, int n)
+    {
+        if (n >= 8 && d[0] == 0x89 && d[1] == 0x50 && d[2] == 0x4E && d[3] == 0x47) return ("image", "image/png");
+        if (n >= 3 && d[0] == 0xFF && d[1] == 0xD8 && d[2] == 0xFF) return ("image", "image/jpeg");
+        if (n >= 6 && d[0] == 'G' && d[1] == 'I' && d[2] == 'F' && d[3] == '8' && (d[4] == '7' || d[4] == '9') && d[5] == 'a') return ("gif", "image/gif");
+        if (n >= 12 && d[0] == 'R' && d[1] == 'I' && d[2] == 'F' && d[3] == 'F' && d[8] == 'W' && d[9] == 'E' && d[10] == 'B' && d[11] == 'P') return ("image", "image/webp");
+        return ("file", "application/octet-stream");
+    }
+
+    static void MapFiles(RouteGroupBuilder api)
+    {
+        api.MapPost("uploads", async Task<IResult> (HttpContext c, string kind, long id) =>
+        {
+            var uid = CurrentUser(c);
+            if (uid is null) return Err("Not signed in.", 401);
+            if (kind is not ("g" or "d")) return Err("Bad upload target.");
+            var cv = new Conv(kind, id, uid.Value);
+            if (!cv.Allowed) return Err(kind == "g" ? "Join the group to share files." : "You can only share files with friends.", 403);
+            if (Limited($"up:{uid}", 40, TimeSpan.FromHours(1), true)) return Err("Too many uploads. Try again later.", 429);
+            bool rckt = IsRcktUser(uid.Value);
+            long limit = rckt ? RcktLimit : NormalLimit;
+            string tooBig = rckt ? "Files can be up to 250 MB." : "Files can be up to 20 MB. RCKT raises it to 250 MB.";
+            if (c.Request.ContentLength > limit) return Err(tooBig, 413);
+            if (c.Request.ContentLength == 0) return Err("That file is empty.");
+            var feat = c.Features.Get<IHttpMaxRequestBodySizeFeature>();
+            if (feat != null && !feat.IsReadOnly) feat.MaxRequestBodySize = limit;   // only this endpoint may exceed Kestrel's default
+            long used = Convert.ToInt64(Db.Scalar("SELECT COALESCE(SUM(size),0) FROM files WHERE ownerId=@u AND deletedAt IS NULL", ("@u", uid.Value)));
+            if (used >= (rckt ? RcktQuota : NormalQuota)) return Err("Your file storage is full. Delete some old files.", 403);
+            CleanOrphans();
+
+            string name;
+            try { name = SafeName(Uri.UnescapeDataString(c.Request.Headers["X-Filename"].ToString())); } catch { name = "file"; }
+            Directory.CreateDirectory(UploadDir);
+            var path = Path.Combine(UploadDir, Guid.NewGuid().ToString("N"));
+            long size = 0; var head = new byte[16]; int headLen = 0;
+            try
+            {
+                await using (var fs = new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.None, 81920, useAsync: true))
+                {
+                    var buf = new byte[81920]; int n;
+                    while ((n = await c.Request.Body.ReadAsync(buf)) > 0)
+                    {
+                        if (headLen < head.Length) { var take = Math.Min(n, head.Length - headLen); Array.Copy(buf, 0, head, headLen, take); headLen += take; }
+                        size += n;
+                        if (size > limit) { fs.Close(); File.Delete(path); return Err(tooBig, 413); }
+                        await fs.WriteAsync(buf.AsMemory(0, n));
+                    }
+                }
+            }
+            catch (BadHttpRequestException) { try { File.Delete(path); } catch { } return Err(tooBig, 413); }
+            catch { try { File.Delete(path); } catch { } return Err("The upload was interrupted.", 400); }
+            if (size == 0) { File.Delete(path); return Err("That file is empty."); }
+
+            var (fkind, mime) = Sniff(head, headLen);
+            if (fkind == "gif" && !rckt) { File.Delete(path); return Err("GIFs need RCKT. Ask an admin for RCKT.", 403); }
+            var fid = Db.Insert("INSERT INTO files(ownerId,name,mime,size,kind,path,convKind,convKey,createdAt) VALUES(@o,@n,@m,@s,@k,@p,@ck,@cy,@c)",
+                ("@o", uid.Value), ("@n", name), ("@m", mime), ("@s", size), ("@k", fkind), ("@p", path), ("@ck", cv.K), ("@cy", cv.Key), ("@c", Now()));
+            return Results.Json(new { id = fid, name, size, kind = fkind, url = $"/api/files/{fid}" });
+        });
+
+        // Only people in the conversation (or the uploader, before it is sent) can fetch a file.
+        api.MapGet("files/{id:long}", (HttpContext c, long id) => WithUser(c, uid =>
+        {
+            var f = Db.Row("SELECT * FROM files WHERE id=@i AND deletedAt IS NULL", ("@i", id));
+            if (f == null || !File.Exists((string)f["path"]!)) return Err("File not found.", 404);
+            bool ok;
+            if (f["msgId"] == null) ok = (long)f["ownerId"]! == uid;
+            else if ((string)f["convKind"]! == "g") ok = long.TryParse((string)f["convKey"]!, out var gid) && IsMember(gid, uid);
+            else { var p = ((string)f["convKey"]!).Split(':'); ok = p.Length == 2 && (p[0] == uid.ToString() || p[1] == uid.ToString()); }
+            if (!ok) return Err("File not found.", 404);
+
+            c.Response.Headers["Content-Security-Policy"] = "default-src 'none'; sandbox";
+            c.Response.Headers["Cache-Control"] = "private, max-age=31536000, immutable";
+            var kind = (string)f["kind"]!;
+            if (kind is "image" or "gif") return Results.File((string)f["path"]!, (string)f["mime"]!, enableRangeProcessing: true);
+            return Results.File((string)f["path"]!, "application/octet-stream", fileDownloadName: (string)f["name"]!, enableRangeProcessing: true);   // attachment: never rendered by the browser
+        }));
+    }
+
+    static DateTime lastOrphanSweep = DateTime.MinValue;
+    /// <summary>Uploads that were never sent in a message are removed after two hours.</summary>
+    static void CleanOrphans()
+    {
+        if (DateTime.UtcNow - lastOrphanSweep < TimeSpan.FromMinutes(10)) return;
+        lastOrphanSweep = DateTime.UtcNow;
+        var cutoff = DateTime.UtcNow.AddHours(-2).ToString("o");
+        foreach (var f in Db.Rows("SELECT id,path FROM files WHERE msgId IS NULL AND deletedAt IS NULL AND createdAt<@c", ("@c", cutoff)))
+        {
+            try { File.Delete((string)f["path"]!); } catch { /* ignore */ }
+            Db.Exec("UPDATE files SET deletedAt=@n WHERE id=@i", ("@n", Now()), ("@i", f["id"]));
+        }
+    }
+
+    // ---------------- RCKT ----------------
+    static void MapRckt(RouteGroupBuilder api)
+    {
+        api.MapGet("admin/users/{id:long}/rckt", (HttpContext c, long id) => WithAdmin(c, _ =>
+        {
+            var u = Db.Row("SELECT username,rcktUntil FROM users WHERE id=@i", ("@i", id));
+            return u == null ? Err("User not found.", 404) : Results.Json(new { username = (string)u["username"]!, until = u["rcktUntil"] as string, active = IsRckt(u["rcktUntil"]) });
+        }));
+
+        api.MapPost("admin/users/{id:long}/rckt", (HttpContext c, long id, RcktIn b) => WithAdmin(c, me =>
+        {
+            var u = Db.Row("SELECT username,rcktUntil FROM users WHERE id=@i", ("@i", id));
+            if (u == null) return Err("User not found.", 404);
+            string? until; string what;
+            if (b.Revoke == true) { until = null; what = "revoked RCKT"; }
+            else if (b.Forever == true) { until = "forever"; what = "granted RCKT (forever)"; }
+            else if (b.Days is >= 1 and <= 3650)
+            {
+                var start = DateTime.UtcNow;
+                var cur = u["rcktUntil"] as string;
+                if (IsRckt(cur) && cur != "forever" && DateTime.TryParse(cur, null, System.Globalization.DateTimeStyles.RoundtripKind, out var d)) start = d.ToUniversalTime();   // extend an active plan
+                until = start.AddDays(b.Days.Value).ToString("o"); what = $"granted RCKT ({b.Days} days)";
+            }
+            else return Err("Choose a number of days, forever, or revoke.");
+            Db.Exec("UPDATE users SET rcktUntil=@u WHERE id=@i", ("@u", until), ("@i", id));
+            Audit(me, what, (string)u["username"]!);
+            return Results.Json(new { username = (string)u["username"]!, until, active = IsRckt(until) });
+        }));
+
+        // Used by the UI to put an RCKT badge on a profile.
+        api.MapGet("rckt/lookup", (HttpContext c, string? username) => WithUser(c, uid =>
+        {
+            if (Limited($"rl:{uid}", 120, TimeSpan.FromMinutes(1), true)) return Err("Slow down a little.", 429);
+            if (username == null || !userRx.IsMatch(username)) return Results.Json(new { rckt = false });
+            return Results.Json(new { rckt = IsRckt(Db.Scalar("SELECT rcktUntil FROM users WHERE username=@u COLLATE NOCASE", ("@u", username))) });
+        }));
     }
 }

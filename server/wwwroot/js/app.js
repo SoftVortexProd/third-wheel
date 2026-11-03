@@ -683,7 +683,7 @@ async function groupView(id, tok) {
     showPage(); return;
   }
   const chat = makeChat({
-    placeholder: 'Message ' + T(g.name), label: 'Group chat', tok,
+    placeholder: 'Message ' + T(g.name), label: 'Group chat', tok, conv: { kind: 'g', id: g.id },
     list: (after) => api('GET', `/api/groups/${enc(g.id)}/messages` + qs({ after })),
     post: (text) => api('POST', `/api/groups/${enc(g.id)}/messages`, { text })
   });
@@ -750,7 +750,9 @@ async function openProfile(id) {
 }
 
 /* Shared chat pane (used by DMs). */
-function makeChat({ placeholder, label, list, post, tok }) {
+function makeChat(cfg) {
+  if (cfg.conv && window.TWChat) return window.TWChat.make(cfg);   // full-featured pane lives in js/chat.js
+  const { placeholder, label, list, post, tok } = cfg;
   const log = h('div', { class: 'chat-log', role: 'log', 'aria-live': 'polite', 'aria-label': label, tabindex: '0' });
   const input = h('input', { class: 'input', type: 'text', maxlength: 500, placeholder, 'aria-label': 'Message', autocomplete: 'off' });
   const send = h('button', { class: 'btn', type: 'submit', 'aria-label': 'Send message' }, icon('send', 18));
@@ -804,7 +806,7 @@ async function dmView(id, tok) {
   const head = h('div', { class: 'ghead dmhead' }, h('div', { class: 'top' },
     h('a', { class: 'icon-btn mobile-only', href: '#/friends', 'aria-label': 'Back to friends' }, icon('back')), who));
   const chat = makeChat({
-    placeholder: 'Message ' + nm(p), label: 'Direct messages with ' + nm(p), tok,
+    placeholder: 'Message ' + nm(p), label: 'Direct messages with ' + nm(p), tok, conv: { kind: 'd', id: p.id },
     list: (after) => api('GET', `/api/dms/${enc(p.id)}` + qs({ after })),
     post: (text) => api('POST', `/api/dms/${enc(p.id)}`, { text })
   });
