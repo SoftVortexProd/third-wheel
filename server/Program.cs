@@ -6,20 +6,33 @@ using System.Text.Json;
 using System.Text.RegularExpressions;
 using Microsoft.Data.Sqlite;
 
-var dataDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "ThirdWheel");
+// Deployment knobs (all optional): TW_DATA = data folder, TW_URLS = listen address.
+var dataDir = Environment.GetEnvironmentVariable("TW_DATA")
+    ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "ThirdWheel");
 Directory.CreateDirectory(dataDir);
 Db.ConnString = new SqliteConnectionStringBuilder { DataSource = Path.Combine(dataDir, "tw.db"), Pooling = true }.ToString();
 Db.Init();
 
-var builder = WebApplication.CreateBuilder(args);
-builder.WebHost.UseUrls("http://127.0.0.1:5173");
+// A published server ships its wwwroot beside the exe; as a Windows service the working dir is System32, so pin the content root.
+var exeDir = AppContext.BaseDirectory;
+var builder = WebApplication.CreateBuilder(new WebApplicationOptions
+{
+    Args = args,
+    ContentRootPath = Directory.Exists(Path.Combine(exeDir, "wwwroot")) ? exeDir : null
+});
+builder.Host.UseWindowsService(o => o.ServiceName = "ThirdWheel");
+builder.WebHost.UseUrls(Environment.GetEnvironmentVariable("TW_URLS") ?? "http://127.0.0.1:5173");
 builder.Logging.SetMinimumLevel(LogLevel.Warning);
 var app = builder.Build();
+
+// Behind a local reverse proxy (Caddy) this restores the real client IP and https scheme. Only loopback proxies are trusted.
+app.UseForwardedHeaders(new ForwardedHeadersOptions { ForwardedHeaders = Microsoft.AspNetCore.HttpOverrides.ForwardedHeaders.XForwardedFor | Microsoft.AspNetCore.HttpOverrides.ForwardedHeaders.XForwardedProto });
 
 // ---- security headers + CSRF ----
 app.Use(async (ctx, next) =>
 {
     var h = ctx.Response.Headers;
+    if (ctx.Request.IsHttps) h["Strict-Transport-Security"] = "max-age=31536000";
     h["Content-Security-Policy"] = "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'";
     h["X-Content-Type-Options"] = "nosniff";
     h["Referrer-Policy"] = "no-referrer";
@@ -72,7 +85,7 @@ void StartSession(HttpContext c, long uid)
 {
     var tok = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32)).Replace('+', '-').Replace('/', '_').TrimEnd('=');
     Db.Exec("INSERT INTO sessions(tokenHash,userId,created) VALUES(@t,@u,@c)", ("@t", Sha(tok)), ("@u", uid), ("@c", Now()));
-    c.Response.Cookies.Append("tw_session", tok, new CookieOptions { HttpOnly = true, SameSite = SameSiteMode.Strict, Path = "/", MaxAge = TimeSpan.FromDays(30), IsEssential = true });
+    c.Response.Cookies.Append("tw_session", tok, new CookieOptions { HttpOnly = true, Secure = c.Request.IsHttps, SameSite = SameSiteMode.Strict, Path = "/", MaxAge = TimeSpan.FromDays(30), IsEssential = true });
 }
 static string Now() => DateTime.UtcNow.ToString("o");
 

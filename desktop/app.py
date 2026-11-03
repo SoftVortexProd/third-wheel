@@ -1,6 +1,7 @@
 """Third Wheel desktop shell: starts the bundled C# server and shows the web UI."""
 import atexit
 import ctypes
+import json
 import os
 import subprocess
 import sys
@@ -9,11 +10,11 @@ from pathlib import Path
 
 from PySide6.QtCore import QSettings, QTimer, QUrl, Qt
 from PySide6.QtGui import QColor, QDesktopServices, QIcon, QPalette
-from PySide6.QtWebEngineCore import QWebEnginePage, QWebEngineProfile, QWebEngineSettings
+from PySide6.QtWebEngineCore import QWebEnginePage, QWebEngineProfile, QWebEngineScript, QWebEngineSettings
 from PySide6.QtWebEngineWidgets import QWebEngineView
 from PySide6.QtWidgets import QApplication, QLabel, QMainWindow, QStackedWidget
 
-HOST_URL = "http://127.0.0.1:5173"
+LOCAL_URL = "http://127.0.0.1:5173"
 BG = "#0f1115"
 ACCENT = "#7c8cff"
 MUTED = "#8b93a7"
@@ -23,6 +24,29 @@ def base_dir() -> Path:
     if getattr(sys, "frozen", False):
         return Path(sys.executable).parent
     return Path(__file__).resolve().parent
+
+
+def configured_server() -> str | None:
+    """Hosted server URL: TW_SERVER env var wins, then config.json next to the exe ({"server": "https://..."})."""
+    url = os.environ.get("TW_SERVER", "").strip()
+    if not url:
+        try:
+            url = str(json.loads((base_dir() / "config.json").read_text("utf-8")).get("server", "")).strip()
+        except Exception:
+            url = ""
+    q = QUrl(url)
+    if url and q.scheme() in ("http", "https") and q.host():
+        return url.rstrip("/")
+    return None
+
+
+REMOTE_URL = configured_server()
+HOST_URL = REMOTE_URL or LOCAL_URL
+
+
+def same_origin(url: QUrl) -> bool:
+    a, b = url, QUrl(HOST_URL)
+    return a.scheme() == b.scheme() and a.host() == b.host() and a.port(-1) == b.port(-1)
 
 
 def resource(name: str) -> Path:
@@ -42,7 +66,7 @@ def find_server() -> Path | None:
 
 def server_up() -> bool:
     try:
-        with urllib.request.urlopen(HOST_URL + "/api/meta", timeout=1) as r:
+        with urllib.request.urlopen(HOST_URL + "/api/meta", timeout=3 if REMOTE_URL else 1) as r:
             return r.status == 200
     except Exception:
         return False
@@ -84,7 +108,7 @@ class Job:
 
 class Page(QWebEnginePage):
     def acceptNavigationRequest(self, url, nav_type, is_main):
-        if url.scheme() in ("about", "blob", "data") or url.toString().startswith(HOST_URL):
+        if url.scheme() in ("about", "blob", "data") or same_origin(url):
             return True
         QDesktopServices.openUrl(url)
         return False
@@ -122,6 +146,15 @@ class Main(QMainWindow):
         self.profile.setPersistentStoragePath(str(data))
         self.profile.setCachePath(str(data / "cache"))
         self.profile.setPersistentCookiesPolicy(QWebEngineProfile.PersistentCookiesPolicy.ForcePersistentCookies)
+        # The window inherits Windows' "reduce motion" switch, which silently disables every animation.
+        # Default the desktop app to animations on (still changeable in Settings -> Animations).
+        motion = QWebEngineScript()
+        motion.setName("tw-motion-default")
+        motion.setSourceCode("try{if(!localStorage.getItem('tw_motion'))localStorage.setItem('tw_motion','on')}catch(e){}")
+        motion.setInjectionPoint(QWebEngineScript.InjectionPoint.DocumentCreation)
+        motion.setWorldId(QWebEngineScript.ScriptWorldId.MainWorld)
+        motion.setRunsOnSubFrames(False)
+        self.profile.scripts().insert(motion)
         self.page = Page(self.profile, self)
         self.page.setBackgroundColor(QColor(BG))
         self.view = QWebEngineView()
@@ -149,6 +182,9 @@ class Main(QMainWindow):
                 return
 
     def start_server(self):
+        if REMOTE_URL:  # hosted server: nothing to launch locally
+            self.splash.setText("Third Wheel\n\nConnecting…")
+            return
         if server_up():
             return
         exe = find_server()
@@ -170,6 +206,9 @@ class Main(QMainWindow):
         elif self.proc is not None and self.proc.poll() is not None:
             self.timer.stop()
             self.splash.setText(f"Third Wheel\n\nServer exited (code {self.proc.returncode}).")
+        elif REMOTE_URL:
+            # keep retrying: the hosted server may be restarting or the network briefly down
+            self.splash.setText(f"Third Wheel\n\nCan't reach {REMOTE_URL}\nRetrying…")
         elif self.tries > 100:
             self.timer.stop()
             self.splash.setText("Third Wheel\n\nServer did not respond.")

@@ -25,5 +25,13 @@ try {
 
 $target = Join-Path $root "dist\ThirdWheel\server"
 if (Test-Path $target) { Remove-Item $target -Recurse -Force }
-Copy-Item (Join-Path $root "dist\server") $target -Recurse
+$cfg = Join-Path $root "desktop\config.json"
+if (Test-Path $cfg) {
+    # Hosted mode: the app talks to the server in config.json, so no local server is bundled.
+    Copy-Item $cfg (Join-Path $root "dist\ThirdWheel\config.json")
+    Write-Host "Hosted mode -> $((Get-Content $cfg -Raw | ConvertFrom-Json).server)"
+} else {
+    Copy-Item (Join-Path $root "dist\server") $target -Recurse
+    Write-Host "Local mode (no desktop\config.json): bundled server included."
+}
 Write-Host "Built: $root\dist\ThirdWheel\ThirdWheel.exe"
