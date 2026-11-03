@@ -326,13 +326,14 @@ CREATE TABLE IF NOT EXISTS user_prefs(userId INTEGER PRIMARY KEY, accentColor TE
             if (b.TryGetProperty("playing", out var pl))
             {
                 var p = (pl.GetString() ?? "").Trim();
-                set.Add("playing=@pl"); ps.Add(("@pl", p.Length == 0 ? null : Enc(Clean(p, 40)))); changed.Add("playing");
+                var pg = p.Length == 0 ? null : GamesApi.Canonical(p);   // a real game or nothing
+                if (p.Length > 0 && pg == null) return Err("Pick a real game from the list.");
+                set.Add("playing=@pl"); ps.Add(("@pl", pg == null ? null : Enc(pg))); changed.Add("playing");
             }
             if (b.TryGetProperty("favoriteGames", out var fg))
             {
                 if (fg.ValueKind != JsonValueKind.Array) return Err("favoriteGames must be a list.");
-                var games = fg.EnumerateArray().Select(x => x.GetString()?.Trim() ?? "").Where(x => !string.IsNullOrEmpty(x) && x.Length <= 80).Select(x => Clean(x, 80)).Distinct().Take(12).ToArray();
-                foreach (var g in games) GamesApi.EnsureGame(g);
+                var games = GamesApi.FilterKnown(fg.EnumerateArray().Select(x => x.GetString()), 12);
                 set.Add("games=@fg"); ps.Add(("@fg", JsonSerializer.Serialize(games))); changed.Add("favorite games");
             }
             if (set.Count == 0) return Err("Nothing to change.");

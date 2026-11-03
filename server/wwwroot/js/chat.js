@@ -7,7 +7,7 @@ const TW = window.TW;
 if (!TW) return;
 const { h, api, toast, T, nm, avatar, openSheet, confirmSheet, btn, field, selectEl } = TW;
 const MB = 1024 * 1024;
-const EMOJI = ['??', '??', '??', '??', '??', '??', '??', '??'];
+const EMOJI = ['👍', '❤️', '😂', '😮', '😢', '🔥', '🎉', '👀'];   // must match ChatApi.Emoji; keep this file saved as UTF-8
 const FILE_URL = /^\/api\/files\/\d+$/;
 const reduce = () => window.TWM && TWM.reduce();
 

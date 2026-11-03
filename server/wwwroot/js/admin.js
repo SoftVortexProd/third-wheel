@@ -46,8 +46,7 @@ async function editUser(u, onDone) {
   const region = selectEl(TW.S.meta.regions, d.region || '', 'Choose a region');
   const age = h('input', { class: 'input', type: 'number', min: 13, max: 99, inputmode: 'numeric', value: d.age || '' });
   const status = selectEl(STATUS, d.status || 'online');
-  const playing = h('input', { class: 'input', type: 'text', maxlength: 40, value: T(d.playing || ''), placeholder: 'Nothing', autocomplete: 'off' });
-  suggestInput(playing, () => TW.S.meta.games.map(g => [gname(g), gname(g)]));
+  const playing = (TW.gamePicker || gamePicker)({ multi: false, value: T(d.playing || ''), placeholder: 'Not playing anything' });
   const fdn = field('Display name', dn), fun = field('Username', un), fr = field('Region', region), fa = field('Age', age), fs = field('Status', status), fp = field('Playing', playing);
 
   const gp = (TW.gamePicker || gamePicker)({ multi: true, value: d.favoriteGames || [] });
@@ -60,7 +59,7 @@ async function editUser(u, onDone) {
     if (!ok) return;
     busy(save, async () => {
       try {
-        await api('PUT', '/api/admin/users/' + enc(d.id), { username: un.value.trim(), displayName: dn.value.trim(), region: region.value, age: a, status: status.value, playing: playing.value.trim(), favoriteGames: gp.value });
+        await api('PUT', '/api/admin/users/' + enc(d.id), { username: un.value.trim(), displayName: dn.value.trim(), region: region.value, age: a, status: status.value, playing: playing.value, favoriteGames: gp.value });
         toast('Saved changes to ' + un.value.trim()); finish();
       } catch (ex) { if (/username/i.test(ex.message)) fun.setError(ex.message); else throw ex; }
     });

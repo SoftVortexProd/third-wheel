@@ -74,14 +74,92 @@ public static class GamesApi
                       ON CONFLICT(name) DO UPDATE SET steamAppId=COALESCE(games.steamAppId, @aid)",
                       ("@n", g), ("@aid", aid), ("@t", now));
         }
+
+        var gcols = Db.Rows("PRAGMA table_info(games)").Select(r => (string)r["name"]!).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        if (!gcols.Contains("hidden")) Db.Exec("ALTER TABLE games ADD COLUMN hidden INTEGER DEFAULT 0");      // 1 = adult content or not a game: never offered or accepted
+        if (!gcols.Contains("verified")) Db.Exec("ALTER TABLE games ADD COLUMN verified INTEGER DEFAULT 0");  // 1 = checked against Steam (or built in)
+        Cleanup();
     }
 
-    public static void EnsureGame(string? name)
+    // ---------- the catalog rules: only real games, never adult ones ----------
+
+    /// <summary>Titles containing these words are never offered or accepted (checked on top of Steam's own content ratings).</summary>
+    static readonly System.Text.RegularExpressions.Regex NsfwWords = new(
+        @"(?<!\w)(hentai|porn\w*|erotic\w*|eroge|ecchi|nsfw|xxx|lewd|nudes?|nudist|uncensored|sex|sexy|sexual|sexually|milf|futa|bdsm|fetish|orgasm|naughty|slut\w*|boobs?|tits|fap\w*|onlyfans|cum|rule ?34|r-?18|18\+|adults? only)(?!\w)",
+        System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.Compiled);
+    public static bool IsNsfwName(string? name) => !string.IsNullOrEmpty(name) && NsfwWords.IsMatch(name);
+
+    static bool IsBuiltIn(string name) => Db.Games.Contains(name, StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>The catalog's spelling of a real, allowed game, or null. Free-text names, adult titles and unknown games all give null.</summary>
+    public static string? Canonical(string? raw)
     {
-        name = Clean(name, 80);
-        if (string.IsNullOrWhiteSpace(name)) return;
-        Db.Exec("INSERT OR IGNORE INTO games(name, created) VALUES(@n, @t)",
-            ("@n", name), ("@t", DateTime.UtcNow.ToString("o")));
+        var name = Clean(raw, 80);
+        if (name.Length < 2 || IsNsfwName(name)) return null;
+        var r = Db.Row("SELECT name, steamAppId, COALESCE(hidden,0) hidden FROM games WHERE name=@n COLLATE NOCASE", ("@n", name));
+        if (r == null || Convert.ToInt32(r["hidden"]) == 1) return null;
+        var canon = (string)r["name"]!;
+        return IsBuiltIn(canon) || (r["steamAppId"] is long sid && sid > 0) ? canon : null;
+    }
+
+    /// <summary>Keeps only real, allowed games (catalog spelling, no duplicates).</summary>
+    public static string[] FilterKnown(IEnumerable<string?>? names, int max) =>
+        (names ?? Array.Empty<string?>()).Select(Canonical).Where(x => x != null).Select(x => x!).Distinct(StringComparer.OrdinalIgnoreCase).Take(max).ToArray();
+
+    /// <summary>One-time and every-start tidy-up: free-text games from before are removed from the catalog and from profiles.</summary>
+    static void Cleanup()
+    {
+        foreach (var r in Db.Rows("SELECT id, name, steamAppId FROM games"))
+        {
+            var name = (string)r["name"]!; var id = (long)r["id"]!;
+            bool builtin = IsBuiltIn(name), steam = r["steamAppId"] is long s && s > 0;
+            if (!builtin && !steam) { Db.Exec("DELETE FROM games WHERE id=@i", ("@i", id)); continue; }
+            if (IsNsfwName(name)) Db.Exec("UPDATE games SET hidden=1 WHERE id=@i", ("@i", id));
+            else if (builtin) Db.Exec("UPDATE games SET hidden=0, verified=1 WHERE id=@i", ("@i", id));
+        }
+        foreach (var u in Db.Rows("SELECT id, games, playing FROM users"))
+        {
+            var uid = (long)u["id"]!;
+            string[] old; try { old = System.Text.Json.JsonSerializer.Deserialize<string[]>((string)u["games"]!) ?? Array.Empty<string>(); } catch { old = Array.Empty<string>(); }
+            var kept = FilterKnown(old, 12);
+            if (!kept.SequenceEqual(old)) Db.Exec("UPDATE users SET games=@g WHERE id=@i", ("@g", System.Text.Json.JsonSerializer.Serialize(kept)), ("@i", uid));
+            if (u["playing"] is string pl && pl.Length > 0 && Canonical(WebUtility.HtmlDecode(pl)) == null)
+                Db.Exec("UPDATE users SET playing=NULL WHERE id=@i", ("@i", uid));
+        }
+        try
+        {
+            foreach (var g in Db.Rows("SELECT DISTINCT game FROM user_games"))
+                if (Canonical(g["game"] as string) == null) Db.Exec("DELETE FROM user_games WHERE game=@g", ("@g", g["game"]));
+        }
+        catch { /* the per-game details table may not exist yet on a brand-new database */ }
+    }
+
+    /// <summary>Asks Steam about each app: true = a real game with no adult-only / frequent-nudity rating; false = adult or not a game. Apps we couldn't check are left out.</summary>
+    static async Task<Dictionary<long, bool>> VerifyAsync(IEnumerable<long> ids)
+    {
+        var res = new System.Collections.Concurrent.ConcurrentDictionary<long, bool>();
+        using var gate = new SemaphoreSlim(6);
+        await Task.WhenAll(ids.Distinct().Select(async id =>
+        {
+            await gate.WaitAsync();
+            try
+            {
+                using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(4));
+                using var resp = await http.GetAsync($"https://store.steampowered.com/api/appdetails?appids={id}&l=english&cc=US", cts.Token);
+                if (!resp.IsSuccessStatusCode) return;
+                using var doc = await JsonDocument.ParseAsync(await resp.Content.ReadAsStreamAsync(cts.Token), cancellationToken: cts.Token);
+                if (!doc.RootElement.TryGetProperty(id.ToString(), out var e) || !e.TryGetProperty("success", out var ok) || ok.ValueKind != JsonValueKind.True) return;
+                if (!e.TryGetProperty("data", out var d)) return;
+                var type = d.TryGetProperty("type", out var t) && t.ValueKind == JsonValueKind.String ? t.GetString() : "";
+                bool adult = false;   // Steam content descriptors: 3 = adult only sexual content, 4 = frequent nudity or sexual content
+                if (d.TryGetProperty("content_descriptors", out var cd) && cd.TryGetProperty("ids", out var idList) && idList.ValueKind == JsonValueKind.Array)
+                    foreach (var x in idList.EnumerateArray()) if (x.TryGetInt32(out var n) && (n == 3 || n == 4)) adult = true;
+                res[id] = type == "game" && !adult;
+            }
+            catch { /* timed out or Steam is busy: unknown, so it isn't shown */ }
+            finally { gate.Release(); }
+        }));
+        return new Dictionary<long, bool>(res);
     }
 
     public static void Map(RouteGroupBuilder api)
@@ -93,9 +171,9 @@ public static class GamesApi
             if (string.IsNullOrEmpty(q))
             {
                 // Return popular games (built-in catalog + locally active)
-                var pop = Db.Rows(@"SELECT id, steamAppId, name, (cover IS NOT NULL) hasCover 
-                                    FROM games ORDER BY id ASC LIMIT 30");
-                return Results.Json(pop.Select(FormatGame));
+                var pop = Db.Rows(@"SELECT id, steamAppId, name, (cover IS NOT NULL) hasCover
+                                    FROM games WHERE COALESCE(hidden,0)=0 AND (verified=1 OR steamAppId IS NOT NULL) ORDER BY id ASC LIMIT 60");
+                return Results.Json(pop.Where(r => !IsNsfwName((string)r["name"]!)).Take(30).Select(FormatGame));
             }
 
             if (Limited($"gs:{CurrentUser(c) ?? 0}", 60, TimeSpan.FromMinutes(1), true))
@@ -103,12 +181,13 @@ public static class GamesApi
 
             // 1. Fetch matching local games first
             var like = "%" + q.Replace("\\", "\\\\").Replace("%", "\\%").Replace("_", "\\_") + "%";
-            var localRows = Db.Rows(@"SELECT id, steamAppId, name, (cover IS NOT NULL) hasCover 
-                                      FROM games WHERE name LIKE @q ESCAPE '\' LIMIT 25", ("@q", like));
+            var localRows = Db.Rows(@"SELECT id, steamAppId, name, (cover IS NOT NULL) hasCover
+                                      FROM games WHERE name LIKE @q ESCAPE '\' AND COALESCE(hidden,0)=0 AND (verified=1 OR steamAppId IS NOT NULL) LIMIT 25", ("@q", like));
             var results = new Dictionary<string, GameResult>(StringComparer.OrdinalIgnoreCase);
 
             foreach (var r in localRows)
             {
+                if (IsNsfwName((string)r["name"]!)) continue;
                 var g = FormatGame(r);
                 results[g.Name] = g;
             }
@@ -125,21 +204,30 @@ public static class GamesApi
                     if (doc.RootElement.TryGetProperty("items", out var items) && items.ValueKind == JsonValueKind.Array)
                     {
                         var now = DateTime.UtcNow.ToString("o");
+                        var cands = new List<(string Name, long Id)>();
                         foreach (var item in items.EnumerateArray())
                         {
-                            if (!item.TryGetProperty("name", out var nameProp) || !item.TryGetProperty("id", out var idProp))
-                                continue;
-
+                            if (!item.TryGetProperty("name", out var nameProp) || !item.TryGetProperty("id", out var idProp)) continue;
                             var sName = Clean(nameProp.GetString(), 80);
-                            var sId = idProp.GetInt64();
-                            if (string.IsNullOrWhiteSpace(sName)) continue;
-
-                            // Insert or update in database
-                            Db.Exec(@"INSERT INTO games(steamAppId, name, created) VALUES(@aid, @n, @t)
-                                      ON CONFLICT(name) DO UPDATE SET steamAppId=COALESCE(games.steamAppId, @aid)",
-                                    ("@aid", sId), ("@n", sName), ("@t", now));
-
-                            var row = Db.Row("SELECT id, steamAppId, name, (cover IS NOT NULL) hasCover FROM games WHERE name=@n COLLATE NOCASE", ("@n", sName));
+                            if (string.IsNullOrWhiteSpace(sName) || IsNsfwName(sName)) continue;
+                            cands.Add((sName, idProp.GetInt64()));
+                        }
+                        // Anything we haven't vetted yet is checked against Steam's own ratings before it can be shown or chosen.
+                        var vetted = cands.ToDictionary(x => x.Name, x => Db.Row("SELECT COALESCE(hidden,0) hidden, COALESCE(verified,0) verified FROM games WHERE name=@n COLLATE NOCASE", ("@n", x.Name)), StringComparer.OrdinalIgnoreCase);
+                        var verdict = await VerifyAsync(cands.Where(x => { var v = vetted[x.Name]; return v == null || (Convert.ToInt32(v["verified"]) == 0 && Convert.ToInt32(v["hidden"]) == 0); }).Take(12).Select(x => x.Id));
+                        foreach (var cnd in cands)
+                        {
+                            var ex = vetted[cnd.Name];
+                            if (ex != null && Convert.ToInt32(ex["hidden"]) == 1) continue;
+                            if (ex == null || Convert.ToInt32(ex["verified"]) == 0)
+                            {
+                                if (!verdict.TryGetValue(cnd.Id, out var fine)) continue;      // couldn't be checked right now: not shown, not saved
+                                Db.Exec(@"INSERT INTO games(steamAppId, name, created, hidden, verified) VALUES(@aid, @n, @t, @h, 1)
+                                          ON CONFLICT(name) DO UPDATE SET steamAppId=COALESCE(games.steamAppId, @aid), hidden=@h, verified=1",
+                                        ("@aid", cnd.Id), ("@n", cnd.Name), ("@t", now), ("@h", fine ? 0 : 1));
+                                if (!fine) continue;
+                            }
+                            var row = Db.Row("SELECT id, steamAppId, name, (cover IS NOT NULL) hasCover FROM games WHERE name=@n COLLATE NOCASE AND COALESCE(hidden,0)=0", ("@n", cnd.Name));
                             if (row != null)
                             {
                                 var g = FormatGame(row);
@@ -217,19 +305,7 @@ public static class GamesApi
             return SvgPlaceholder(c, name);
         });
 
-        // Add custom game entry
-        api.MapPost("games/custom", (HttpContext c, CustomGameIn b) => WithUser(c, _ =>
-        {
-            var name = Clean(b.Name, 80);
-            if (string.IsNullOrWhiteSpace(name) || name.Length < 2)
-                return Err("Game name must be at least 2 characters.");
-
-            var now = DateTime.UtcNow.ToString("o");
-            Db.Exec("INSERT OR IGNORE INTO games(name, created) VALUES(@n, @t)", ("@n", name), ("@t", now));
-
-            var row = Db.Row("SELECT id, steamAppId, name, (cover IS NOT NULL) hasCover FROM games WHERE name=@n COLLATE NOCASE", ("@n", name));
-            return Results.Json(row != null ? FormatGame(row) : new GameResult(0, name, null, null));
-        }));
+        // There is deliberately no "add a custom game" endpoint: the catalog only grows from vetted Steam results.
     }
 
     static GameResult FormatGame(Dictionary<string, object?> r)
@@ -320,5 +396,4 @@ public static class GamesApi
     }
 }
 
-public record CustomGameIn(string? Name);
 public record GameResult(long Id, string Name, long? SteamAppId, string? CoverUrl);

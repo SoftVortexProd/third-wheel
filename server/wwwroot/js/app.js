@@ -324,9 +324,8 @@ function gameThumb(name) {
 /* ---- game picker (with Steam Store search, thumbnail covers, chips & custom entry) ---- */
 function gamePicker(opts = {}) {
   const multi = !!opts.multi;
-  const allowCustom = opts.allowCustom !== false;
   let cur = multi ? [...(opts.value || [])] : (opts.value ? String(opts.value) : '');
-  const placeholder = opts.placeholder || (multi ? 'Search games to add or type custom...' : 'Search games or type custom...');
+  const placeholder = opts.placeholder || (multi ? 'Search for a game to add...' : 'Search for a game...');
   const anyLabel = opts.anyLabel;
 
   const root = h('div', { class: 'game-picker', role: 'group', 'aria-label': 'Game selector' });
@@ -511,21 +510,9 @@ function gamePicker(opts = {}) {
       items.push(item);
     }
 
-    if (allowCustom && q && !list.some(x => (x.name || x).toLowerCase() === q.toLowerCase())) {
-      const custOpt = h('div', { class: 'gp-opt gp-opt-custom', role: 'option' },
-        icon('plus', 18),
-        h('span', { text: `Use custom: "${T(q)}"` })
-      );
-      custOpt.addEventListener('pointerdown', (e) => {
-        e.preventDefault();
-        selectGame(q);
-      });
-      pop.append(custOpt);
-      items.push({ name: q, isCustom: true });
-    }
-
+    // Only real games can be chosen: no "use what I typed" option.
     if (!items.length) {
-      pop.append(h('div', { class: 'dd-empty', text: 'No games found' }));
+      pop.append(h('div', { class: 'dd-empty', text: q ? 'No matching game found. Only real games can be added.' : 'No games found' }));
     }
 
     place();
@@ -542,11 +529,7 @@ function gamePicker(opts = {}) {
     else if (e.key === 'ArrowUp') { e.preventDefault(); if (pop) setIndex(activeIdx - 1); }
     else if (e.key === 'Enter') {
       e.preventDefault();
-      if (pop && activeIdx >= 0 && items[activeIdx]) {
-        selectGame(items[activeIdx].name || items[activeIdx]);
-      } else if (allowCustom && input.value.trim()) {
-        selectGame(input.value.trim());
-      }
+      if (pop && activeIdx >= 0 && items[activeIdx]) selectGame(items[activeIdx].name || items[activeIdx]);
     }
     else if (e.key === 'Escape') { e.preventDefault(); close(); }
   });

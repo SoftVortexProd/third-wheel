@@ -172,9 +172,8 @@ CREATE TABLE IF NOT EXISTS join_requests(id INTEGER PRIMARY KEY, groupId INTEGER
             if (Limited($"gc:{uid}", 10, TimeSpan.FromHours(1), true)) return Err("You're creating groups too fast. Try again later.", 429);
             var name = Clean(b.Name, 40);
             if (name.Length < 3) return Err("Group name must be at least 3 characters.");
-            var game = Clean(b.Game, 80);
-            if (string.IsNullOrWhiteSpace(game) || game.Length < 2) return Err("Pick or enter a game.");
-            GamesApi.EnsureGame(game);
+            var game = GamesApi.Canonical(b.Game);   // a group is for a real game from the list, never free text
+            if (game == null) return Err("Pick a real game from the list.");
             if (b.Mode is not ("casual" or "competitive")) return Err("Mode must be casual or competitive.");
             if (!Db.Regions.Contains(b.Region ?? "")) return Err("Unknown region.");
             var privacy = b.Privacy ?? "public";

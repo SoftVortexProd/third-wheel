@@ -179,10 +179,11 @@ CREATE TABLE IF NOT EXISTS activity(userId INTEGER, hour INTEGER, n INTEGER DEFA
             Db.Exec("DELETE FROM user_games WHERE userId=@u", ("@u", uid));
             foreach (var g in rows)
             {
-                GamesApi.EnsureGame(g.Game);
+                var game = GamesApi.Canonical(g.Game);   // real catalog games only
+                if (game == null) continue;
                 var rank = Enc(Clean(g.Rank, 24)); var role = Enc(Clean(g.Role, 24));
                 if (rank.Length == 0 && role.Length == 0) continue;
-                Db.Exec("INSERT INTO user_games(userId,game,rank,role) VALUES(@u,@g,@r,@o)", ("@u", uid), ("@g", g.Game), ("@r", rank), ("@o", role));
+                Db.Exec("INSERT OR REPLACE INTO user_games(userId,game,rank,role) VALUES(@u,@g,@r,@o)", ("@u", uid), ("@g", game), ("@r", rank), ("@o", role));
             }
             return Results.Json(Details(uid));
         }));

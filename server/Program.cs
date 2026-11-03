@@ -183,11 +183,12 @@ api.MapPut("me/settings", (HttpContext c, SettingsIn b) => WithUser(c, uid =>
     // Age is chosen once (at the starter menu). After that only an admin can change it, from the admin panel.
     var currentAge = Convert.ToInt32(Db.Scalar("SELECT age FROM users WHERE id=@i", ("@i", uid)));
     if (b.Age != null && currentAge > 0 && b.Age != currentAge) return Err("Your age can only be changed by an admin.", 403);
-    var games = (b.FavoriteGames ?? Array.Empty<string>()).Where(g => !string.IsNullOrWhiteSpace(g) && g.Length <= 80).Select(g => Clean(g, 80)).Distinct().Take(12).ToArray();
-    foreach (var g in games) GamesApi.EnsureGame(g);
+    // Only real games from the catalog; anything else (free text, adult titles) is dropped.
+    var games = GamesApi.FilterKnown(b.FavoriteGames, 12);
     var status = b.Status ?? "online";
     if (status is not ("online" or "idle" or "dnd" or "offline")) return Err("Bad status.");
-    string? playing = string.IsNullOrWhiteSpace(b.Playing) ? null : Enc(Clean(b.Playing, 40));
+    var playingGame = GamesApi.Canonical(b.Playing);
+    string? playing = playingGame == null ? null : Enc(playingGame);
     Db.Exec("UPDATE users SET region=COALESCE(@r,region), age=COALESCE(@a,age), games=@g, status=@s, playing=@p, onboarded=COALESCE(@o,onboarded) WHERE id=@i",
         ("@r", b.Region), ("@a", b.Age), ("@g", JsonSerializer.Serialize(games)), ("@s", status), ("@p", playing),
         ("@o", b.Onboarded == null ? null : b.Onboarded.Value ? 1 : 0), ("@i", uid));
@@ -565,7 +566,14 @@ api.MapGet("users/{id:long}", (HttpContext c, long id) => WithUser(c, uid =>
 api.MapPut("me/playing", (HttpContext c, PlayingIn b) => WithUser(c, uid =>
 {
     if (Limited($"pl:{uid}", 30, TimeSpan.FromMinutes(1), true)) return Err("Slow down a little.", 429);
-    string? playing = string.IsNullOrWhiteSpace(b.Playing) ? null : Enc(Clean(b.Playing, 40));
+    // "Playing" is a real game or nothing: no free text.
+    string? playing = null;
+    if (!string.IsNullOrWhiteSpace(b.Playing))
+    {
+        var game = GamesApi.Canonical(b.Playing);
+        if (game == null) return Err("Pick a real game from the list.");
+        playing = Enc(game);
+    }
     Db.Exec("UPDATE users SET playing=@p WHERE id=@i", ("@p", playing), ("@i", uid));
     return Results.Json(UserDto(uid));
 }));

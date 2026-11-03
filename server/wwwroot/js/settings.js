@@ -157,19 +157,19 @@ function profileTab(panel, ctx) {
   const ageLocked = me.age > 0;
   const age = h('input', { class: 'input', type: 'number', min: 13, max: 99, value: me.age || '', inputmode: 'numeric', disabled: ageLocked });
   const status = selectEl([['online', t('Online')], ['idle', t('Idle')], ['dnd', t('Do not disturb')], ['offline', t('Appear offline')]], TW.statusKey(me.status) || 'online');
-  const playing = h('input', { class: 'input', type: 'text', maxlength: 40, value: T(me.playing || ''), placeholder: t('What are you playing right now?'), autocomplete: 'off' });
-  suggestInput(playing, () => TW.S.meta.games.map(g => [gname(g), gname(g)]));
+  // "Currently playing" is a real game or nothing: pick it from the list (the desktop app also sets it automatically).
+  const playing = gamePicker({ multi: false, value: T(me.playing || ''), placeholder: t('Not playing anything') });
   const gp = gamePicker({ multi: true, value: me.favoriteGames || [] });
   const fr = field(t('Region'), region);
   const fa = field(t('Age'), age, ageLocked ? t('Your age can only be changed by an admin.') : t('Must be 13 or older.'));
-  const fs = field(t('Status'), status), fp = field(t('Currently playing'), playing, t('Shown next to your name in friends lists.'));
+  const fs = field(t('Status'), status), fp = field(t('Currently playing'), playing, t('Pick a game. It shows next to your name in friends lists.'));
   const save = h('button', { class: 'btn', type: 'submit' }, t('Save changes'));
   const form = h('form', { class: 'stack', novalidate: true, onsubmit: async (e) => {
     e.preventDefault();
     const a = parseInt(age.value, 10);
     const ok = [fr.setError(region.value ? '' : t('Choose a region')), ageLocked || fa.setError(a >= 13 && a <= 99 ? '' : t('Enter an age from 13 to 99'))].every(Boolean);
     if (!ok) return;
-    const body = { region: region.value, favoriteGames: gp.value, playing: playing.value.trim(), status: status.value, onboarded: true };
+    const body = { region: region.value, favoriteGames: gp.value, playing: playing.value, status: status.value, onboarded: true };
     if (!ageLocked) body.age = a;     // once an age is set only an admin can change it, so never send it again
     await busy(save, async () => {
       await api('PUT', '/api/me/settings', body);
