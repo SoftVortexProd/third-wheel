@@ -231,10 +231,11 @@ function selectEl(opts, value, anyLabel, id) {
 
 /* ---- custom suggestions for a text input (replaces <datalist>) ---- */
 function suggestInput(input, getList) {
-  const pop = makePopup(input, ([v]) => { input.value = T(v); pop.close(); input.dispatchEvent(new Event('input', { bubbles: true })); });
+  let picking = false;   // the input event fired after a pick must not re-open the list
+  const pop = makePopup(input, ([v]) => { picking = true; input.value = T(v); pop.close(); input.dispatchEvent(new Event('input', { bubbles: true })); picking = false; });
   const list = () => { const q = input.value.trim().toLowerCase(); return getList().filter(([v]) => !q || T(v).toLowerCase().includes(q)).slice(0, 30); };
   input.setAttribute('role', 'combobox'); input.setAttribute('aria-autocomplete', 'list'); input.setAttribute('aria-expanded', 'false'); input.setAttribute('aria-haspopup', 'listbox');
-  const show = () => { const l = list(); if (!l.length) { pop.close(); return; } pop.isOpen ? pop.update(l, '') : pop.open(l, ''); };
+  const show = () => { if (picking) return; const l = list(); if (!l.length) { pop.close(); return; } pop.isOpen ? pop.update(l, '') : pop.open(l, ''); };
   input.addEventListener('focus', show); input.addEventListener('input', show);
   input.addEventListener('keydown', (e) => {
     if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); if (!pop.isOpen) show(); else pop.move(e.key === 'ArrowDown' ? 1 : -1); }
@@ -361,7 +362,7 @@ function renderOnboarding() {
   const d = { region: S.me.region || '', age: S.me.age || '', games: [...(S.me.favoriteGames || [])] };
   let step = 0, dir = 1;
   const card = h('div', { class: 'card ob-card' });
-  const steps = ['Where do you play?', 'What do you play?', 'You’re set'];
+  const steps = ['Where do you play?', 'What do you play?', 'How do you play?', 'You’re set'];
   const brand = h('div', { class: 'brand' }, h('img', { src: 'icon.svg', alt: '', width: 32, height: 32 }), 'Welcome to Third Wheel');
   const progress = h('div', { class: 'progress', 'aria-hidden': 'true' }, steps.map(() => h('span')));
   TWM.transition(() => $('#app').replaceChildren(h('main', { class: 'center-screen' }, card)));
@@ -391,24 +392,32 @@ function renderOnboarding() {
       }
       body.append(h('p', { class: 'muted', text: 'Choose the games you love. Pick as many as you like.' }), wrap);
       next = () => true;
+    } else if (step === 2) {
+      // Optional: play style + availability (profile.js). Skippable.
+      const sf = window.TWProfile ? TWProfile.styleForm(d.extras || {}) : null;
+      body.append(h('p', { class: 'muted', text: 'Optional: tell us how and when you play so we can find people and groups that fit.' }));
+      if (sf) body.append(sf.el);
+      next = () => { if (sf) d.extras = sf.value(); return true; };
     } else {
       body.append(h('p', { class: 'muted', text: 'Here’s what we’ll use to find your groups. You can change this any time in Settings.' }),
         h('div', { class: 'chips', style: 'margin-top:16px' }, h('span', { class: 'chip accent', text: T(d.region) }), h('span', { class: 'chip accent', text: 'Age ' + d.age }),
           d.games.map(g => h('span', { class: 'chip', text: T(g) }))));
       next = null;
     }
-    const nextBtn = h('button', { class: 'btn', type: 'button' }, step === 2 ? 'Finish' : 'Continue');
+    const nextBtn = h('button', { class: 'btn', type: 'button' }, step === 3 ? 'Finish' : 'Continue');
     nextBtn.addEventListener('click', async () => {
-      if (step < 2) { if (next()) { step++; dir = 1; draw(); } return; }
+      if (step < 3) { if (next()) { step++; dir = 1; draw(); } return; }
       await busy(nextBtn, async () => {
         await api('PUT', '/api/me/settings', { region: d.region, age: d.age, favoriteGames: d.games, playing: S.me.playing || '', status: S.me.status || 'online', onboarded: true });
+        if (d.extras && window.TWProfile) await TWProfile.saveExtras(d.extras).catch(() => {});
         S.me = await api('GET', '/api/me'); await start();
       });
     });
     const stepEl = h('div', { class: 'step-in', style: `--dx:${dir * 30}px` },
       h('h1', { text: steps[step] }), h('div', { style: 'height:12px' }), body, err,
       h('div', { class: 'ob-actions' },
-        step > 0 ? h('button', { class: 'btn ghost', type: 'button', onclick: () => { step--; dir = -1; draw(); } }, 'Back') : h('span'), nextBtn));
+        step > 0 ? h('button', { class: 'btn ghost', type: 'button', onclick: () => { step--; dir = -1; draw(); } }, 'Back') : h('span'),
+        h('div', { style: 'display:flex;gap:8px' }, step === 2 ? h('button', { class: 'btn ghost', type: 'button', onclick: () => { d.extras = null; step++; dir = 1; draw(); } }, 'Skip') : null, nextBtn)));
     TWM.morphHeight(card, () => card.replaceChildren(brand, progress, stepEl));
     [...progress.children].forEach((s, i) => s.classList.toggle('on', i <= step));
     const f = card.querySelector('.dd,input,.chip,.btn'); f && f.focus({ preventScroll: true });
@@ -567,12 +576,14 @@ async function feedView(_, tok) {
   const cached = S.feedCache && S.feedCache.length ? S.feedCache : null;
   const back = S.leaving && cached ? S.leaving : null;
   const list = h('div', { class: 'grid' + (back ? '' : ' stagger') });
-  const empty = () => emptyState('Nothing here yet', 'Try searching for a game, or start a group of your own.', btn('Find groups', { onclick: () => go('#/search') }));
+  const recSlot = h('div', { class: 'rec-slot' });   // "Recommended for you" (profile.js)
+  const empty =() => emptyState('Nothing here yet', 'Try searching for a game, or start a group of your own.', btn('Find groups', { onclick: () => go('#/search') }));
   page.append(h('div', { class: 'page-head' }, h('div', {}, h('h1', { text: 'Your feed' }), h('p', { class: 'muted', text: 'Groups picked for your games, region and age.' })),
-    btn('Create group', { icon: 'plus', onclick: openCreate })), list);
+    btn('Create group', { icon: 'plus', onclick: openCreate })), recSlot, list);
   if (cached) { list.append(...cached.map(groupCard)); if (!back) stagger(list); }
   else list.append(h('span', { class: 'spinner', role: 'status', 'aria-label': 'Loading' }));
   show(page, back ? { from: back.el, to: () => page.querySelector(`.gcard[data-id="${CSS.escape(String(back.id))}"]`) } : {});
+  if (window.TWProfile) TWProfile.groupRecs(recSlot, () => stale(tok));
   const groups = await api('GET', '/api/feed'); if (stale(tok)) return;
   const had = S.feedCache; S.feedCache = groups;
   if (!groups.length) { list.replaceWith(empty()); return; }
@@ -739,13 +750,15 @@ async function openProfile(id) {
     actions.append(add);
   }
   const games = p.favoriteGames || [];
+  const extra = h('div', { class: 'profile-extra' });
   const body = h('div', { class: 'profile' },
     h('div', { class: 'profile-top' }, avatar(p, 'xl', true),
       h('div', { class: 'profile-names' }, h('h2', { text: nm(p) }), h('p', { class: 'muted', text: '@' + T(p.username) }),
         h('p', { class: 'status-line' + (p.playing ? ' playing' : ''), text: p.playing ? 'Playing ' + T(p.playing) : STATUS[sk] }))),
     h('div', { class: 'prows' }, row('Region', T(p.region)), row('Age', p.ageRange), row('Member since', isNaN(joined) ? '' : joined.toLocaleDateString(undefined, { month: 'long', year: 'numeric' }))),
-    games.length ? h('div', { class: 'section' }, h('div', { class: 'section-title', text: 'Favorite games' }), h('div', { class: 'chips' }, games.map(g => h('span', { class: 'chip', text: T(g) })))) : null,
-    actions);
+    games.length ? h('div', { class: 'section' }, h('div', { class: 'section-title', text: 'Favorite games' }), h('div', { class: 'chips favgames' }, games.map(g => h('span', { class: 'chip', text: T(g) })))) : null,
+    extra, actions);
+  if (window.TWProfile) TWProfile.profileDetails(extra, p.id);   // bio, play style, ranks/roles, availability (profile.js)
   close = openSheet('Profile', body);
 }
 
@@ -1021,7 +1034,9 @@ async function friendsView(_, tok) {
       S.mine.length ? stackOf(S.mine.map(g => { const t = h('span', { class: 'gtile', 'aria-hidden': 'true' }, (T(g.name)[0] || '?').toUpperCase()); t.style.background = safeColor(g.color); t.style.color = ink(g.color);
         return h('a', { class: 'frow big', href: '#/group/' + enc(g.id) }, t, h('div', { class: 'meta' }, h('b', { text: T(g.name) }), h('span', { text: T(g.game) }))); })) : emptyState('No groups yet', 'Join one from the feed.'));
   }
-  show(h('div', { class: 'page' }, h('div', { class: 'page-head' }, h('div', {}, h('h1', { text: 'Friends & invites' }), h('p', { class: 'muted', text: 'Requests, group invites and the people you play with.' }))), profile, invBox, reqBox, addForm, friendBox, groupBox));
+  const peopleSlot = h('div', { class: 'rec-slot' });   // "People you may like" (profile.js)
+  show(h('div', { class: 'page' }, h('div', { class: 'page-head' }, h('div', {}, h('h1', { text: 'Friends & invites' }), h('p', { class: 'muted', text: 'Requests, group invites and the people you play with.' }))), profile, invBox, reqBox, addForm, peopleSlot, friendBox, groupBox));
+  if (window.TWProfile) TWProfile.peopleRecs(peopleSlot, () => stale(tok));
   S.onData = draw; draw();
   await loadSocial(); if (stale(tok)) S.onData = null;
 }
@@ -1122,14 +1137,16 @@ async function settingsView() {
     if (!ok) return;
     await busy(save, async () => {
       await api('PUT', '/api/me/settings', { region: region.value, age: a, favoriteGames: games, playing: playing.value.trim(), status: status.value, onboarded: true });
-      S.me = await api('GET', '/api/me'); renderUserPanel(); toast('Settings saved');
+      S.me = await api('GET', '/api/me'); renderUserPanel(); toast('Settings saved'); document.dispatchEvent(new Event('tw:me'));
     });
   } }, h('div', { class: 'row' }, fr, fa), h('div', { class: 'row' }, fs, fp), detect, fm,
     h('div', { class: 'field' }, h('span', { class: 'label', text: 'Favorite games' }), gw), h('div', {}, save));
+  const extrasSlot = h('div', { class: 'stack', style: 'gap:16px' });   // game ranks/roles, play style, availability (profile.js)
+  if (window.TWProfile) TWProfile.settings(extrasSlot);
   const out = btn('Log out', { cls: 'danger', onclick: async (e) => { try { await api('POST', '/api/auth/logout'); } catch { /* ignore */ } loggedOut(); } });
   show(h('div', { class: 'page', style: 'max-width:720px' }, h('div', { class: 'page-head' }, h('div', {}, h('h1', { text: 'Settings' }), who)),
     picCard, idCard,
-    h('div', { class: 'card', style: 'padding:24px' }, form), h('div', { class: 'card', style: 'padding:20px;display:flex;justify-content:space-between;align-items:center;gap:12px' }, h('div', {}, h('h3', { text: 'Log out' }), h('p', { class: 'muted small', text: 'You’ll need your password to come back.' })), out)));
+    h('div', { class: 'card', style: 'padding:24px' }, form), extrasSlot, h('div', { class: 'card', style: 'padding:20px;display:flex;justify-content:space-between;align-items:center;gap:12px' }, h('div', {}, h('h3', { text: 'Log out' }), h('p', { class: 'muted small', text: 'You’ll need your password to come back.' })), out)));
 }
 
 /* ================= data + polling ================= */

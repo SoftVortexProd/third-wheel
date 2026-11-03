@@ -1,1 +1,31 @@
-/* profile feature styles */
+/* profile feature styles: game details, play style, availability, recommendations */
+.gd-row { display: grid; grid-template-columns: minmax(110px, 1.1fr) 1fr 1fr; gap: var(--space-3); align-items: center; }
+.gd-name { font-size: var(--fs-md); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.avail-row { display: flex; align-items: center; gap: var(--space-4); margin-top: var(--space-2); }
+.avail-label { flex: none; width: 76px; color: var(--color-text-2); font-size: var(--fs-md); font-weight: 600; }
+.chip.removable { gap: 6px; }
+.chip.removable svg { opacity: .7; }
+
+.profile-extra { display: flex; flex-direction: column; gap: var(--space-4); }
+.profile-extra:empty { display: none; }
+.profile-bio { color: var(--color-text); font-size: var(--fs-md); line-height: 22px; overflow-wrap: anywhere; }
+.avail-line { color: var(--color-text-2); font-size: var(--fs-md); }
+.profile .chip.accent { white-space: nowrap; }
+
+.rec-slot:empty { display: none; }
+.rec-row { display: flex; gap: var(--space-5); overflow-x: auto; padding: 4px 2px var(--space-3); scroll-snap-type: x proximity; }
+.rec-item { flex: 0 0 min(320px, 82%); display: flex; flex-direction: column; gap: var(--space-2); scroll-snap-align: start; }
+.rec-item .gcard { flex: 1; }
+.reasons { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip.reason { color: var(--color-accent-text); background: transparent; border-color: #2d3270; font-size: var(--fs-xs); line-height: 16px; padding: 2px 8px; }
+.rec-person { display: flex; flex-direction: column; gap: 6px; cursor: pointer; border-radius: var(--radius-md); }
+.rec-person:focus-visible { outline-offset: 3px; }
+.rec-person .reasons { padding: 0 var(--space-4) 2px; }
+
+@media (max-width: 899px) {
+  .gd-row { grid-template-columns: 1fr 1fr; }
+  .gd-row .gd-name { grid-column: 1 / -1; }
+  .avail-row { flex-direction: column; align-items: flex-start; gap: var(--space-2); }
+  .rec-item { flex-basis: 88%; }
+}
