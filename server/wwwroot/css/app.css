@@ -27,7 +27,9 @@
   --ease: cubic-bezier(.22, 1, .36, 1);
 
   --font: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  --fs-xs: 11px; --fs-sm: 12px; --fs-md: 14px; --fs-base: 16px; --fs-lg: 18px; --fs-xl: 20px; --fs-2xl: 28px;
+  --ts: 1;   /* text scale (Settings -> Appearance); the --fs-* tokens and key line-heights multiply by it */
+  --fs-xs: calc(11px * var(--ts)); --fs-sm: calc(12px * var(--ts)); --fs-md: calc(14px * var(--ts)); --fs-base: calc(16px * var(--ts));
+  --fs-lg: calc(18px * var(--ts)); --fs-xl: calc(20px * var(--ts)); --fs-2xl: calc(28px * var(--ts));
   --nav-h: 64px;
   --safe-b: env(safe-area-inset-bottom, 0px);
 }
