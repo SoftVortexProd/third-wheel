@@ -102,6 +102,12 @@ public static class Core
     public static bool AreFriends(long a, long b) => Db.Scalar("SELECT 1 FROM friends WHERE a=@a AND b=@b", ("@a", Math.Min(a, b)), ("@b", Math.Max(a, b))) != null;
     public static bool IsMember(long g, long u) => Db.Scalar("SELECT 1 FROM members WHERE groupId=@g AND userId=@u", ("@g", g), ("@u", u)) != null;
 
+    /// <summary>members.role is 'owner', 'mod' or 'member'. Site admins can moderate every group. GroupsApi manages the roles; other features only ask.</summary>
+    public static bool CanModerateGroup(long gid, long uid) => IsAdmin(uid) ||
+        Convert.ToInt32(Db.Scalar("SELECT COUNT(*) FROM members WHERE groupId=@g AND userId=@u AND role IN ('owner','mod')", ("@g", gid), ("@u", uid))) > 0;
+    /// <summary>Set by GroupsApi: returns a message when `uid` may not post in group `gid` (muted, banned, not a member...), otherwise null. Called before every group message.</summary>
+    public static Func<long, long, string?> GroupPostBlock = (gid, uid) => null;
+
     /// <summary>Removes a group and everything attached to it.</summary>
     public static void DeleteGroup(long id)
     {

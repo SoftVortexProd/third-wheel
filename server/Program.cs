@@ -466,6 +466,7 @@ api.MapGet("groups/{id:long}/messages", (HttpContext c, long id, long? after) =>
 api.MapPost("groups/{id:long}/messages", (HttpContext c, long id, MessageIn b) => WithUser(c, uid =>
 {
     if (!IsMember(id, uid)) return Err("Join the group to chat.", 403);
+    var blocked = GroupPostBlock(id, uid); if (blocked != null) return Err(blocked, 403);
     var text = Clean(b.Text, 1000);
     if (text.Length == 0) return Err("Message is empty.");
     if (Limited($"msg:{uid}", 30, TimeSpan.FromMinutes(1), true)) return Err("Slow down a little.", 429);
@@ -755,7 +756,13 @@ CREATE TABLE IF NOT EXISTS avatars(userId INTEGER PRIMARY KEY, mime TEXT NOT NUL
         if (!cols.Contains("banReason")) Exec("ALTER TABLE users ADD COLUMN banReason TEXT");
         // Shared by several features: a group is 'public' (listed, anyone can join) or 'private' (hidden from feed/search/recommendations; invite or approval only).
         var gcols = Rows("PRAGMA table_info(grps)").Select(r => (string)r["name"]!).ToHashSet(StringComparer.OrdinalIgnoreCase);
-        if (!gcols.Contains("privacy")) Exec("ALTER TABLE grps ADD COLUMN privacy TEXT DEFAULT 'public'");
+        if (!gcols.Contains("privacy")) Exec("ALTER TABLE grps ADD COLUMN privacy TEXT DEFAULT 'public'");   // 'public' | 'request' (listed, needs approval) | 'private' (unlisted, invite only)
+        var mcols = Rows("PRAGMA table_info(members)").Select(r => (string)r["name"]!).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        if (!mcols.Contains("role"))
+        {
+            Exec("ALTER TABLE members ADD COLUMN role TEXT DEFAULT 'member'");
+            Exec("UPDATE members SET role='owner' WHERE EXISTS (SELECT 1 FROM grps g WHERE g.id=members.groupId AND g.ownerId=members.userId)");
+        }
         // Feature modules add their own tables/columns here (each must be safe to run on every start).
         ChatApi.Migrate(); GroupsApi.Migrate(); ProfileApi.Migrate(); NotifyApi.Migrate();
     }
