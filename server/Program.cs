@@ -694,6 +694,6 @@ CREATE TABLE IF NOT EXISTS avatars(userId INTEGER PRIMARY KEY, mime TEXT NOT NUL
             Exec("UPDATE members SET role='owner' WHERE EXISTS (SELECT 1 FROM grps g WHERE g.id=members.groupId AND g.ownerId=members.userId)");
         }
         // Feature modules add their own tables/columns here (each must be safe to run on every start).
-        ChatApi.Migrate(); GroupsApi.Migrate(); ProfileApi.Migrate(); NotifyApi.Migrate(); GamesApi.Migrate();
+        ChatApi.Migrate(); GroupsApi.Migrate(); ProfileApi.Migrate(); NotifyApi.Migrate(); GamesApi.Migrate(); AccountApi.Migrate();
     }
 }

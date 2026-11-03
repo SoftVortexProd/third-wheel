@@ -810,7 +810,7 @@ async function route() {
     show(h('div', { class: 'page' }, emptyState('This page is closed', T(closedMsg))));
     return;
   }
-  const fn = { feed: feedView, search: searchView, group: groupView, dm: dmView, friends: friendsView, settings: settingsView, admin: adminView }[parts[0]] || feedView;
+  const fn = { feed: feedView, search: searchView, group: groupView, dm: dmView, friends: friendsView, settings: settingsView, admin: adminView, join: (c, t) => window.TWG ? TWG.joinView(c, t) : feedView(c, t) }[parts[0]] || feedView;
   try { await fn(parts[1], tok); }
   catch (e) { if (tok === S.tok) show(h('div', { class: 'page' }, emptyState('That didn’t load', e.message || 'Please try again.', btn('Try again', { onclick: route })))); }
   if (tok === S.tok) TWM.prog.done();
@@ -827,7 +827,7 @@ function groupCard(g) {
       g.region ? h('span', { class: 'chip', text: T(g.region) }) : null, h('span', { class: 'chip', text: ages })),
     g.description ? h('p', { text: T(g.description) }) : null,
     h('div', { class: 'foot' }, h('span', {}, icon('users', 14), ' ', `${g.memberCount ?? 0} member${g.memberCount === 1 ? '' : 's'}`),
-      g.isMember ? h('span', { class: 'chip ok' }, icon('check', 12), 'Joined') : null));
+      g.isMember ? h('span', { class: 'chip ok' }, icon('check', 12), 'Joined') : (g.maxMembers > 0 && g.memberCount >= g.maxMembers) ? h('span', { class: 'chip bad', text: 'Group full' }) : null));
   card.style.setProperty('--gc', safeColor(g.color));
   return card;
 }
@@ -945,8 +945,10 @@ async function groupView(id, tok) {
     h('div', { class: 'top' }, h('a', { class: 'icon-btn mobile-only', href: '#/feed', 'aria-label': 'Back to feed' }, icon('back')), h('h1', { text: T(g.name) }), actions),
     h('div', { class: 'chips stagger-pop' }, h('span', { class: 'chip accent', text: T(g.game) }), h('span', { class: 'chip', text: g.mode === 'competitive' ? 'Competitive' : 'Casual' }),
       g.region ? h('span', { class: 'chip', text: T(g.region) }) : null, h('span', { class: 'chip', text: ages }), h('span', { class: 'chip', text: `${g.memberCount ?? members.length} members` }),
-      g.privacy === 'private' ? h('span', { class: 'chip', text: 'Private' }) : g.privacy === 'request' ? h('span', { class: 'chip', text: 'Approval needed' }) : null),
+      g.privacy === 'private' ? h('span', { class: 'chip', text: 'Private' }) : g.privacy === 'request' ? h('span', { class: 'chip', text: 'Approval needed' }) : null,
+      ...(G ? G.extraChips(g) : [])),
     g.description ? h('p', { class: 'desc', text: T(g.description) }) : null,
+    G ? G.inviteRow(g) : null,
     members.length ? (G ? G.members(g, route) : h('div', { class: 'members stagger-pop', 'aria-label': 'Members' }, members.map(m => h('button', { class: 'member', type: 'button', 'aria-label': 'View ' + nm(m) + '’s profile', onclick: () => openProfile(m.id) }, avatar(m, 'sm'), nm(m))))) : null);
   head.querySelectorAll('.btn.small').forEach(b => b.style.minHeight = '32px');
   head.querySelectorAll('.stagger-pop').forEach(stagger);
@@ -1000,7 +1002,8 @@ function openInvite(g, members) {
 }
 
 /* ================= profiles + direct messages ================= */
-async function openProfile(id) {
+/* opts (all optional): { group, member, reload } when opened from a group's member list, so the ⋯ menu can offer that group's moderation actions. */
+async function openProfile(id, opts) {
   let p;
   try { p = await api('GET', '/api/users/' + enc(id)); } catch (e) { toast(e.message, 'error'); return; }
   const sk = statusKey(p.status);
@@ -1017,10 +1020,16 @@ async function openProfile(id) {
   }
   const games = p.favoriteGames || [];
   const extra = h('div', { class: 'profile-extra' });
+  // ⋯ menu (top right): group moderation, block, report. Not shown on your own profile.
+  let more = null;
+  if (!p.isMe && window.TWG) {
+    more = h('button', { class: 'icon-btn profile-more', type: 'button', 'aria-haspopup': 'menu', 'aria-expanded': 'false', 'aria-label': 'More actions for ' + nm(p), text: '⋯' });
+    more.addEventListener('click', () => TWG.profileMenu(more, p, opts, () => close()));
+  }
   const body = h('div', { class: 'profile' },
-    h('div', { class: 'profile-top' }, avatar(p, 'xl', true),
+    h('div', { class: 'profile-top' + (more ? ' has-more' : '') }, avatar(p, 'xl', true),
       h('div', { class: 'profile-names' }, h('h2', { text: nm(p) }), h('p', { class: 'muted', text: '@' + T(p.username) }),
-        h('p', { class: 'status-line' + (p.playing ? ' playing' : ''), text: p.playing ? 'Playing ' + T(p.playing) : STATUS[sk] }))),
+        h('p', { class: 'status-line' + (p.playing ? ' playing' : ''), text: p.playing ? 'Playing ' + T(p.playing) : STATUS[sk] })), more),
     h('div', { class: 'prows' }, row('Region', T(p.region)), row('Age', p.ageRange), row('Member since', isNaN(joined) ? '' : joined.toLocaleDateString(undefined, { month: 'long', year: 'numeric' }))),
     games.length ? h('div', { class: 'section' }, h('div', { class: 'section-title', text: 'Favorite games' }), h('div', { class: 'chips favgames' }, games.map(g => h('span', { class: 'chip', text: T(g) })))) : null,
     extra, actions);
@@ -1259,6 +1268,7 @@ function openCreate() {
   const privacy = selectEl([['public', 'Public: anyone can join'], ['request', 'Request to join: you approve people'], ['private', 'Private: invite only, not listed']], 'public');
   const desc = h('textarea', { class: 'textarea', maxlength: 300, placeholder: 'What’s the vibe? When do you play?' });
   const fn = field('Group name', name), fg = field('Game', game), fm = field('Play style', mode), fr = field('Region', region), fd = field('Description', desc), fpr = field('Who can join', privacy);
+  const lim = window.TWG ? TWG.limitFields({}) : null;   // max members + slowmode (groups.js)
   const audience = h('p', { class: 'muted small audience-note', text: !sep ? 'Open to ages 13–99.' : minor ? 'This group will be for ages 13–17 only. Adults can’t see it.' : 'This group will be for ages 18+ only. Under-18s can’t see it.' });
   const err = h('div', { class: 'form-error', role: 'alert' });
   const submit = h('button', { class: 'btn block', type: 'submit' }, 'Create group');
@@ -1270,10 +1280,10 @@ function openCreate() {
     if (!ok) return;
     submit.disabled = true; submit.classList.add('loading');
     try {
-      const r = await api('POST', '/api/groups', { name: name.value.trim(), game: game.value, mode: mode.value, region: region.value, ageMin: a, ageMax: b, description: desc.value.trim(), privacy: privacy.value });
+      const r = await api('POST', '/api/groups', { name: name.value.trim(), game: game.value, mode: mode.value, region: region.value, ageMin: a, ageMax: b, description: desc.value.trim(), privacy: privacy.value, ...(lim ? lim.values() : {}) });
       await refreshMine(); close(); go('#/group/' + enc(r.id || (r.group && r.group.id))); toast('Group created');
     } catch (ex) { err.textContent = T(ex.message); } finally { submit.disabled = false; submit.classList.remove('loading'); }
-  } }, fn, fg, h('div', { class: 'row' }, fm, fr), h('div', { class: 'field' }, h('span', { class: 'label', text: 'Age range' }), h('div', { class: 'row' }, amin, amax), audience), fpr, fd, err, submit);
+  } }, fn, fg, h('div', { class: 'row' }, fm, fr), h('div', { class: 'field' }, h('span', { class: 'label', text: 'Age range' }), h('div', { class: 'row' }, amin, amax), audience), fpr, lim ? lim.el : null, fd, err, submit);
   const close = openSheet('Create a group', form);
 }
 
