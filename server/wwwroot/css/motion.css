@@ -1,0 +1,141 @@
+/* Third Wheel — motion layer. Springs, morphs, flat colours only. Nothing pulses. */
+:root {
+  --spring: cubic-bezier(.34, 1.56, .64, 1);
+  --ease-out: cubic-bezier(.22, 1, .36, 1);
+}
+
+/* Entry animations must not freeze transforms after they finish (hover/tilt need them). */
+.stagger > *, .msg, .member, .frow { animation-fill-mode: backwards; }
+.frow { animation: none; }
+
+@keyframes pop-spring { 0% { opacity: 0; transform: scale(.4); } 60% { opacity: 1; transform: scale(1.14); } 100% { transform: none; } }
+@keyframes rise-spring { from { opacity: 0; transform: translateY(22px) scale(.94); } to { opacity: 1; transform: none; } }
+@keyframes msg-in { from { opacity: 0; transform: translate(-14px, 16px) scale(.94); } to { opacity: 1; transform: none; } }
+@keyframes msg-own { from { opacity: 0; transform: translate(14px, 16px) scale(.94); } to { opacity: 1; transform: none; } }
+@keyframes step-in { from { opacity: 0; transform: translateX(var(--dx, 28px)); } to { opacity: 1; transform: none; } }
+@keyframes from-left { from { opacity: 0; transform: translateX(-36px); } to { opacity: 1; transform: none; } }
+@keyframes from-right { from { opacity: 0; transform: translateX(36px); } to { opacity: 1; transform: none; } }
+@keyframes from-top { from { opacity: 0; transform: translateY(-24px); } to { opacity: 1; transform: none; } }
+@keyframes from-bottom { from { opacity: 0; transform: translateY(40px); } to { opacity: 1; transform: none; } }
+@keyframes ripple { from { opacity: .22; transform: scale(0); } to { opacity: 0; transform: scale(1); } }
+@keyframes shake { 0%, 100% { transform: none; } 20% { transform: translateX(-7px); } 40% { transform: translateX(6px); } 60% { transform: translateX(-4px); } 80% { transform: translateX(2px); } }
+@keyframes fly { 0% { transform: none; opacity: 1; } 42% { transform: translate(22px, -22px) scale(.6); opacity: 0; } 43% { transform: translate(-22px, 22px) scale(.6); opacity: 0; } 100% { transform: none; opacity: 1; } }
+@keyframes toast-spring { from { opacity: 0; transform: translateX(40px) scale(.92); } to { opacity: 1; transform: none; } }
+@keyframes vt-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes drift-a { from { transform: translate(0, 0) rotate(0deg); } to { transform: translate(70px, 50px) rotate(40deg); } }
+@keyframes drift-b { from { transform: translate(0, 0) rotate(0deg); } to { transform: translate(-60px, -40px) rotate(-55deg); } }
+@keyframes drift-c { from { transform: translate(0, 0); } to { transform: translate(-40px, 70px); } }
+
+.stagger > * { animation-name: rise-spring; animation-duration: .6s; animation-timing-function: var(--ease-out); animation-delay: calc(var(--i, 0) * 45ms); }
+.stagger-pop > * { animation: pop-spring .6s var(--ease-out) backwards; animation-delay: calc(var(--i, 0) * 45ms); }
+.msg { animation: msg-in .55s var(--spring) backwards; transform-origin: left bottom; }
+.msg.own { animation-name: msg-own; transform-origin: right bottom; }
+.step-in { animation: step-in .5s var(--ease-out) both; }
+.badge.pop { animation: pop-spring .5s var(--ease-out); }
+.toast { animation: toast-spring .55s var(--spring) both; transition: opacity .3s, transform .4s var(--ease-out); }
+.toast.out { opacity: 0; transform: translateX(40px) scale(.94); }
+.field.shake .input, .field.shake .select, .field.shake .textarea { animation: shake .42s var(--ease-out); }
+
+/* ---------- Ripple + press ---------- */
+.btn, .icon-btn, .tab, button.chip { overflow: hidden; }
+.nav-link { position: relative; overflow: hidden; }
+.tab { position: relative; }
+.ripple { position: absolute; border-radius: 50%; background: #fff; pointer-events: none; transform: scale(0); animation: ripple .7s var(--ease-out) forwards; }
+
+/* ---------- Buttons morph into spinners ---------- */
+.btn { transition: background var(--dur-fast), transform .35s var(--spring), border-color var(--dur-fast), opacity var(--dur-fast), width .38s var(--ease-out), padding .38s var(--ease-out), border-radius .38s var(--ease-out); }
+.btn:active { transform: scale(.94); }
+.btn.loading { padding-left: 0; padding-right: 0; border-radius: 999px; }
+.btn:not(.loading):hover { transform: translateY(-1px); }
+.icon-btn { transition: background var(--dur-fast), color var(--dur-fast), transform .35s var(--spring); }
+.icon-btn:hover { transform: scale(1.08); }
+.icon-btn:active { transform: scale(.88); }
+.composer .btn.sent svg { animation: fly .55s var(--ease-out); }
+
+/* ---------- Chips fill from the tap point ---------- */
+button.chip { position: relative; isolation: isolate; transition: border-color .2s, color .2s, transform .35s var(--spring); }
+button.chip::before { content: ""; position: absolute; z-index: -1; left: var(--ox, 50%); top: var(--oy, 50%); width: 260px; height: 260px; margin: -130px 0 0 -130px; border-radius: 50%; background: var(--color-accent); transform: scale(0); transition: transform .6s var(--ease-out); }
+button.chip[aria-pressed="true"] { background: var(--color-strong); border-color: var(--color-accent); color: #fff; }
+button.chip[aria-pressed="true"]::before { transform: scale(1); }
+button.chip:active { transform: scale(.92); }
+
+/* ---------- Tabs: indicator springs, stretches ---------- */
+.tabs::after { transition: transform .55s var(--spring); }
+.tab { transition: color .25s, transform .35s var(--spring); }
+.tab:active { transform: scale(.95); }
+
+/* ---------- Cards ---------- */
+.gcard { transform: perspective(900px) translateY(var(--ty, 0px)) rotateX(var(--rx, 0deg)) rotateY(var(--ry, 0deg)); transition: transform .35s var(--ease-out), border-color .2s, background .2s, box-shadow .35s var(--ease-out); will-change: transform; }
+.gcard:hover { --ty: -5px; box-shadow: 0 18px 36px -20px rgba(0, 0, 0, .9); transform: perspective(900px) translateY(var(--ty)) rotateX(var(--rx, 0deg)) rotateY(var(--ry, 0deg)); }
+.gcard:active { transform: perspective(900px) scale(.97); }
+.gcard::before { transition: width .4s var(--spring); }
+.gcard:hover::before { width: 9px; }
+.frow, .frow.big { transition: background .2s, border-color .2s, transform .35s var(--spring); }
+.frow.big:hover { transform: translateX(3px); }
+
+/* ---------- Search box widens on focus ---------- */
+.topbar { grid-template-columns: 1fr minmax(260px, 620px) 1fr; }
+.topbar > .searchbox { justify-self: center; width: min(100%, 400px); transition: width .6s var(--ease-out); }
+.topbar > .searchbox:focus-within { width: min(100%, 580px); }
+.searchbox .ico { transition: color .25s, transform .45s var(--spring); }
+.searchbox:focus-within .ico { color: var(--color-text); transform: translateY(-50%) scale(1.15); }
+
+/* ---------- Sliding active highlight (rail) ---------- */
+.nav-main { position: relative; display: flex; flex-direction: column; gap: var(--space-2); }
+.nav-main > .nav-link { position: relative; z-index: 1; }
+.nav-main > .nav-link[aria-current="page"] { background: transparent; }
+.slide-pill { position: absolute; left: 0; top: 0; z-index: 0; border-radius: var(--radius-md); background: var(--color-accent-soft); opacity: 0; pointer-events: none; transition: transform .6s var(--spring), width .45s var(--ease-out), height .45s var(--ease-out), opacity .3s; }
+.nav-link svg { transition: transform .45s var(--spring); }
+.nav-link:hover svg { transform: scale(1.15) rotate(-6deg); }
+.nav-link[aria-current="page"] svg { transform: scale(1.1); }
+
+/* ---------- Brand wheel ---------- */
+.brand img { transition: transform .8s var(--spring); }
+.brand:hover img { transform: rotate(240deg); }
+
+/* ---------- Route progress bar ---------- */
+.route-bar { position: fixed; top: 0; left: 0; right: 0; height: 2px; z-index: 90; background: var(--color-accent); transform: scaleX(0); transform-origin: left; opacity: 0; pointer-events: none; }
+.route-bar.run { opacity: 1; transform: scaleX(.85); transition: transform 6s cubic-bezier(.1, .8, .2, 1); }
+.route-bar.end { opacity: 0; transform: scaleX(1); transition: transform .25s ease-out, opacity .4s .25s; }
+
+/* ---------- Shell entrance ---------- */
+.shell.enter .rail { animation: from-left .7s var(--ease-out) backwards; }
+.shell.enter .friends-panel { animation: from-right .7s .08s var(--ease-out) backwards; }
+.shell.enter .topbar { animation: from-top .6s .05s var(--ease-out) backwards; }
+.shell.enter .bottom-nav { animation: from-bottom .7s .1s var(--ease-out) backwards; }
+
+/* ---------- Onboarding progress fills ---------- */
+.progress span { position: relative; overflow: hidden; }
+.progress span.on { background: var(--color-strong); }
+.progress span::after { content: ""; position: absolute; inset: 0; background: var(--color-accent); transform: scaleX(0); transform-origin: left; transition: transform .6s var(--ease-out); }
+.progress span.on::after { transform: none; }
+
+/* ---------- Drifting rings (auth + onboarding) ---------- */
+.center-screen { position: relative; z-index: 1; }
+.orbits { position: fixed; inset: 0; overflow: hidden; pointer-events: none; z-index: 0; }
+.orbits i { position: absolute; border-radius: 50%; border: 2px solid var(--color-border); translate: calc(var(--px, 0) * var(--k, 20) * 1px) calc(var(--py, 0) * var(--k, 20) * 1px); transition: translate .9s var(--ease-out); }
+.orbits .o1 { --k: 26; width: 440px; height: 440px; left: -140px; top: -120px; animation: drift-a 28s ease-in-out infinite alternate; }
+.orbits .o2 { --k: -34; width: 320px; height: 320px; right: -80px; bottom: 6%; border-color: #2d3270; animation: drift-b 34s ease-in-out infinite alternate; }
+.orbits .o3 { --k: 48; width: 150px; height: 150px; right: 24%; top: 10%; border-color: var(--color-strong); background: var(--color-surface); animation: drift-c 24s ease-in-out infinite alternate; }
+
+/* ---------- Bottom bar (mobile) ---------- */
+@media (max-width: 899px) {
+  .slide-bar { position: absolute; top: 0; left: 0; width: 22px; height: 3px; border-radius: 0 0 3px 3px; background: var(--color-accent); opacity: 0; transition: transform .6s var(--spring), opacity .3s; pointer-events: none; }
+  .bn-item .bn-ico { transition: transform .5s var(--spring); }
+  .bn-item[aria-current="page"] .bn-ico { transform: translateY(-3px) scale(1.18); }
+  .bn-search { transition: transform .55s var(--spring), background .2s; }
+  .bn-search svg { transition: transform .6s var(--spring); }
+  .bn-search[aria-current="page"] { transform: translateY(-5px) scale(1.08); }
+  .bn-search[aria-current="page"] svg { transform: rotate(-12deg) scale(1.14); }
+  .bn-search:active { transform: scale(.88); }
+  .topbar > .searchbox { display: none; }
+}
+
+/* ---------- View transitions (group morph, shell swaps) ---------- */
+::view-transition-old(root), ::view-transition-new(root) { mix-blend-mode: normal; }
+::view-transition-old(root) { animation: none; }
+::view-transition-new(root) { animation: vt-in .38s ease-out both; }
+::view-transition-group(gmorph) { animation-duration: .65s; animation-timing-function: cubic-bezier(.22, 1, .36, 1); border-radius: 12px; overflow: clip; }
+::view-transition-old(gmorph), ::view-transition-new(gmorph) { mix-blend-mode: normal; height: 100%; width: 100%; object-fit: none; object-position: left top; }
+::view-transition-old(gmorph) { animation-duration: .3s; }
+::view-transition-new(gmorph) { animation-duration: .5s; animation-delay: .1s; animation-fill-mode: backwards; }

@@ -107,10 +107,10 @@ function toast(msg, kind) {
 }
 async function busy(btn, fn) {
   if (btn.disabled) return;
-  btn.disabled = true; btn.classList.add('loading');
+  btn.disabled = true; const done = TWM.busyBtn(btn);
   try { return await fn(); }
   catch (e) { toast(e.message || 'Something went wrong.', 'error'); }
-  finally { btn.disabled = false; btn.classList.remove('loading'); }
+  finally { btn.disabled = false; done(); }
 }
 function btn(label, o = {}) {
   return h('button', { type: o.type || 'button', class: 'btn ' + (o.cls || ''), onclick: o.onclick, 'aria-label': o.aria }, o.icon ? icon(o.icon, 16) : null, label);
@@ -130,7 +130,7 @@ function field(label, input, hint) {
   const msg = h('div', { class: 'field-msg', id: id + '-m', 'aria-live': 'polite' }, hint || '');
   input.setAttribute('aria-describedby', id + '-m');
   const f = h('div', { class: 'field' }, h('label', { for: id, text: label }), input, msg);
-  f.setError = (m) => { f.classList.toggle('invalid', !!m); msg.textContent = m || hint || ''; input.setAttribute('aria-invalid', m ? 'true' : 'false'); return !m; };
+  f.setError = (m) => { f.classList.toggle('invalid', !!m); f.classList.remove('shake'); if (m) { void f.offsetWidth; f.classList.add('shake'); } msg.textContent = m || hint || ''; input.setAttribute('aria-invalid', m ? 'true' : 'false'); return !m; };
   return f;
 }
 function tabs(items, active, onChange, label) {
@@ -156,6 +156,7 @@ function tabs(items, active, onChange, label) {
 }
 function openSheet(title, body) {
   const prev = document.activeElement;
+  let closing = false;
   const ov = h('div', { class: 'overlay' });
   const panel = h('div', { class: 'sheet', role: 'dialog', 'aria-modal': 'true', 'aria-label': title },
     h('div', { class: 'sheet-head' }, h('h2', { text: title }),
@@ -172,13 +173,14 @@ function openSheet(title, body) {
     }
   }
   function close() {
+    if (closing) return; closing = true;
     document.removeEventListener('keydown', key);
-    ov.classList.add('out');
-    setTimeout(() => { ov.remove(); if (prev && prev.focus) prev.focus(); }, 200);
+    TWM.sheetOut(prev, panel, ov).then(() => { ov.remove(); if (prev && prev.focus) prev.focus(); });
   }
   ov.addEventListener('mousedown', (e) => { if (e.target === ov) close(); });
   document.addEventListener('keydown', key);
   document.body.append(ov);
+  TWM.sheetIn(prev, panel, ov);
   const f = focusables(); (f[1] || f[0]) && (f[1] || f[0]).focus();
   return close;
 }
@@ -190,11 +192,13 @@ function personRow(p, o = {}) {
   const sk = statusKey(p.status);
   const sub = p.playing ? h('span', { class: 'playing' }, icon('pad', 13), 'Playing ' + T(p.playing))
     : h('span', {}, o.region && p.region ? T(p.region) : STATUS[sk]);
-  return h('div', { class: 'frow ' + (o.big ? 'big ' : '') + (sk === 'offline' ? 'off' : '') },
+  return h('div', { class: 'frow ' + (o.big ? 'big ' : '') + (sk === 'offline' ? 'off' : ''), 'data-key': p.id != null ? 'p' + p.id : null },
     avatar(p, 'md', true),
     h('div', { class: 'meta' }, h('b', { text: T(p.username) }), sub),
     o.action ? h('div', { class: 'act' }, o.action) : null);
 }
+
+function orbits() { return h('div', { class: 'orbits', 'aria-hidden': 'true' }, h('i', { class: 'o1' }), h('i', { class: 'o2' }), h('i', { class: 'o3' })); }
 
 /* ================= auth ================= */
 const USER_RE = /^[A-Za-z0-9_.-]{3,20}$/;
@@ -218,19 +222,19 @@ function renderAuth() {
     const okU = fu.setError(USER_RE.test(u) ? '' : 'Use 3–20 letters, numbers, . _ or -');
     const okP = fp.setError(p.length >= 8 ? '' : 'Password must be at least 8 characters');
     if (!okU || !okP) return;
-    submit.disabled = true; submit.classList.add('loading');
+    submit.disabled = true; const idle = TWM.busyBtn(submit);
     try {
       const r = await api('POST', '/api/auth/' + mode, { username: u, password: p });
       S.me = r.user || r; await start();
     } catch (ex) { err.textContent = T(ex.message); }
-    finally { submit.disabled = false; submit.classList.remove('loading'); }
+    finally { submit.disabled = false; idle(); }
   } }, fu, fp, err, submit);
   document.title = 'Third Wheel';
-  $('#app').replaceChildren(h('main', { class: 'center-screen' },
-    h('div', { class: 'card auth-card' },
-      h('div', { class: 'brand' }, h('img', { src: 'icon.svg', alt: '', width: 32, height: 32 }), 'Third Wheel'),
-      h('p', { class: 'muted', style: 'margin-top:8px', text: 'Find a group that plays the way you do.' }),
-      tb, form)));
+  const card = h('div', { class: 'card auth-card' },
+    h('div', { class: 'brand' }, h('img', { src: 'icon.svg', alt: '', width: 32, height: 32 }), 'Third Wheel'),
+    h('p', { class: 'muted', style: 'margin-top:8px', text: 'Find a group that plays the way you do.' }),
+    tb, form);
+  TWM.transition(() => $('#app').replaceChildren(orbits(), h('main', { class: 'center-screen' }, card)));
   user.focus();
 }
 
@@ -238,12 +242,14 @@ function renderAuth() {
 function renderOnboarding() {
   clearTimers();
   const d = { region: S.me.region || '', age: S.me.age || '', games: [...(S.me.favoriteGames || [])] };
-  let step = 0;
+  let step = 0, dir = 1;
   const card = h('div', { class: 'card ob-card' });
-  $('#app').replaceChildren(h('main', { class: 'center-screen' }, card));
   const steps = ['Where do you play?', 'What do you play?', 'You’re set'];
+  const brand = h('div', { class: 'brand' }, h('img', { src: 'icon.svg', alt: '', width: 32, height: 32 }), 'Welcome to Third Wheel');
+  const progress = h('div', { class: 'progress', 'aria-hidden': 'true' }, steps.map(() => h('span')));
+  TWM.transition(() => $('#app').replaceChildren(orbits(), h('main', { class: 'center-screen' }, card)));
   function draw() {
-    const body = h('div', { class: 'step-in' });
+    const body = h('div');
     const err = h('div', { class: 'form-error', role: 'alert' });
     let next;
     if (step === 0) {
@@ -276,18 +282,18 @@ function renderOnboarding() {
     }
     const nextBtn = h('button', { class: 'btn', type: 'button' }, step === 2 ? 'Finish' : 'Continue');
     nextBtn.addEventListener('click', async () => {
-      if (step < 2) { if (next()) { step++; draw(); } return; }
+      if (step < 2) { if (next()) { step++; dir = 1; draw(); } return; }
       await busy(nextBtn, async () => {
         await api('PUT', '/api/me/settings', { region: d.region, age: d.age, favoriteGames: d.games, playing: S.me.playing || '', status: S.me.status || 'online', onboarded: true });
         S.me = await api('GET', '/api/me'); await start();
       });
     });
-    card.replaceChildren(
-      h('div', { class: 'brand' }, h('img', { src: 'icon.svg', alt: '', width: 32, height: 32 }), 'Welcome to Third Wheel'),
-      h('div', { class: 'progress', 'aria-hidden': 'true' }, steps.map((_, i) => h('span', { class: i <= step ? 'on' : '' }))),
+    const stepEl = h('div', { class: 'step-in', style: `--dx:${dir * 30}px` },
       h('h1', { text: steps[step] }), h('div', { style: 'height:12px' }), body, err,
       h('div', { class: 'ob-actions' },
-        step > 0 ? h('button', { class: 'btn ghost', type: 'button', onclick: () => { step--; draw(); } }, 'Back') : h('span'), nextBtn));
+        step > 0 ? h('button', { class: 'btn ghost', type: 'button', onclick: () => { step--; dir = -1; draw(); } }, 'Back') : h('span'), nextBtn));
+    TWM.morphHeight(card, () => card.replaceChildren(brand, progress, stepEl));
+    [...progress.children].forEach((s, i) => s.classList.toggle('on', i <= step));
     const f = card.querySelector('select,input,.chip,.btn'); f && f.focus({ preventScroll: true });
   }
   draw();
@@ -312,7 +318,7 @@ function buildShell() {
 
   const rail = h('nav', { class: 'rail', 'aria-label': 'Main' },
     h('div', { class: 'brand' }, h('img', { src: 'icon.svg', alt: '', width: 32, height: 32 }), 'Third Wheel'),
-    navLink('#/feed', 'feed', 'Feed'), navLink('#/search', 'search', 'Find groups'), navLink('#/friends', 'users', 'Friends & invites'),
+    h('div', { class: 'nav-main' }, navLink('#/feed', 'feed', 'Feed'), navLink('#/search', 'search', 'Find groups'), navLink('#/friends', 'users', 'Friends & invites')),
     h('div', { class: 'rail-head' }, 'My groups', h('button', { class: 'icon-btn', type: 'button', 'aria-label': 'Create a group', onclick: openCreate }, icon('plus', 16))),
     E.railGroups, E.user);
 
@@ -332,7 +338,9 @@ function buildShell() {
     h('a', { class: 'bn-search', href: '#/search', 'data-route': '#/search', 'aria-label': 'Search' }, icon('search', 28)),
     bnItem('#/friends', 'user', 'Friends'));
 
-  $('#app').replaceChildren(h('div', { class: 'shell' }, rail, h('div', { class: 'main' }, topbar, E.view), panel, bottom));
+  const shell = h('div', { class: 'shell enter' }, rail, h('div', { class: 'main' }, topbar, E.view), panel, bottom);
+  $('#app').replaceChildren(shell);
+  setTimeout(() => shell.classList.remove('enter'), 1200);
   renderUserPanel(); renderRail(); renderFriends(); renderBadge();
 }
 function renderUserPanel() {
@@ -342,16 +350,22 @@ function renderUserPanel() {
     h('a', { class: 'icon-btn', href: '#/settings', 'aria-label': 'Settings' }, icon('gear', 20)));
 }
 function renderRail() {
-  if (!S.el.railGroups) return;
-  const cur = location.hash.split('/')[2];
-  const list = S.mine.map(g => {
-    const tile = h('span', { class: 'gtile', 'aria-hidden': 'true' }, (T(g.name)[0] || '?').toUpperCase());
-    tile.style.background = safeColor(g.color); tile.style.color = ink(g.color);
-    const a = h('a', { class: 'nav-link', href: '#/group/' + enc(g.id), title: T(g.name) }, tile, h('span', { class: 't', text: T(g.name) }));
-    if (location.hash.startsWith('#/group/') && String(g.id) === cur) a.setAttribute('aria-current', 'page');
-    return a;
+  const rg = S.el.railGroups; if (!rg) return;
+  const onGroup = location.hash.startsWith('#/group/');
+  const cur = onGroup ? decodeURIComponent(location.hash.split('/')[2] || '') : '';
+  const sig = JSON.stringify(S.mine.map(g => [g.id, g.name, g.color]));
+  if (rg.dataset.sig !== sig) {
+    rg.dataset.sig = sig;
+    const list = S.mine.map(g => {
+      const tile = h('span', { class: 'gtile', 'aria-hidden': 'true' }, (T(g.name)[0] || '?').toUpperCase());
+      tile.style.background = safeColor(g.color); tile.style.color = ink(g.color);
+      return h('a', { class: 'nav-link', href: '#/group/' + enc(g.id), title: T(g.name), 'data-key': 'g' + g.id, 'data-gid': g.id }, tile, h('span', { class: 't', text: T(g.name) }));
+    });
+    TWM.flip(rg, '.nav-link', () => rg.replaceChildren(...(list.length ? list : [h('p', { class: 'muted small', style: 'padding:8px 12px', text: 'No groups yet. Find one or create your own.' })])));
+  }
+  rg.querySelectorAll('.nav-link[data-gid]').forEach(a => {
+    if (onGroup && a.dataset.gid === cur) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current');
   });
-  S.el.railGroups.replaceChildren(...(list.length ? list : [h('p', { class: 'muted small', style: 'padding:8px 12px', text: 'No groups yet. Find one or create your own.' })]));
 }
 function renderFriends() {
   if (!S.el.fList) return;
@@ -361,21 +375,28 @@ function renderFriends() {
   const grp = (t, a) => { if (a.length) frag.push(h('div', { class: 'fgroup-title', text: `${t} — ${a.length}` }), ...a.map(f => personRow(f))); };
   grp('Playing now', playing); grp('Online', online); grp('Offline', off);
   if (!fs.length) frag.push(emptyState('No friends yet', 'Search for people and send a request.'));
-  S.el.fList.replaceChildren(...frag);
+  TWM.flip(S.el.fList, '.frow', () => S.el.fList.replaceChildren(...frag));
   S.el.fCount.textContent = `${fs.filter(on).length} online`;
 }
 function renderBadge() {
   const n = S.invites.length + S.reqs.incoming.length;
   if (!S.el.badge) return;
-  S.el.badge.hidden = !n; S.el.badge.textContent = n > 9 ? '9+' : String(n);
+  const txt = n > 9 ? '9+' : String(n);
+  if (S.el.badge.textContent !== txt && n) { S.el.badge.classList.remove('pop'); void S.el.badge.offsetWidth; S.el.badge.classList.add('pop'); }
+  S.el.badge.hidden = !n; S.el.badge.textContent = txt;
 }
 
 /* ================= router ================= */
 function go(hash) { if (location.hash === hash) route(); else location.hash = hash; }
-function show(node) {
-  node.classList.add('view-in');
-  S.el.view.replaceChildren(node);
-  if (!node.classList.contains('chat-page')) S.el.view.scrollTop = 0;
+/* o.to: build-time morph target. The clicked card (or the group header) morphs into it via a view transition. */
+function show(node, o = {}) {
+  TWM.prog.done();
+  const from = o.from && o.from.isConnected ? o.from : null;
+  if (!from) node.classList.add('view-in');
+  TWM.transition(() => {
+    S.el.view.replaceChildren(node);
+    if (!node.classList.contains('chat-page')) S.el.view.scrollTop = 0;
+  }, { from, to: o.to });
 }
 function clearTimers() { clearInterval(S.chatTimer); S.chatTimer = null; S.onData = null; }
 function markNav() {
@@ -384,17 +405,22 @@ function markNav() {
     const on = hash.startsWith(a.dataset.route);
     if (on) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current');
   });
-  renderRail();
+  renderRail(); TWM.nav();
 }
 async function route() {
   if (!S.me || !S.el.view) return;
   clearTimers();
   const tok = ++S.tok;
   const parts = (location.hash || '#/feed').replace(/^#\/?/, '').split('/');
+  const gh = S.el.view.querySelector('.ghead');
+  S.leaving = gh ? { el: gh, id: S.viewGroup } : null;
+  S.viewGroup = null;
+  TWM.prog.start();
   markNav();
   const fn = { feed: feedView, search: searchView, group: groupView, friends: friendsView, settings: settingsView }[parts[0]] || feedView;
   try { await fn(parts[1], tok); }
   catch (e) { if (tok === S.tok) show(h('div', { class: 'page' }, emptyState('That didn’t load', e.message || 'Please try again.', btn('Try again', { onclick: route })))); }
+  if (tok === S.tok) TWM.prog.done();
   document.title = 'Third Wheel';
 }
 const stale = (tok) => tok !== S.tok;
@@ -402,7 +428,7 @@ const stale = (tok) => tok !== S.tok;
 /* ================= feed ================= */
 function groupCard(g) {
   const ages = g.ageMin || g.ageMax ? `Ages ${g.ageMin || '13'}–${g.ageMax || '99'}` : 'All ages';
-  const card = h('article', { class: 'gcard' },
+  const card = h('article', { class: 'gcard', 'data-key': 'g' + g.id, 'data-id': g.id },
     h('div', { class: 'title-row' }, h('h3', {}, h('a', { href: '#/group/' + enc(g.id) }, T(g.name)))),
     h('div', { class: 'chips' }, h('span', { class: 'chip accent', text: T(g.game) }), h('span', { class: 'chip', text: g.mode === 'competitive' ? 'Competitive' : 'Casual' }),
       g.region ? h('span', { class: 'chip', text: T(g.region) }) : null, h('span', { class: 'chip', text: ages })),
@@ -414,14 +440,21 @@ function groupCard(g) {
 }
 async function feedView(_, tok) {
   const page = h('div', { class: 'page' });
-  const list = h('div', { class: 'grid stagger' });
+  const cached = S.feedCache && S.feedCache.length ? S.feedCache : null;
+  const back = S.leaving && cached ? S.leaving : null;
+  const list = h('div', { class: 'grid' + (back ? '' : ' stagger') });
+  const empty = () => emptyState('Nothing here yet', 'Try searching for a game, or start a group of your own.', btn('Find groups', { onclick: () => go('#/search') }));
   page.append(h('div', { class: 'page-head' }, h('div', {}, h('h1', { text: 'Your feed' }), h('p', { class: 'muted', text: 'Groups picked for your games, region and age.' })),
     btn('Create group', { icon: 'plus', onclick: openCreate })), list);
-  show(page);
-  list.append(h('span', { class: 'spinner', role: 'status', 'aria-label': 'Loading' }));
+  if (cached) { list.append(...cached.map(groupCard)); if (!back) stagger(list); }
+  else list.append(h('span', { class: 'spinner', role: 'status', 'aria-label': 'Loading' }));
+  show(page, back ? { from: back.el, to: () => page.querySelector(`.gcard[data-id="${CSS.escape(String(back.id))}"]`) } : {});
   const groups = await api('GET', '/api/feed'); if (stale(tok)) return;
-  list.replaceChildren(...groups.map(groupCard)); stagger(list);
-  if (!groups.length) list.replaceWith(emptyState('Nothing here yet', 'Try searching for a game, or start a group of your own.', btn('Find groups', { onclick: () => go('#/search') })));
+  const had = S.feedCache; S.feedCache = groups;
+  if (!groups.length) { list.replaceWith(empty()); return; }
+  if (cached && JSON.stringify(had) === JSON.stringify(groups)) return;
+  if (cached) TWM.flip(list, '.gcard', () => list.replaceChildren(...groups.map(groupCard)));
+  else { list.replaceChildren(...groups.map(groupCard)); stagger(list); }
 }
 
 /* ================= search ================= */
@@ -461,13 +494,16 @@ async function searchView(_, tok) {
     h('div', { class: 'field age-field' }, h('span', { class: 'label', text: 'Age range' }), h('div', { class: 'age' }, amin, h('span', { 'aria-hidden': 'true' }, '–'), amax), h('div', { class: 'field-msg' })));
   filters.querySelectorAll('.field-msg').forEach(m => { if (!m.textContent) m.style.display = 'none'; });
   const results = h('div', { class: 'section', role: 'tabpanel' });
-  const tb = tabs([['groups', 'Groups'], ['people', 'People']], q.tab, (k) => { q.tab = k; draw(); }, 'Results');
+  const tb = tabs([['groups', 'Groups'], ['people', 'People']], q.tab, (k) => { q.tab = k; draw(); TWM.slide(results, k === 'people' ? 1 : -1); }, 'Results');
   let last = { groups: [], people: [] }, loaded = false;
   function setCounts() { tb.buttons[0].replaceChildren('Groups', loaded ? h('span', { class: 'count', text: String(last.groups.length) }) : ''); tb.buttons[1].replaceChildren('People', loaded ? h('span', { class: 'count', text: String(last.people.length) }) : ''); }
   function draw() {
     setCounts(); tb.set(q.tab);
+    TWM.flip(results, '.gcard, .frow', paint);
+  }
+  function paint() {
     if (q.tab === 'groups') {
-      const grid = h('div', { class: 'grid stagger' }, last.groups.map(groupCard)); stagger(grid);
+      const grid = h('div', { class: 'grid' }, last.groups.map(groupCard));
       results.replaceChildren(last.groups.length ? grid : emptyState('No groups found', 'Loosen a filter or create the group you wish existed.', btn('Create group', { onclick: openCreate })));
     } else {
       const fr = last.people.filter(p => p.isFriend), other = last.people.filter(p => !p.isFriend);
@@ -490,11 +526,15 @@ async function searchView(_, tok) {
 
 /* ================= group ================= */
 async function groupView(id, tok) {
-  const page = h('div', { class: 'chat-page' }, h('div', { class: 'locked' }, h('span', { class: 'spinner', role: 'status', 'aria-label': 'Loading' })));
-  show(page);
+  const page = h('div', { class: 'chat-page' });
   const g = await api('GET', '/api/groups/' + enc(id)); if (stale(tok)) return;
+  S.viewGroup = g.id;
+  const morph = S.morphFrom && S.morphFrom.isConnected && S.morphFrom.dataset.id === String(g.id) ? S.morphFrom : null;
+  S.morphFrom = null;
   const members = g.members || [];
   const isMember = !!g.isMember;
+  const first = isMember ? await api('GET', `/api/groups/${enc(g.id)}/messages`) : [];
+  if (stale(tok)) return;
   const ages = g.ageMin || g.ageMax ? `Ages ${g.ageMin || '13'}–${g.ageMax || '99'}` : 'All ages';
   const actions = h('div', { class: 'row', style: 'flex:none;gap:8px' });
   if (isMember) {
@@ -507,14 +547,16 @@ async function groupView(id, tok) {
   }
   const head = h('div', { class: 'ghead' },
     h('div', { class: 'top' }, h('a', { class: 'icon-btn mobile-only', href: '#/feed', 'aria-label': 'Back to feed' }, icon('back')), h('h1', { text: T(g.name) }), actions),
-    h('div', { class: 'chips' }, h('span', { class: 'chip accent', text: T(g.game) }), h('span', { class: 'chip', text: g.mode === 'competitive' ? 'Competitive' : 'Casual' }),
+    h('div', { class: 'chips stagger-pop' }, h('span', { class: 'chip accent', text: T(g.game) }), h('span', { class: 'chip', text: g.mode === 'competitive' ? 'Competitive' : 'Casual' }),
       g.region ? h('span', { class: 'chip', text: T(g.region) }) : null, h('span', { class: 'chip', text: ages }), h('span', { class: 'chip', text: `${g.memberCount ?? members.length} members` })),
     g.description ? h('p', { class: 'desc', text: T(g.description) }) : null,
-    members.length ? h('div', { class: 'members', 'aria-label': 'Members' }, members.map(m => h('span', { class: 'member' }, avatar(m, 'sm'), T(m.username)))) : null);
+    members.length ? h('div', { class: 'members stagger-pop', 'aria-label': 'Members' }, members.map(m => h('span', { class: 'member' }, avatar(m, 'sm'), T(m.username)))) : null);
   head.querySelectorAll('.btn.small').forEach(b => b.style.minHeight = '32px');
+  head.querySelectorAll('.stagger-pop').forEach(stagger);
+  const showPage = () => show(page, morph ? { from: morph, to: () => head } : {});
   if (!isMember) {
     page.replaceChildren(head, h('div', { class: 'locked' }, emptyState('Join to chat', 'Members can chat in this group’s private chat room.')));
-    page.classList.add('view-in'); return;
+    showPage(); return;
   }
   const log = h('div', { class: 'chat-log', role: 'log', 'aria-live': 'polite', 'aria-label': 'Group chat', tabindex: '0' });
   const input = h('input', { class: 'input', type: 'text', maxlength: 500, placeholder: 'Message ' + T(g.name), 'aria-label': 'Message', autocomplete: 'off' });
@@ -522,29 +564,40 @@ async function groupView(id, tok) {
   const composer = h('form', { class: 'composer', onsubmit: async (e) => {
     e.preventDefault(); const text = input.value.trim(); if (!text) return;
     send.disabled = true;
-    try { const m = await api('POST', `/api/groups/${enc(g.id)}/messages`, { text }); input.value = ''; if (m && m.id) append([m], true); else poll(); }
+    const rect = input.getBoundingClientRect();
+    try {
+      const m = await api('POST', `/api/groups/${enc(g.id)}/messages`, { text }); input.value = '';
+      send.classList.add('sent'); setTimeout(() => send.classList.remove('sent'), 600);
+      if (m && m.id) append([m], true, rect); else poll();
+    }
     catch (ex) { toast(ex.message, 'error'); } finally { send.disabled = false; input.focus(); }
   } }, input, send);
-  page.replaceChildren(head, log, composer); page.classList.add('view-in');
-  const seen = new Set(); let lastId = 0;
-  function append(msgs, force) {
+  page.replaceChildren(head, log, composer);
+  const seen = new Set(); let lastId = 0, initial = true;
+  function append(msgs, force, fromRect) {
     const fresh = msgs.filter(m => !seen.has(m.id)); if (!fresh.length) return;
     const near = force || log.scrollHeight - log.scrollTop - log.clientHeight < 120;
+    const made = [];
     for (const m of fresh) {
       seen.add(m.id); if (typeof m.id === 'number' && m.id > lastId) lastId = m.id;
       const when = new Date(m.createdAt);
-      log.append(h('div', { class: 'msg' + (m.userId === S.me.id ? ' own' : '') }, avatar(m, 'md'),
+      const el = h('div', { class: 'msg' + (m.userId === S.me.id ? ' own' : '') }, avatar(m, 'md'),
         h('div', { class: 'body' }, h('div', { class: 'head' }, h('b', { text: T(m.username) }), h('time', { text: isNaN(when) ? '' : when.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }), datetime: isNaN(when) ? null : when.toISOString() })),
-          h('p', { text: T(m.text) }))));
+          h('p', { text: T(m.text) })));
+      if (initial) el.style.animationDelay = (300 + Math.min(made.length, 12) * 40) + 'ms';
+      log.append(el); made.push(el);
     }
-    if (near) log.scrollTop = log.scrollHeight;
+    if (near) log.scrollTo({ top: log.scrollHeight, behavior: fromRect || initial ? 'instant' : 'smooth' });
+    if (fromRect && made.length) TWM.flyFrom(made[made.length - 1], fromRect);
   }
   async function poll() {
     try { const m = await api('GET', `/api/groups/${enc(g.id)}/messages` + qs({ after: lastId || '' })); if (!stale(tok)) append(m || []); } catch { /* retry next tick */ }
   }
-  const first = await api('GET', `/api/groups/${enc(g.id)}/messages`); if (stale(tok)) return;
   if (!first.length) log.append(h('div', { class: 'empty', 'data-empty': '' }, h('b', { text: 'Say hi 👋' }), h('p', { text: 'Be the first to message the group.' })));
   append(first, true);
+  showPage();
+  log.scrollTo({ top: log.scrollHeight, behavior: 'instant' });
+  setTimeout(() => { initial = false; }, 0);
   const obs = new MutationObserver(() => { const e = log.querySelector('[data-empty]'); if (e && log.querySelector('.msg')) e.remove(); });
   obs.observe(log, { childList: true });
   S.chatTimer = setInterval(() => { if (!document.hidden) poll(); }, 2500);
@@ -653,6 +706,9 @@ async function settingsView() {
   const gw = h('div', { class: 'chips', role: 'group', 'aria-label': 'Favorite games' }, S.meta.games.map(g => { const n = gname(g);
     return h('button', { type: 'button', class: 'chip', 'aria-pressed': String(games.includes(n)), onclick: (e) => { const i = games.indexOf(n); if (i >= 0) games.splice(i, 1); else games.push(n); e.currentTarget.setAttribute('aria-pressed', String(i < 0)); } }, T(n)); }));
   const fr = field('Region', region), fa = field('Age', age), fs = field('Status', status), fp = field('Currently playing', playing, 'Shown next to your name in friends lists.');
+  const motion = selectEl([['system', 'Follow system'], ['on', 'Always on'], ['off', 'Off']], TWM.motionPref());
+  motion.addEventListener('change', () => { TWM.setMotionPref(motion.value); toast(motion.value === 'off' ? 'Animations off' : motion.value === 'on' ? 'Animations always on' : 'Animations follow your system'); });
+  const fm = field('Animations', motion, 'Use “Always on” if your system turns animations off.');
   const save = h('button', { class: 'btn', type: 'submit' }, 'Save changes');
   const form = h('form', { class: 'stack', novalidate: true, onsubmit: async (e) => {
     e.preventDefault();
@@ -663,7 +719,7 @@ async function settingsView() {
       await api('PUT', '/api/me/settings', { region: region.value, age: a, favoriteGames: games, playing: playing.value.trim(), status: status.value, onboarded: true });
       S.me = await api('GET', '/api/me'); renderUserPanel(); toast('Settings saved');
     });
-  } }, h('div', { class: 'row' }, fr, fa), h('div', { class: 'row' }, fs, fp), dl,
+  } }, h('div', { class: 'row' }, fr, fa), h('div', { class: 'row' }, fs, fp), fm, dl,
     h('div', { class: 'field' }, h('span', { class: 'label', text: 'Favorite games' }), gw), h('div', {}, save));
   const out = btn('Log out', { cls: 'danger', onclick: async (e) => { try { await api('POST', '/api/auth/logout'); } catch { /* ignore */ } loggedOut(); } });
   show(h('div', { class: 'page', style: 'max-width:720px' }, h('div', { class: 'page-head' }, h('div', {}, h('h1', { text: 'Settings' }), h('p', { class: 'muted', text: 'Signed in as ' + T(me.username) }))),
@@ -709,6 +765,7 @@ async function start() {
   route();
 }
 
+document.addEventListener('click', (e) => { const c = e.target.closest && e.target.closest('.gcard'); if (c) S.morphFrom = c; }, true);
 window.addEventListener('hashchange', route);
 document.addEventListener('visibilitychange', () => { if (!document.hidden) poll(); });
 (async function boot() {

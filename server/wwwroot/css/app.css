@@ -71,9 +71,11 @@ ul { list-style: none; margin: 0; padding: 0; }
 .stagger > * { animation: rise var(--dur) var(--ease) both; animation-delay: calc(var(--i, 0) * 40ms); }
 .step-in { animation: slide-in var(--dur) var(--ease) both; }
 
+/* Motion follows the OS "reduce motion" setting unless the user picks Always on / Off in Settings (data-motion on <html>). */
 @media (prefers-reduced-motion: reduce) {
-  *, *::before, *::after { animation-duration: .01ms !important; animation-delay: 0ms !important; transition-duration: .01ms !important; scroll-behavior: auto !important; }
+  :root:not([data-motion="on"]) *, :root:not([data-motion="on"]) *::before, :root:not([data-motion="on"]) *::after { animation-duration: .01ms !important; animation-delay: 0ms !important; transition-duration: .01ms !important; scroll-behavior: auto !important; }
 }
+:root[data-motion="off"] *, :root[data-motion="off"] *::before, :root[data-motion="off"] *::after { animation-duration: .01ms !important; animation-delay: 0ms !important; transition-duration: .01ms !important; scroll-behavior: auto !important; }
 
 /* ---------- Primitives ---------- */
 .spinner { display: inline-block; width: 18px; height: 18px; border: 2px solid var(--color-border); border-top-color: var(--color-text); border-radius: 50%; animation: spin .7s linear infinite; }
