@@ -1,4 +1,4 @@
-/* notify feature styles: unread badges, notification center, settings rows. Flat colors, springy entrances, nothing pulses. */
+﻿/* notify feature styles: unread badges, notification center, settings rows. Flat colors, springy entrances, nothing pulses. */
 
 @keyframes ubadge-pop { 0% { opacity: 0; transform: scale(.4); } 60% { opacity: 1; transform: scale(1.18); } 100% { opacity: 1; transform: none; } }
 

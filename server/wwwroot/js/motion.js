@@ -1,4 +1,4 @@
-/* Third Wheel — motion helpers. Morphs, springs and FLIP. No innerHTML, no pulsing. */
+﻿/* Third Wheel — motion helpers. Morphs, springs and FLIP. No innerHTML, no pulsing. */
 (() => {
 'use strict';
 const root = document.documentElement;

@@ -1,4 +1,4 @@
-/* Notifications: unread badges, the bell's notification center, @mentions, page title count, and alerts (browser + desktop app).
+﻿/* Notifications: unread badges, the bell's notification center, @mentions, page title count, and alerts (browser + desktop app).
    Loads after app.js and works through window.TW plus DOM observers, so app.js needs no changes. No innerHTML anywhere. */
 (() => {
 'use strict';

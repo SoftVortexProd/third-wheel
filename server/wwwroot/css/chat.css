@@ -1,4 +1,4 @@
-/* chat feature styles: replies, reactions, attachments, composer extras, RCKT. Flat colors only, no pulsing. */
+﻿/* chat feature styles: replies, reactions, attachments, composer extras, RCKT. Flat colors only, no pulsing. */
 
 .msg { position: relative; border-radius: var(--radius-md); padding: 2px 6px 2px 0; margin-left: -6px; padding-left: 6px; transition: background .25s; max-width: min(760px, 100%); }
 .msg:hover, .msg:focus-within, .msg.tap { background: rgba(255, 255, 255, .03); }

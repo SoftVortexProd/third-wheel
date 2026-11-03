@@ -1,4 +1,4 @@
-/* Third Wheel — client. DOM is built with createElement/textContent only (no innerHTML). */
+﻿/* Third Wheel — client. DOM is built with createElement/textContent only (no innerHTML). */
 (() => {
 'use strict';
 

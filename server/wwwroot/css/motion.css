@@ -25,9 +25,13 @@
 
 .stagger > * { animation-name: rise-spring; animation-duration: .6s; animation-timing-function: var(--ease-out); animation-delay: calc(var(--i, 0) * 45ms); }
 .stagger-pop > * { animation: pop-spring .6s var(--ease-out) backwards; animation-delay: calc(var(--i, 0) * 45ms); }
-.msg { animation: msg-in .55s var(--spring) backwards; transform-origin: left bottom; }
-.msg.own { animation-name: msg-own; transform-origin: right bottom; }
+/* Chats appear instantly with no entry animation */
+.msg, .msg.own { animation: none !important; transform: none !important; }
 .step-in { animation: step-in .5s var(--ease-out) both; }
+.sheet { animation: rise-spring .32s var(--spring) both; }
+.settings-tab-panel { animation: rise-spring .24s var(--ease-out) both; }
+.gcard { transition: transform var(--dur-fast), border-color var(--dur-fast), box-shadow var(--dur-fast); }
+.gcard:hover { transform: translateY(-2px); }
 .badge.pop { animation: pop-spring .5s var(--ease-out); }
 .toast { animation: toast-spring .55s var(--spring) both; transition: opacity .3s, transform .4s var(--ease-out); }
 .toast.out { opacity: 0; transform: translateX(40px) scale(.94); }

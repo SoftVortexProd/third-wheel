@@ -1,4 +1,4 @@
-/* Account + admin tools: users change their password; admins edit a user's profile/settings/password and rename groups.
+﻿/* Account + admin tools: users change their password; admins edit a user's profile/settings/password and rename groups.
    Loaded after app.js and uses its helpers through window.TW. */
 (() => {
 'use strict';

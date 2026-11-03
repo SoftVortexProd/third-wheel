@@ -1,4 +1,4 @@
-/* Groups feature module: roles, moderation (kick / ban / mute), rules, join requests, bans and group settings.
+﻿/* Groups feature module: roles, moderation (kick / ban / mute), rules, join requests, bans and group settings.
    Loaded after app.js; app.js's groupView calls window.TWG. Everything is built with createElement/textContent (no innerHTML). */
 (() => {
 'use strict';

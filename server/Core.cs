@@ -95,6 +95,7 @@ public static class Core
     };
 
     public const string GroupSel = @"SELECT g.id,g.name,g.game,g.mode,g.region,g.ageMin,g.ageMax,g.description,g.color,
+ COALESCE(g.joinCode,'') joinCode, COALESCE(g.maxMembers,0) maxMembers, COALESCE(g.slowmode,0) slowmode,
  (SELECT COUNT(*) FROM members m WHERE m.groupId=g.id) memberCount,
  (SELECT COUNT(*) FROM members m WHERE m.groupId=g.id AND m.userId=@me) isMember FROM grps g";
     public static object GroupObj(Dictionary<string, object?> r) => new
@@ -102,7 +103,10 @@ public static class Core
         id = (long)r["id"]!, name = (string)r["name"]!, game = (string)r["game"]!, mode = (string)r["mode"]!,
         region = (string)r["region"]!, ageMin = Convert.ToInt32(r["ageMin"]), ageMax = Convert.ToInt32(r["ageMax"]),
         description = (string)r["description"]!, memberCount = Convert.ToInt32(r["memberCount"]),
-        isMember = Convert.ToInt32(r["isMember"]) > 0, color = (string)r["color"]!
+        isMember = Convert.ToInt32(r["isMember"]) > 0, color = (string)r["color"]!,
+        joinCode = r.TryGetValue("joinCode", out var jc) ? (jc as string ?? "") : "",
+        maxMembers = r.TryGetValue("maxMembers", out var mm) ? Convert.ToInt32(mm ?? 0) : 0,
+        slowmode = r.TryGetValue("slowmode", out var sm) ? Convert.ToInt32(sm ?? 0) : 0
     };
     public const string MsgSel = "SELECT m.id,m.userId,u.username,u.display,u.avatarVer,u.color avatarColor,m.text,m.createdAt FROM messages m JOIN users u ON u.id=m.userId";
     public static object MsgObj(Dictionary<string, object?> r) => new
@@ -113,6 +117,7 @@ public static class Core
     };
     public static bool AreFriends(long a, long b) => Db.Scalar("SELECT 1 FROM friends WHERE a=@a AND b=@b", ("@a", Math.Min(a, b)), ("@b", Math.Max(a, b))) != null;
     public static bool IsMember(long g, long u) => Db.Scalar("SELECT 1 FROM members WHERE groupId=@g AND userId=@u", ("@g", g), ("@u", u)) != null;
+    public static bool IsBlocked(long a, long b) => Db.Scalar("SELECT 1 FROM user_blocks WHERE (userId=@a AND blockedId=@b) OR (userId=@b AND blockedId=@a)", ("@a", a), ("@b", b)) != null;
 
     /// <summary>members.role is 'owner', 'mod' or 'member'. Site admins can moderate every group. GroupsApi manages the roles; other features only ask.</summary>
     public static bool CanModerateGroup(long gid, long uid) => IsAdmin(uid) ||

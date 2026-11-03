@@ -8,6 +8,9 @@ public static class AccountApi
 {
     static readonly Regex Ctrl = new(@"[\p{C}\p{Zl}\p{Zp}]", RegexOptions.Compiled);
     static readonly string[] Statuses = { "online", "idle", "dnd", "offline" };
+    static readonly HttpClient Http = new(new HttpClientHandler { AutomaticDecompression = DecompressionMethods.All }) { Timeout = TimeSpan.FromSeconds(10) };
+    /// <summary>Tenor API key, set on the server as the TW_TENOR_KEY environment variable (never committed to the repo). Without it GIF search returns notConfigured.</summary>
+    static string TenorKey => Environment.GetEnvironmentVariable("TW_TENOR_KEY") ?? "";
 
     static void SetPassword(long uid, string pw)
     {
@@ -15,10 +18,236 @@ public static class AccountApi
         Db.Exec("UPDATE users SET hash=@h, salt=@s WHERE id=@i", ("@h", Convert.ToBase64String(Db.Hash(pw, salt))), ("@s", Convert.ToBase64String(salt)), ("@i", uid));
     }
 
-    public static void Migrate() { }
+    public static void Migrate()
+    {
+        Db.Exec(@"CREATE TABLE IF NOT EXISTS user_blocks(userId INTEGER, blockedId INTEGER, at TEXT, PRIMARY KEY(userId, blockedId));
+CREATE TABLE IF NOT EXISTS user_reports(id INTEGER PRIMARY KEY, reporterId INTEGER, reportedUserId INTEGER, messageId INTEGER, groupId INTEGER, reason TEXT, details TEXT, status TEXT DEFAULT 'pending', at TEXT);
+CREATE TABLE IF NOT EXISTS user_prefs(userId INTEGER PRIMARY KEY, accentColor TEXT DEFAULT '#7c8cff', fontScale REAL DEFAULT 1.0, language TEXT DEFAULT 'en', nsfwFilter INTEGER DEFAULT 1, profanityFilter INTEGER DEFAULT 1, favGifs TEXT DEFAULT '[]', gamerTags TEXT DEFAULT '{}');");
+    }
 
     public static void Map(RouteGroupBuilder api)
     {
+        // ---- user blocks ----
+        api.MapGet("me/blocks", (HttpContext c) => WithUser(c, uid =>
+        {
+            var rows = Db.Rows(@"SELECT u.*, b.at blockedAt FROM user_blocks b JOIN users u ON u.id=b.blockedId WHERE b.userId=@u ORDER BY b.at DESC", ("@u", uid));
+            return Results.Json(rows.Select(r => new {
+                id = (long)r["id"]!,
+                username = (string)r["username"]!,
+                displayName = r["display"] as string,
+                avatar = AvatarUrl((long)r["id"]!, r["avatarVer"]),
+                color = (string)r["color"]!,
+                blockedAt = r["blockedAt"] as string
+            }));
+        }));
+
+        api.MapPost("me/blocks/{target:long}", (HttpContext c, long target) => WithUser(c, uid =>
+        {
+            if (target == uid) return Err("Cannot block yourself.");
+            if (Db.Scalar("SELECT 1 FROM users WHERE id=@t", ("@t", target)) == null) return Err("User not found.", 404);
+            Db.Exec("INSERT OR IGNORE INTO user_blocks(userId, blockedId, at) VALUES(@u, @t, @at)", ("@u", uid), ("@t", target), ("@at", Now()));
+            Db.Exec("DELETE FROM friends WHERE (a=@a AND b=@b) OR (a=@b AND b=@a)", ("@a", Math.Min(uid, target)), ("@b", Math.Max(uid, target)));
+            return Results.Json(new { ok = true });
+        }));
+
+        api.MapDelete("me/blocks/{target:long}", (HttpContext c, long target) => WithUser(c, uid =>
+        {
+            Db.Exec("DELETE FROM user_blocks WHERE userId=@u AND blockedId=@t", ("@u", uid), ("@t", target));
+            return Results.Json(new { ok = true });
+        }));
+
+        // ---- user preferences / appearance / safety ----
+        api.MapGet("me/preferences", (HttpContext c) => WithUser(c, uid =>
+        {
+            var row = Db.Row("SELECT * FROM user_prefs WHERE userId=@u", ("@u", uid));
+            if (row == null) return Results.Json(new { accentColor = "#7c8cff", fontScale = 1.0, language = "en", nsfwFilter = true, profanityFilter = true, favGifs = Array.Empty<string>(), gamerTags = new Dictionary<string, string>() });
+            return Results.Json(new {
+                accentColor = row["accentColor"] as string ?? "#7c8cff",
+                fontScale = Convert.ToDouble(row["fontScale"] ?? 1.0),
+                language = row["language"] as string ?? "en",
+                nsfwFilter = Convert.ToInt32(row["nsfwFilter"] ?? 1) == 1,
+                profanityFilter = Convert.ToInt32(row["profanityFilter"] ?? 1) == 1,
+                favGifs = JsonSerializer.Deserialize<string[]>(row["favGifs"] as string ?? "[]") ?? Array.Empty<string>(),
+                gamerTags = JsonSerializer.Deserialize<Dictionary<string, string>>(row["gamerTags"] as string ?? "{}") ?? new Dictionary<string, string>()
+            });
+        }));
+
+        api.MapPut("me/preferences", (HttpContext c, PrefsIn b) => WithUser(c, uid =>
+        {
+            var existing = Db.Row("SELECT * FROM user_prefs WHERE userId=@u", ("@u", uid));
+            var accent = Clean(b.AccentColor ?? (existing?["accentColor"] as string ?? "#7c8cff"), 16);
+            var fontScale = Math.Clamp(b.FontScale ?? (existing != null ? Convert.ToDouble(existing["fontScale"]) : 1.0), 0.75, 1.5);
+            var lang = Clean(b.Language ?? (existing?["language"] as string ?? "en"), 10);
+            var nsfw = b.NsfwFilter ?? (existing == null || Convert.ToInt32(existing["nsfwFilter"]) == 1);
+            var prof = b.ProfanityFilter ?? (existing == null || Convert.ToInt32(existing["profanityFilter"]) == 1);
+            var favGifs = b.FavGifs != null ? JsonSerializer.Serialize(b.FavGifs) : (existing?["favGifs"] as string ?? "[]");
+            var gamerTags = b.GamerTags != null ? JsonSerializer.Serialize(b.GamerTags) : (existing?["gamerTags"] as string ?? "{}");
+            Db.Exec(@"INSERT INTO user_prefs(userId, accentColor, fontScale, language, nsfwFilter, profanityFilter, favGifs, gamerTags)
+                      VALUES(@u, @ac, @fs, @l, @nf, @pf, @fg, @gt)
+                      ON CONFLICT(userId) DO UPDATE SET
+                      accentColor=@ac, fontScale=@fs, language=@l, nsfwFilter=@nf, profanityFilter=@pf, favGifs=@fg, gamerTags=@gt",
+                      ("@u", uid), ("@ac", accent), ("@fs", fontScale), ("@l", lang), ("@nf", nsfw ? 1 : 0), ("@pf", prof ? 1 : 0), ("@fg", favGifs), ("@gt", gamerTags));
+            return Results.Json(new { ok = true });
+        }));
+
+        // ---- report system ----
+        api.MapPost("reports", (HttpContext c, ReportIn b) => WithUser(c, uid =>
+        {
+            if (Limited($"rep:{uid}", 10, TimeSpan.FromHours(1), true)) return Err("Too many reports submitted. Please wait.", 429);
+            var reason = Clean(b.Reason, 60);
+            if (string.IsNullOrWhiteSpace(reason)) return Err("Report reason required.");
+            var details = Clean(b.Details, 500);
+            Db.Exec("INSERT INTO user_reports(reporterId, reportedUserId, messageId, groupId, reason, details, status, at) VALUES(@r, @ru, @m, @g, @rs, @d, 'pending', @at)",
+                ("@r", uid), ("@ru", b.ReportedUserId), ("@m", b.MessageId), ("@g", b.GroupId), ("@rs", Enc(reason)), ("@d", Enc(details)), ("@at", Now()));
+            return Results.Json(new { ok = true });
+        }));
+
+        api.MapGet("admin/reports", (HttpContext c) => WithAdmin(c, _ =>
+        {
+            var list = Db.Rows(@"SELECT r.*, u1.username reporterName, u2.username reportedName, g.name groupName
+                                 FROM user_reports r
+                                 LEFT JOIN users u1 ON u1.id=r.reporterId
+                                 LEFT JOIN users u2 ON u2.id=r.reportedUserId
+                                 LEFT JOIN grps g ON g.id=r.groupId
+                                 ORDER BY CASE r.status WHEN 'pending' THEN 0 ELSE 1 END, r.id DESC LIMIT 100");
+            return Results.Json(list);
+        }));
+
+        api.MapPost("admin/reports/{id:long}/resolve", (HttpContext c, long id) => WithAdmin(c, me =>
+        {
+            Db.Exec("UPDATE user_reports SET status='resolved' WHERE id=@i", ("@i", id));
+            Audit(me, "resolved report", id.ToString());
+            return Results.Json(new { ok = true });
+        }));
+
+        // ---- GIF search & media proxy (Tenor v2 + CSP 'self') ----
+        api.MapGet("media/gifs/trending", async (HttpContext c) =>
+        {
+            try
+            {
+                if (TenorKey.Length == 0) return Results.Json(new { results = Array.Empty<object>(), notConfigured = true });
+                var uri = $"https://tenor.googleapis.com/v2/featured?key={TenorKey}&client_key=tenor_web&limit=24&media_filter=tinygif,gif";
+                var resp = await Http.GetAsync(uri);
+                if (!resp.IsSuccessStatusCode) return Results.Json(new { results = Array.Empty<object>() });
+                using var doc = await JsonDocument.ParseAsync(await resp.Content.ReadAsStreamAsync());
+                var list = new List<object>();
+                if (doc.RootElement.TryGetProperty("results", out var items))
+                {
+                    foreach (var item in items.EnumerateArray())
+                    {
+                        var id = item.GetProperty("id").GetString() ?? "";
+                        var title = item.TryGetProperty("content_description", out var cd) ? cd.GetString() ?? "" : "";
+                        var formats = item.GetProperty("media_formats");
+                        string? tinyUrl = null, fullUrl = null;
+                        int w = 200, h = 150;
+                        if (formats.TryGetProperty("tinygif", out var tg))
+                        {
+                            tinyUrl = tg.GetProperty("url").GetString();
+                            if (tg.TryGetProperty("dims", out var dm) && dm.GetArrayLength() == 2)
+                            { w = dm[0].GetInt32(); h = dm[1].GetInt32(); }
+                        }
+                        if (formats.TryGetProperty("gif", out var gf)) fullUrl = gf.GetProperty("url").GetString();
+                        if (!string.IsNullOrEmpty(fullUrl))
+                        {
+                            list.Add(new {
+                                id, title,
+                                preview = "/api/media/proxy?url=" + WebUtility.UrlEncode(tinyUrl ?? fullUrl),
+                                url = "/api/media/proxy?url=" + WebUtility.UrlEncode(fullUrl),
+                                width = w, height = h
+                            });
+                        }
+                    }
+                }
+                return Results.Json(new { results = list });
+            }
+            catch { return Results.Json(new { results = Array.Empty<object>() }); }
+        });
+
+        api.MapGet("media/gifs/search", async (HttpContext c, string? q) =>
+        {
+            var term = (q ?? "").Trim();
+            if (string.IsNullOrEmpty(term)) return Results.Json(new { results = Array.Empty<object>() });
+            try
+            {
+                if (TenorKey.Length == 0) return Results.Json(new { results = Array.Empty<object>(), notConfigured = true });
+                var uri = $"https://tenor.googleapis.com/v2/search?key={TenorKey}&client_key=tenor_web&q={Uri.EscapeDataString(term)}&limit=24&media_filter=tinygif,gif";
+                var resp = await Http.GetAsync(uri);
+                if (!resp.IsSuccessStatusCode) return Results.Json(new { results = Array.Empty<object>() });
+                using var doc = await JsonDocument.ParseAsync(await resp.Content.ReadAsStreamAsync());
+                var list = new List<object>();
+                if (doc.RootElement.TryGetProperty("results", out var items))
+                {
+                    foreach (var item in items.EnumerateArray())
+                    {
+                        var id = item.GetProperty("id").GetString() ?? "";
+                        var title = item.TryGetProperty("content_description", out var cd) ? cd.GetString() ?? "" : "";
+                        var formats = item.GetProperty("media_formats");
+                        string? tinyUrl = null, fullUrl = null;
+                        int w = 200, h = 150;
+                        if (formats.TryGetProperty("tinygif", out var tg))
+                        {
+                            tinyUrl = tg.GetProperty("url").GetString();
+                            if (tg.TryGetProperty("dims", out var dm) && dm.GetArrayLength() == 2)
+                            { w = dm[0].GetInt32(); h = dm[1].GetInt32(); }
+                        }
+                        if (formats.TryGetProperty("gif", out var gf)) fullUrl = gf.GetProperty("url").GetString();
+                        if (!string.IsNullOrEmpty(fullUrl))
+                        {
+                            list.Add(new {
+                                id, title,
+                                preview = "/api/media/proxy?url=" + WebUtility.UrlEncode(tinyUrl ?? fullUrl),
+                                url = "/api/media/proxy?url=" + WebUtility.UrlEncode(fullUrl),
+                                width = w, height = h
+                            });
+                        }
+                    }
+                }
+                return Results.Json(new { results = list });
+            }
+            catch { return Results.Json(new { results = Array.Empty<object>() }); }
+        });
+
+        api.MapGet("media/proxy", async (HttpContext c, string? url) =>
+        {
+            if (string.IsNullOrEmpty(url) || (!url.StartsWith("https://media.tenor.com/") && !url.StartsWith("https://media1.tenor.com/") && !url.StartsWith("https://c.tenor.com/")))
+                return Results.NotFound();
+            try
+            {
+                var req = new HttpRequestMessage(HttpMethod.Get, url);
+                var resp = await Http.SendAsync(req, HttpCompletionOption.ResponseHeadersRead);
+                if (!resp.IsSuccessStatusCode) return Results.StatusCode((int)resp.StatusCode);
+                c.Response.Headers["Cache-Control"] = "public, max-age=604800, immutable";
+                var ctype = resp.Content.Headers.ContentType?.ToString() ?? "image/gif";
+                var stream = await resp.Content.ReadAsStreamAsync();
+                return Results.Stream(stream, ctype);
+            }
+            catch { return Results.StatusCode(502); }
+        });
+
+        // ---- free translation endpoint ----
+        api.MapPost("translate", async (HttpContext c, TranslateIn b) =>
+        {
+            var text = (b.Text ?? "").Trim();
+            var toLang = Clean(b.ToLang ?? "en", 8).ToLowerInvariant();
+            if (string.IsNullOrEmpty(text)) return Results.Json(new { text = "" });
+            try
+            {
+                var uri = $"https://api.mymemory.translated.net/get?q={Uri.EscapeDataString(text)}&langpair=autodetect|{toLang}";
+                var resp = await Http.GetAsync(uri);
+                if (resp.IsSuccessStatusCode)
+                {
+                    using var doc = await JsonDocument.ParseAsync(await resp.Content.ReadAsStreamAsync());
+                    if (doc.RootElement.TryGetProperty("responseData", out var rd) &&
+                        rd.TryGetProperty("translatedText", out var tt))
+                    {
+                        var translated = tt.GetString() ?? text;
+                        return Results.Json(new { text = translated });
+                    }
+                }
+            }
+            catch { }
+            return Results.Json(new { text });
+        });
         // ---- a user changes their own password ----
         api.MapPost("me/password", (HttpContext c, PasswordIn b) => WithUser(c, uid =>
         {
@@ -149,3 +378,6 @@ public static class AccountApi
 public record PasswordIn(string? Current, string? Password);
 public record AdminPasswordIn(string? Password);
 public record GroupRenameIn(string? Name);
+public record PrefsIn(string? AccentColor, double? FontScale, string? Language, bool? NsfwFilter, bool? ProfanityFilter, string[]? FavGifs, Dictionary<string, string>? GamerTags);
+public record ReportIn(long? ReportedUserId, long? MessageId, long? GroupId, string? Reason, string? Details);
+public record TranslateIn(string? Text, string? ToLang);

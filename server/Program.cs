@@ -1,4 +1,4 @@
-using static Core;
+﻿using static Core;
 using System.Collections.Concurrent;
 using System.Net;
 using System.Security.Cryptography;

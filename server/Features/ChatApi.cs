@@ -1,4 +1,4 @@
-﻿using System.Collections.Concurrent;
+using System.Collections.Concurrent;
 using System.Net;
 using System.Text;
 using Microsoft.AspNetCore.Http.Features;
@@ -165,6 +165,7 @@ CREATE TABLE IF NOT EXISTS files(id INTEGER PRIMARY KEY, ownerId INTEGER, name T
             api.MapPost(list, (HttpContext c, long id, ChatIn b) => WithConv(c, k, id, cv =>
             {
                 if (cv.G) { var blocked = GroupPostBlock(cv.Id, cv.Me); if (blocked != null) return Err(blocked, 403); }
+                else if (IsBlocked(cv.Me, cv.Id)) return Err("Cannot send messages to this user.", 403);
                 var text = Clean(b.Text, 1000);
                 if (text.Length == 0 && b.FileId == null) return Err("Message is empty.");
                 if (Limited(cv.G ? $"msg:{cv.Me}" : $"dm:{cv.Me}", cv.G ? 30 : 40, TimeSpan.FromMinutes(1), true)) return Err("Slow down a little.", 429);
@@ -173,7 +174,6 @@ CREATE TABLE IF NOT EXISTS files(id INTEGER PRIMARY KEY, ownerId INTEGER, name T
                 {
                     var f = Db.Row("SELECT * FROM files WHERE id=@i AND deletedAt IS NULL", ("@i", b.FileId));
                     if (f == null || (long)f["ownerId"]! != cv.Me || f["msgId"] != null || (string)f["convKind"]! != cv.K || (string)f["convKey"]! != cv.Key) return Err("That upload can't be attached here.", 400);
-                    if ((string)f["kind"]! == "gif" && !IsRcktUser(cv.Me)) return Err("GIFs need RCKT. Ask an admin for RCKT.", 403);
                 }
                 var now = Now();
                 long mid = cv.G

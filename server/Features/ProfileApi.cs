@@ -123,9 +123,11 @@ CREATE TABLE IF NOT EXISTS activity(userId INTEGER, hour INTEGER, n INTEGER DEFA
             .Select(r => new { game = (string)r["game"]!, rank = (r["rank"] as string) ?? "", role = (r["role"] as string) ?? "" }).ToList();
         int[]? act = null; var all = Db.Rows("SELECT hour,n FROM activity WHERE userId=@i", ("@i", id));
         if (all.Count > 0) { act = new int[24]; foreach (var r in all) { var h = Convert.ToInt32(r["hour"]); if (h is >= 0 and < 24) act[h] = Convert.ToInt32(r["n"]); } }
+        var prefRow = Db.Row("SELECT gamerTags FROM user_prefs WHERE userId=@i", ("@i", id));
+        var gamerTags = prefRow != null ? (JsonSerializer.Deserialize<Dictionary<string, string>>(prefRow["gamerTags"] as string ?? "{}") ?? new()) : new();
         return new
         {
-            bio = x.Bio, playMode = x.Mode, tags = x.Tags, languages = x.Langs, games,
+            bio = x.Bio, playMode = x.Mode, tags = x.Tags, languages = x.Langs, games, gamerTags,
             availability = new { tz = x.Tz, weekdays = x.Wd, weekends = x.We, set = x.HasAvail },
             online = new { blocks = OnlineBlocks(act) }
         };

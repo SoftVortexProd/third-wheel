@@ -1,4 +1,4 @@
-/* profile feature styles: game details, play style, availability, recommendations */
+﻿/* profile feature styles: game details, play style, availability, recommendations */
 .gd-row { display: grid; grid-template-columns: minmax(110px, 1.1fr) 1fr 1fr; gap: var(--space-3); align-items: center; }
 .gd-name { font-size: var(--fs-md); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 

@@ -1,4 +1,4 @@
-/* Chat module: the full-featured chat pane (replies, reactions, edit/delete, typing, attachments, lightbox)
+﻿/* Chat module: the full-featured chat pane (replies, reactions, edit/delete, typing, attachments, lightbox)
    plus the RCKT pieces (Settings card, admin button, profile badge). Loaded after app.js; uses window.TW.
    app.js's makeChat() delegates here when it is given cfg.conv = { kind: 'g' | 'd', id }. */
 (() => {

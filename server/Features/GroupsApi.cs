@@ -20,6 +20,22 @@ public static class GroupsApi
     /// <summary>SQL fragment restricting `grps g` to the viewer's age side (empty when age separation is off).</summary>
     public static string AgeSql(int viewerAge) => !Age.On ? "" : Age.IsMinor(viewerAge) ? " AND g.ageMax<=17" : " AND g.ageMax>=18";
 
+    public static string GenerateJoinCode()
+    {
+        const string chars = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ";
+        for (int attempt = 0; attempt < 25; attempt++)
+        {
+            var code = string.Create(6, chars, (span, src) =>
+            {
+                var bytes = System.Security.Cryptography.RandomNumberGenerator.GetBytes(6);
+                for (int i = 0; i < 6; i++) span[i] = src[bytes[i] % src.Length];
+            });
+            if (Db.Scalar("SELECT 1 FROM grps WHERE joinCode=@c", ("@c", code)) == null)
+                return code;
+        }
+        return Guid.NewGuid().ToString("N")[..6].ToUpperInvariant();
+    }
+
     public static void Migrate()
     {
         Db.Exec(@"CREATE TABLE IF NOT EXISTS group_bans(groupId INTEGER, userId INTEGER, byId INTEGER, reason TEXT, at TEXT, PRIMARY KEY(groupId,userId));
@@ -27,13 +43,25 @@ CREATE TABLE IF NOT EXISTS group_mutes(groupId INTEGER, userId INTEGER, until TE
 CREATE TABLE IF NOT EXISTS join_requests(id INTEGER PRIMARY KEY, groupId INTEGER, userId INTEGER, at TEXT, UNIQUE(groupId,userId));");
         var cols = Db.Rows("PRAGMA table_info(grps)").Select(r => (string)r["name"]!).ToHashSet(StringComparer.OrdinalIgnoreCase);
         if (!cols.Contains("rules")) Db.Exec("ALTER TABLE grps ADD COLUMN rules TEXT DEFAULT ''");
+        if (!cols.Contains("maxMembers")) Db.Exec("ALTER TABLE grps ADD COLUMN maxMembers INTEGER DEFAULT 0");
+        if (!cols.Contains("slowmode")) Db.Exec("ALTER TABLE grps ADD COLUMN slowmode INTEGER DEFAULT 0");
+        if (!cols.Contains("joinCode"))
+        {
+            Db.Exec("ALTER TABLE grps ADD COLUMN joinCode TEXT");
+            Db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS ix_grp_code ON grps(joinCode)");
+            var noCodes = Db.Rows("SELECT id FROM grps WHERE joinCode IS NULL OR joinCode=''");
+            foreach (var r in noCodes)
+            {
+                Db.Exec("UPDATE grps SET joinCode=@c WHERE id=@id", ("@c", GenerateJoinCode()), ("@id", r["id"]));
+            }
+        }
     }
 
     // ---------- small helpers ----------
     static string? RoleOf(long gid, long uid) => Db.Scalar("SELECT role FROM members WHERE groupId=@g AND userId=@u", ("@g", gid), ("@u", uid)) as string;
     static bool IsBanned(long gid, long uid) => Db.Scalar("SELECT 1 FROM group_bans WHERE groupId=@g AND userId=@u", ("@g", gid), ("@u", uid)) != null;
     static bool IsInvited(long gid, long uid) => Db.Scalar("SELECT 1 FROM invites WHERE groupId=@g AND toId=@u", ("@g", gid), ("@u", uid)) != null;
-    static Dictionary<string, object?>? Extra(long gid) => Db.Row("SELECT privacy, rules, ownerId FROM grps WHERE id=@g", ("@g", gid));
+    static Dictionary<string, object?>? Extra(long gid) => Db.Row("SELECT privacy, rules, ownerId, joinCode, maxMembers, slowmode FROM grps WHERE id=@g", ("@g", gid));
     static Dictionary<string, object?> ToDict(object o) =>
         JsonSerializer.Deserialize<Dictionary<string, object?>>(JsonSerializer.SerializeToElement(o).GetRawText())!;
     static string PrivacyOf(Dictionary<string, object?>? x) => x?["privacy"] as string is { Length: > 0 } p ? p : "public";
@@ -113,9 +141,26 @@ CREATE TABLE IF NOT EXISTS join_requests(id INTEGER PRIMARY KEY, groupId INTEGER
         {
             if (IsBanned(gid, uid)) return "You are banned from this group.";
             var until = ActiveMute(gid, uid);
-            if (until == null) return null;
-            return until == "forever" ? "You are muted in this group until a moderator unmutes you."
-                : $"You are muted in this group until {DateTime.Parse(until, null, System.Globalization.DateTimeStyles.RoundtripKind):yyyy-MM-dd HH:mm} UTC.";
+            if (until != null)
+            {
+                return until == "forever" ? "You are muted in this group until a moderator unmutes you."
+                    : $"You are muted in this group until {DateTime.Parse(until, null, System.Globalization.DateTimeStyles.RoundtripKind):yyyy-MM-dd HH:mm} UTC.";
+            }
+            var sm = Convert.ToInt32(Db.Scalar("SELECT slowmode FROM grps WHERE id=@g", ("@g", gid)) ?? 0);
+            if (sm > 0 && !CanModerateGroup(gid, uid))
+            {
+                var last = Db.Scalar("SELECT createdAt FROM messages WHERE groupId=@g AND userId=@u ORDER BY id DESC LIMIT 1", ("@g", gid), ("@u", uid)) as string;
+                if (!string.IsNullOrEmpty(last) && DateTime.TryParse(last, null, System.Globalization.DateTimeStyles.RoundtripKind, out var dt))
+                {
+                    var elapsed = (DateTime.UtcNow - dt).TotalSeconds;
+                    if (elapsed < sm)
+                    {
+                        var wait = Math.Ceiling(sm - elapsed);
+                        return $"Slowmode is active ({sm}s). Wait {wait}s before posting.";
+                    }
+                }
+            }
+            return null;
         };
 
         api.MapGet("groups/mine", (HttpContext c) => WithUser(c, uid =>
@@ -140,9 +185,12 @@ CREATE TABLE IF NOT EXISTS join_requests(id INTEGER PRIMARY KEY, groupId INTEGER
             int lo = b.AgeMin ?? aMin, hi = b.AgeMax ?? aMax;
             if (lo < aMin || hi > aMax || lo > hi) return Err($"Groups you create must be for ages {aMin}–{aMax}.");
             var color = Db.Palette[Random.Shared.Next(Db.Palette.Length)];
-            var gid = Db.Insert("INSERT INTO grps(name,game,mode,region,ageMin,ageMax,description,color,ownerId,created,privacy,rules) VALUES(@n,@g,@m,@r,@lo,@hi,@d,@c,@o,@t,@p,@ru)",
+            int maxM = Math.Clamp(b.MaxMembers ?? 0, 0, 500);
+            int sm = Math.Clamp(b.Slowmode ?? 0, 0, 300);
+            var joinCode = GenerateJoinCode();
+            var gid = Db.Insert("INSERT INTO grps(name,game,mode,region,ageMin,ageMax,description,color,ownerId,created,privacy,rules,joinCode,maxMembers,slowmode) VALUES(@n,@g,@m,@r,@lo,@hi,@d,@c,@o,@t,@p,@ru,@jc,@mm,@sm)",
                 ("@n", Enc(name)), ("@g", game), ("@m", b.Mode), ("@r", b.Region), ("@lo", lo), ("@hi", hi), ("@d", Enc(Clean(b.Description, 300))),
-                ("@c", color), ("@o", uid), ("@t", Now()), ("@p", privacy), ("@ru", Enc(Clean(b.Rules, 1000))));
+                ("@c", color), ("@o", uid), ("@t", Now()), ("@p", privacy), ("@ru", Enc(Clean(b.Rules, 1000))), ("@jc", joinCode), ("@mm", maxM), ("@sm", sm));
             Db.Exec("INSERT INTO members(groupId,userId,role) VALUES(@g,@u,'owner')", ("@g", gid), ("@u", uid));
             return Results.Json(GroupObj(Db.Row(GroupSel + " WHERE g.id=@g", ("@g", gid), ("@me", uid))!));
         }));
@@ -173,6 +221,9 @@ CREATE TABLE IF NOT EXISTS join_requests(id INTEGER PRIMARY KEY, groupId INTEGER
             var o = ToDict(GroupObj(g));
             o["privacy"] = privacy; o["rules"] = x["rules"] as string ?? ""; o["myRole"] = myRole;
             o["canModerate"] = mod; o["isOwner"] = myRole == "owner" || IsAdmin(uid);
+            o["joinCode"] = x["joinCode"] as string ?? "";
+            o["maxMembers"] = Convert.ToInt32(x["maxMembers"] ?? 0);
+            o["slowmode"] = Convert.ToInt32(x["slowmode"] ?? 0);
             o["members"] = members;
             o["invited"] = !isMember && IsInvited(id, uid);
             o["requested"] = !isMember && Db.Scalar("SELECT 1 FROM join_requests WHERE groupId=@g AND userId=@u", ("@g", id), ("@u", uid)) != null;
@@ -188,6 +239,9 @@ CREATE TABLE IF NOT EXISTS join_requests(id INTEGER PRIMARY KEY, groupId INTEGER
             if (g == null || x == null) return Err("Group not found.", 404);
             if (IsMember(id, uid)) return Results.Json(GroupObj(g));
             if (IsBanned(id, uid)) return Err("You are banned from this group.", 403);
+            var maxMem = Convert.ToInt32(x["maxMembers"] ?? 0);
+            if (maxMem > 0 && Convert.ToInt32(g["memberCount"]) >= maxMem && !IsAdmin(uid))
+                return Err($"This group is full (maximum {maxMem} members).", 409);
             var invited = IsInvited(id, uid);
             if (!invited && !IsAdmin(uid))
             {
@@ -257,7 +311,7 @@ CREATE TABLE IF NOT EXISTS join_requests(id INTEGER PRIMARY KEY, groupId INTEGER
         {
             if (Db.Scalar("SELECT 1 FROM grps WHERE id=@g", ("@g", id)) == null) return Err("Group not found.", 404);
             var owner = RoleOf(id, uid) == "owner" || IsAdmin(uid);
-            if ((b.Name != null || b.Description != null || b.Privacy != null) && !owner) return Err("Only the owner can change the name, description or privacy.", 403);
+            if ((b.Name != null || b.Description != null || b.Privacy != null || b.MaxMembers != null || b.Slowmode != null) && !owner) return Err("Only the owner can change group settings.", 403);
             if (b.Rules != null && !CanModerateGroup(id, uid)) return Err("Only moderators can edit the rules.", 403);
             if (Limited($"gs:{uid}", 30, TimeSpan.FromMinutes(10), true)) return Err("Slow down a little.", 429);
             if (b.Name != null)
@@ -273,7 +327,45 @@ CREATE TABLE IF NOT EXISTS join_requests(id INTEGER PRIMARY KEY, groupId INTEGER
                 if (b.Privacy is not ("public" or "request" or "private")) return Err("Privacy must be public, request or private.");
                 Db.Exec("UPDATE grps SET privacy=@v WHERE id=@g", ("@v", b.Privacy), ("@g", id));
             }
+            if (b.MaxMembers != null) Db.Exec("UPDATE grps SET maxMembers=@v WHERE id=@g", ("@v", Math.Clamp(b.MaxMembers.Value, 0, 500)), ("@g", id));
+            if (b.Slowmode != null) Db.Exec("UPDATE grps SET slowmode=@v WHERE id=@g", ("@v", Math.Clamp(b.Slowmode.Value, 0, 300)), ("@g", id));
             return Results.Json(new { ok = true });
+        }));
+
+        // ----- join codes -----
+        api.MapGet("groups/by-code/{code}", (HttpContext c, string code) => WithUser(c, uid =>
+        {
+            var clean = (code ?? "").Trim().ToUpperInvariant();
+            var g = Db.Row(GroupSel + " WHERE UPPER(g.joinCode)=@c", ("@c", clean), ("@me", uid));
+            if (g == null) return Err("Group not found with that code.", 404);
+            var id = (long)g["id"]!;
+            var x = Extra(id);
+            if (x == null || !CanSee(id, g, x, uid)) return Err("Group not accessible.", 403);
+            var o = ToDict(GroupObj(g));
+            o["privacy"] = PrivacyOf(x);
+            o["rules"] = x["rules"] as string ?? "";
+            return Results.Json(o);
+        }));
+
+        api.MapPost("groups/by-code/{code}/join", (HttpContext c, string code) => WithUser(c, uid =>
+        {
+            var clean = (code ?? "").Trim().ToUpperInvariant();
+            var g = Db.Row(GroupSel + " WHERE UPPER(g.joinCode)=@c", ("@c", clean), ("@me", uid));
+            if (g == null) return Err("Invalid group code.", 404);
+            var id = (long)g["id"]!;
+            var x = Extra(id);
+            if (g == null || x == null) return Err("Group not found.", 404);
+            if (IsMember(id, uid)) return Results.Json(GroupObj(g));
+            if (IsBanned(id, uid)) return Err("You are banned from this group.", 403);
+            if (!Age.GroupVisible(Age.Of(uid), Convert.ToInt32(g["ageMin"]), Convert.ToInt32(g["ageMax"])) && !IsAdmin(uid))
+                return Err("You do not meet the age requirement for this group.", 403);
+            var maxMem = Convert.ToInt32(x["maxMembers"] ?? 0);
+            if (maxMem > 0 && Convert.ToInt32(g["memberCount"]) >= maxMem && !IsAdmin(uid))
+                return Err($"This group is full (maximum {maxMem} members).", 409);
+            Db.Exec("INSERT OR IGNORE INTO members(groupId,userId,role) VALUES(@g,@u,'member')", ("@g", id), ("@u", uid));
+            Db.Exec("DELETE FROM invites WHERE groupId=@g AND toId=@u", ("@g", id), ("@u", uid));
+            Db.Exec("DELETE FROM join_requests WHERE groupId=@g AND userId=@u", ("@g", id), ("@u", uid));
+            return Results.Json(GroupObj(Db.Row(GroupSel + " WHERE g.id=@g", ("@g", id), ("@me", uid))!));
         }));
 
         // ----- roles -----
@@ -351,8 +443,8 @@ CREATE TABLE IF NOT EXISTS join_requests(id INTEGER PRIMARY KEY, groupId INTEGER
     }
 }
 
-public record GroupCreateIn(string? Name, string? Game, string? Mode, string? Region, int? AgeMin, int? AgeMax, string? Description, string? Privacy, string? Rules);
-public record GroupSettingsIn(string? Name, string? Description, string? Rules, string? Privacy);
+public record GroupCreateIn(string? Name, string? Game, string? Mode, string? Region, int? AgeMin, int? AgeMax, string? Description, string? Privacy, string? Rules, int? MaxMembers, int? Slowmode);
+public record GroupSettingsIn(string? Name, string? Description, string? Rules, string? Privacy, int? MaxMembers, int? Slowmode);
 public record RoleChangeIn(string? Role);
 public record GroupBanIn(string? Reason);
 public record MuteIn(int Minutes);
