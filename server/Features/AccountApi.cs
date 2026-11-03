@@ -8,6 +8,8 @@ public static class AccountApi
 {
     static readonly Regex Ctrl = new(@"[\p{C}\p{Zl}\p{Zp}]", RegexOptions.Compiled);
     static readonly string[] Statuses = { "online", "idle", "dnd", "offline" };
+    /// <summary>For the media proxy: never follows redirects, so a Tenor URL can't bounce the server to another host.</summary>
+    static readonly HttpClient ProxyHttp = new(new HttpClientHandler { AllowAutoRedirect = false }) { Timeout = TimeSpan.FromSeconds(10) };
     static readonly HttpClient Http = new(new HttpClientHandler { AutomaticDecompression = DecompressionMethods.All }) { Timeout = TimeSpan.FromSeconds(10) };
     /// <summary>Tenor API key, set on the server as the TW_TENOR_KEY environment variable (never committed to the repo). Without it GIF search returns notConfigured.</summary>
     static string TenorKey => Environment.GetEnvironmentVariable("TW_TENOR_KEY") ?? "";
@@ -240,17 +242,23 @@ CREATE TABLE IF NOT EXISTS user_prefs(userId INTEGER PRIMARY KEY, accentColor TE
             catch { return Results.Json(new { results = Array.Empty<object>() }); }
         });
 
+        // Signed-in users only, exact Tenor media hosts only, no redirects, and only image responses are passed on.
         api.MapGet("media/proxy", async (HttpContext c, string? url) =>
         {
-            if (string.IsNullOrEmpty(url) || (!url.StartsWith("https://media.tenor.com/") && !url.StartsWith("https://media1.tenor.com/") && !url.StartsWith("https://c.tenor.com/")))
+            if (CurrentUser(c) is null) return Err("Not signed in.", 401);
+            if (string.IsNullOrEmpty(url) || url.Length > 600 || !Uri.TryCreate(url, UriKind.Absolute, out var u)
+                || u.Scheme != "https" || !string.IsNullOrEmpty(u.UserInfo) || !u.IsDefaultPort
+                || (u.Host != "media.tenor.com" && u.Host != "media1.tenor.com" && u.Host != "c.tenor.com"))
                 return Results.NotFound();
             try
             {
-                var req = new HttpRequestMessage(HttpMethod.Get, url);
-                var resp = await Http.SendAsync(req, HttpCompletionOption.ResponseHeadersRead);
+                var req = new HttpRequestMessage(HttpMethod.Get, u);
+                var resp = await ProxyHttp.SendAsync(req, HttpCompletionOption.ResponseHeadersRead);
                 if (!resp.IsSuccessStatusCode) return Results.StatusCode((int)resp.StatusCode);
-                c.Response.Headers["Cache-Control"] = "public, max-age=604800, immutable";
-                var ctype = resp.Content.Headers.ContentType?.ToString() ?? "image/gif";
+                var ctype = resp.Content.Headers.ContentType?.MediaType ?? "";
+                if (!ctype.StartsWith("image/")) return Results.StatusCode(502);
+                c.Response.Headers["Cache-Control"] = "private, max-age=604800, immutable";
+                c.Response.Headers["Content-Security-Policy"] = "default-src 'none'; sandbox";
                 var stream = await resp.Content.ReadAsStreamAsync();
                 return Results.Stream(stream, ctype);
             }
