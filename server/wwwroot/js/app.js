@@ -17,7 +17,9 @@ const ICONS = {
   x: 'M18 6L6 18M6 6l12 12',
   back: 'M15 18l-6-6 6-6',
   pad: 'M6 12h4M8 10v4M15 13h.01M18 11h.01M17.3 5H6.7a4 4 0 0 0-3.9 3.2l-1.3 6.5A3 3 0 0 0 4.4 18c1 0 1.8-.5 2.3-1.3L7.5 15h9l.8 1.7c.5.8 1.3 1.3 2.3 1.3a3 3 0 0 0 2.9-3.3l-1.3-6.5A4 4 0 0 0 17.3 5z',
-  check: 'M20 6L9 17l-5-5'
+  check: 'M20 6L9 17l-5-5',
+  chev: 'M6 9l6 6 6-6',
+  shield: 'M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10zM9 12l2 2 4-4'
 };
 function icon(name, size = 22) {
   const s = document.createElementNS(SVGNS, 'svg');
@@ -79,7 +81,7 @@ function avatar(u, size = 'md', withStatus = false) {
 }
 
 /* ================= api ================= */
-class ApiError extends Error { constructor(m, status) { super(m); this.status = status; } }
+class ApiError extends Error { constructor(m, status, data) { super(m); this.status = status; this.data = data; } }
 async function api(method, url, body) {
   const o = { method, credentials: 'same-origin', headers: {} };
   if (method !== 'GET') {
@@ -92,7 +94,8 @@ async function api(method, url, body) {
   try { data = await r.json(); } catch { /* empty */ }
   if (!r.ok) {
     if (r.status === 401 && S.me && !url.startsWith('/api/auth')) loggedOut();
-    throw new ApiError((data && data.error) || `Something went wrong (${r.status}).`, r.status);
+    if (r.status === 503 && data && data.maintenance && S.me && !S.me.isAdmin) { S.site = { ...S.site, maintenance: { on: true, message: data.error } }; applySite(); }
+    throw new ApiError((data && data.error) || `Something went wrong (${r.status}).`, r.status, data);
   }
   return data;
 }
@@ -104,7 +107,8 @@ const S = {
   me: null, meta: { games: [], regions: [] },
   friends: [], mine: [], invites: [], reqs: { incoming: [], outgoing: [] },
   q: { q: '', game: '', mode: '', region: '', ageMin: '', ageMax: '', tab: 'groups' },
-  onData: null, chatTimer: null, pollTimer: null, tick: 0, sig: {}, tok: 0, el: {}
+  onData: null, chatTimer: null, pollTimer: null, tick: 0, sig: {}, tok: 0, el: {},
+  site: { maintenance: { on: false, message: '' }, closed: {} }, maint: false, closedSig: '{}'
 };
 
 /* ================= ui kit ================= */
@@ -124,15 +128,121 @@ async function busy(btn, fn) {
 function btn(label, o = {}) {
   return h('button', { type: o.type || 'button', class: 'btn ' + (o.cls || ''), onclick: o.onclick, 'aria-label': o.aria }, o.icon ? icon(o.icon, 16) : null, label);
 }
+/* ---- custom popup list (shared by the dropdown and the suggestion box) ---- */
+let livePop = null;
+function makePopup(anchor, onPick) {
+  let pop = null, items = [], act = -1;
+  const lid = nid('lb');
+  const place = () => {
+    const r = anchor.getBoundingClientRect(), need = Math.min(pop.scrollHeight, 280) + 8;
+    const below = innerHeight - r.bottom >= need || r.top < need;
+    pop.style.left = r.left + 'px'; pop.style.width = r.width + 'px';
+    pop.style.maxHeight = Math.max(120, Math.min(280, (below ? innerHeight - r.bottom : r.top) - 12)) + 'px';
+    pop.style[below ? 'top' : 'bottom'] = (below ? r.bottom + 6 : innerHeight - r.top + 6) + 'px';
+    pop.style[below ? 'bottom' : 'top'] = 'auto';
+    pop.dataset.side = below ? 'down' : 'up';
+  };
+  const fill = (list, sel) => {
+    items = list; pop.replaceChildren();
+    list.forEach(([v, l], i) => {
+      const o = h('div', { class: 'dd-opt', role: 'option', id: lid + '-' + i, 'aria-selected': String(v === sel) }, h('span', { class: 't', text: T(l) }), v === sel ? icon('check', 16) : null);
+      o.addEventListener('pointerdown', (e) => { e.preventDefault(); act = i; api.pick(); });
+      o.addEventListener('pointermove', () => { if (act !== i) api.set(i, false); });
+      pop.append(o);
+    });
+    if (!list.length) pop.append(h('div', { class: 'dd-empty', text: 'No matches' }));
+  };
+  const outside = (e) => { if (pop && !pop.contains(e.target) && !anchor.contains(e.target)) api.close(); };
+  const onScroll = (e) => { if (pop && !pop.contains(e.target)) api.close(); };
+  const api = {
+    get isOpen() { return !!pop; }, get id() { return lid; }, get count() { return items.length; },
+    open(list, sel) {
+      if (pop) { api.update(list, sel); return; }
+      if (livePop && livePop !== api) livePop.close();
+      livePop = api;
+      pop = h('div', { class: 'dd-pop', role: 'listbox', id: lid });
+      fill(list, sel); document.body.append(pop); place();
+      anchor.setAttribute('aria-expanded', 'true'); anchor.setAttribute('aria-controls', lid);
+      const up = pop.dataset.side === 'up';
+      if (!TWM.reduce()) pop.animate([{ opacity: 0, transform: `translateY(${up ? 8 : -8}px) scale(.94)` }, { opacity: 1, transform: 'none' }], { duration: 320, easing: TWM.SPRING });
+      document.addEventListener('pointerdown', outside, true); document.addEventListener('scroll', onScroll, true); addEventListener('resize', api.close);
+      api.set(Math.max(0, list.findIndex(i => i[0] === sel)), true);
+    },
+    update(list, sel) { if (!pop) return; fill(list, sel); place(); api.set(list.length ? 0 : -1, true); },
+    set(i, scroll = true) {
+      act = i;
+      [...pop.querySelectorAll('.dd-opt')].forEach((o, j) => o.classList.toggle('active', j === i));
+      if (i >= 0 && pop.children[i]) { anchor.setAttribute('aria-activedescendant', lid + '-' + i); if (scroll) pop.children[i].scrollIntoView({ block: 'nearest' }); }
+      else anchor.removeAttribute('aria-activedescendant');
+    },
+    move(d) { if (!pop || !items.length) return; api.set((act + d + items.length) % items.length); },
+    pick() { if (pop && act >= 0 && items[act]) onPick(items[act]); },
+    close() {
+      if (!pop) return;
+      const p = pop; pop = null; if (livePop === api) livePop = null;
+      anchor.setAttribute('aria-expanded', 'false'); anchor.removeAttribute('aria-activedescendant');
+      document.removeEventListener('pointerdown', outside, true); document.removeEventListener('scroll', onScroll, true); removeEventListener('resize', api.close);
+      if (TWM.reduce()) { p.remove(); return; }
+      const up = p.dataset.side === 'up';
+      p.style.pointerEvents = 'none'; p.setAttribute('aria-hidden', 'true');
+      const gone = () => p.remove();
+      setTimeout(gone, 260);   // also covers hidden windows, where animations are paused
+      p.animate([{ opacity: 1, transform: 'none' }, { opacity: 0, transform: `translateY(${up ? 6 : -6}px) scale(.96)` }], { duration: 160, easing: 'ease-in' }).finished.then(gone, gone);
+    }
+  };
+  return api;
+}
+
+/* ---- custom dropdown: a button + listbox. Exposes .value and fires 'change' like a <select>. ---- */
 function selectEl(opts, value, anyLabel, id) {
-  const s = h('select', { class: 'select', id });
-  if (anyLabel != null) s.append(h('option', { value: '', text: anyLabel }));
-  for (const o of opts) {
-    const [v, l] = Array.isArray(o) ? o : [gname(o), gname(o)];
-    s.append(h('option', { value: v, text: T(l) }));
-  }
-  s.value = value ?? '';
-  return s;
+  const items = [];
+  if (anyLabel != null) items.push(['', anyLabel]);
+  for (const o of opts) items.push(Array.isArray(o) ? o : [gname(o), gname(o)]);
+  let cur = String(value ?? '');
+  const label = h('span', { class: 'dd-label' });
+  const root = h('button', { type: 'button', class: 'dd', id, role: 'combobox', 'aria-haspopup': 'listbox', 'aria-expanded': 'false' }, label, icon('chev', 16));
+  const paint = () => {
+    const f = items.find(i => i[0] === cur);
+    label.textContent = f ? T(f[1]) : (anyLabel ?? 'Choose');
+    root.classList.toggle('placeholder', !f || (cur === '' && anyLabel != null));
+  };
+  Object.defineProperty(root, 'value', { get: () => cur, set: (v) => { cur = String(v ?? ''); paint(); } });
+  const pop = makePopup(root, ([v]) => { const changed = v !== cur; cur = v; paint(); pop.close(); root.focus(); if (changed) root.dispatchEvent(new Event('change', { bubbles: true })); });
+  let typed = '', typedAt = 0;
+  root.addEventListener('click', () => { pop.isOpen ? pop.close() : pop.open(items, cur); });
+  root.addEventListener('keydown', (e) => {
+    const k = e.key;
+    if (k === 'ArrowDown' || k === 'ArrowUp') { e.preventDefault(); if (!pop.isOpen) pop.open(items, cur); else pop.move(k === 'ArrowDown' ? 1 : -1); }
+    else if (k === 'Enter' || k === ' ') { e.preventDefault(); if (pop.isOpen) pop.pick(); else pop.open(items, cur); }
+    else if (k === 'Escape' && pop.isOpen) { e.preventDefault(); e.stopPropagation(); pop.close(); }
+    else if (k === 'Home' && pop.isOpen) { e.preventDefault(); pop.set(0); }
+    else if (k === 'End' && pop.isOpen) { e.preventDefault(); pop.set(items.length - 1); }
+    else if (k === 'Tab') pop.close();
+    else if (k.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
+      const now = Date.now(); typed = (now - typedAt > 700 ? '' : typed) + k.toLowerCase(); typedAt = now;
+      const i = items.findIndex(([, l]) => T(l).toLowerCase().startsWith(typed));
+      if (i >= 0) { if (!pop.isOpen) pop.open(items, cur); pop.set(i); }
+    }
+  });
+  root.addEventListener('blur', () => { setTimeout(() => { if (document.activeElement !== root) pop.close(); }, 120); });
+  paint();
+  return root;
+}
+
+/* ---- custom suggestions for a text input (replaces <datalist>) ---- */
+function suggestInput(input, getList) {
+  const pop = makePopup(input, ([v]) => { input.value = T(v); pop.close(); input.dispatchEvent(new Event('input', { bubbles: true })); });
+  const list = () => { const q = input.value.trim().toLowerCase(); return getList().filter(([v]) => !q || T(v).toLowerCase().includes(q)).slice(0, 30); };
+  input.setAttribute('role', 'combobox'); input.setAttribute('aria-autocomplete', 'list'); input.setAttribute('aria-expanded', 'false'); input.setAttribute('aria-haspopup', 'listbox');
+  const show = () => { const l = list(); if (!l.length) { pop.close(); return; } pop.isOpen ? pop.update(l, '') : pop.open(l, ''); };
+  input.addEventListener('focus', show); input.addEventListener('input', show);
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); if (!pop.isOpen) show(); else pop.move(e.key === 'ArrowDown' ? 1 : -1); }
+    else if (e.key === 'Enter' && pop.isOpen && pop.count) { e.preventDefault(); pop.pick(); }
+    else if (e.key === 'Escape' && pop.isOpen) { e.preventDefault(); e.stopPropagation(); pop.close(); }
+  });
+  input.addEventListener('blur', () => setTimeout(() => pop.close(), 120));
+  return input;
 }
 function field(label, input, hint) {
   const id = input.id || (input.id = nid('f'));
@@ -201,7 +311,7 @@ function personRow(p, o = {}) {
   const sk = statusKey(p.status);
   const sub = p.playing ? h('span', { class: 'playing' }, icon('pad', 13), 'Playing ' + T(p.playing))
     : h('span', {}, o.region && p.region ? T(p.region) : STATUS[sk]);
-  return h('div', { class: 'frow ' + (o.big ? 'big ' : '') + (sk === 'offline' ? 'off' : ''), 'data-key': p.id != null ? 'p' + p.id : null },
+  return h(o.href ? 'a' : 'div', { class: 'frow ' + (o.big ? 'big ' : '') + (sk === 'offline' ? 'off' : '') + (o.href ? ' link' : ''), href: o.href, 'data-key': p.id != null ? 'p' + p.id : null },
     avatar(p, 'md', true),
     h('div', { class: 'meta' }, h('b', { text: nm(p) }, p.displayName && p.displayName !== p.username ? h('small', { class: 'handle', text: ' @' + T(p.username) }) : null), sub),
     o.action ? h('div', { class: 'act' }, o.action) : null);
@@ -301,7 +411,7 @@ function renderOnboarding() {
         step > 0 ? h('button', { class: 'btn ghost', type: 'button', onclick: () => { step--; dir = -1; draw(); } }, 'Back') : h('span'), nextBtn));
     TWM.morphHeight(card, () => card.replaceChildren(brand, progress, stepEl));
     [...progress.children].forEach((s, i) => s.classList.toggle('on', i <= step));
-    const f = card.querySelector('select,input,.chip,.btn'); f && f.focus({ preventScroll: true });
+    const f = card.querySelector('.dd,input,.chip,.btn'); f && f.focus({ preventScroll: true });
   }
   draw();
 }
@@ -333,6 +443,7 @@ function buildShell() {
     h('div', { class: 'brand brand-mobile' }, h('img', { src: 'icon.svg', alt: '', width: 28, height: 28 }), 'Third Wheel'),
     h('div', { class: 'searchbox', role: 'search' }, h('span', { class: 'ico' }, icon('search', 18)), E.q),
     h('div', { class: 'actions' },
+      S.me.isAdmin ? h('a', { class: 'icon-btn', href: '#/admin', 'aria-label': 'Admin panel' }, icon('shield')) : null,
       h('a', { class: 'icon-btn', href: '#/friends', 'aria-label': 'Friend requests and invites' }, icon('bell'), E.badge),
       h('a', { class: 'icon-btn', href: '#/settings', 'aria-label': 'Settings' }, icon('gear'))));
 
@@ -379,7 +490,7 @@ function renderFriends() {
   const fs = S.friends, on = (f) => statusKey(f.status) !== 'offline';
   const playing = fs.filter(f => on(f) && f.playing), online = fs.filter(f => on(f) && !f.playing), off = fs.filter(f => !on(f));
   const frag = [];
-  const grp = (t, a) => { if (a.length) frag.push(h('div', { class: 'fgroup-title', text: `${t} — ${a.length}` }), ...a.map(f => personRow(f))); };
+  const grp = (t, a) => { if (a.length) frag.push(h('div', { class: 'fgroup-title', text: `${t} — ${a.length}` }), ...a.map(f => personRow(f, { href: '#/dm/' + enc(f.id) }))); };
   grp('Playing now', playing); grp('Online', online); grp('Offline', off);
   if (!fs.length) frag.push(emptyState('No friends yet', 'Search for people and send a request.'));
   TWM.flip(S.el.fList, '.frow', () => S.el.fList.replaceChildren(...frag));
@@ -424,7 +535,13 @@ async function route() {
   S.viewGroup = null;
   TWM.prog.start();
   markNav();
-  const fn = { feed: feedView, search: searchView, group: groupView, friends: friendsView, settings: settingsView }[parts[0]] || feedView;
+  const closedKey = { feed: 'feed', search: 'search', friends: 'friends', dm: 'dms', group: 'groups' }[parts[0]];
+  const closedMsg = closedKey && S.site.closed[closedKey];
+  if (closedMsg && !S.me.isAdmin) {
+    show(h('div', { class: 'page' }, emptyState('This page is closed', T(closedMsg))));
+    return;
+  }
+  const fn = { feed: feedView, search: searchView, group: groupView, dm: dmView, friends: friendsView, settings: settingsView, admin: adminView }[parts[0]] || feedView;
   try { await fn(parts[1], tok); }
   catch (e) { if (tok === S.tok) show(h('div', { class: 'page' }, emptyState('That didn’t load', e.message || 'Please try again.', btn('Try again', { onclick: route })))); }
   if (tok === S.tok) TWM.prog.done();
@@ -516,7 +633,7 @@ async function searchView(_, tok) {
       const fr = last.people.filter(p => p.isFriend), other = last.people.filter(p => !p.isFriend);
       const frag = [];
       const addBtn = (p) => { const b = btn('Add friend', { cls: 'small', icon: 'plus' }); b.addEventListener('click', () => busy(b, async () => { await api('POST', '/api/friends/request', { username: p.username }); b.replaceWith(h('span', { class: 'chip ok' }, icon('check', 12), 'Requested')); toast('Friend request sent'); })); return b; };
-      if (fr.length) frag.push(h('div', { class: 'section' }, h('div', { class: 'section-title', text: `Friends — ${fr.length}` }), stagger(h('div', { class: 'stack', style: 'gap:8px' }, fr.map(p => personRow(p, { big: true, region: true }))))));
+      if (fr.length) frag.push(h('div', { class: 'section' }, h('div', { class: 'section-title', text: `Friends — ${fr.length}` }), stagger(h('div', { class: 'stack', style: 'gap:8px' }, fr.map(p => personRow(p, { big: true, region: true, href: '#/dm/' + enc(p.id) }))))));
       if (other.length) frag.push(h('div', { class: 'section' }, h('div', { class: 'section-title', text: `${fr.length ? 'More people' : 'People'} — ${other.length}` }), stagger(h('div', { class: 'stack', style: 'gap:8px' }, other.map(p => personRow(p, { big: true, region: true, action: addBtn(p) }))))));
       results.replaceChildren(...(frag.length ? frag : [emptyState('No people found', 'Try a different name or filter.')]));
     }
@@ -557,7 +674,7 @@ async function groupView(id, tok) {
     h('div', { class: 'chips stagger-pop' }, h('span', { class: 'chip accent', text: T(g.game) }), h('span', { class: 'chip', text: g.mode === 'competitive' ? 'Competitive' : 'Casual' }),
       g.region ? h('span', { class: 'chip', text: T(g.region) }) : null, h('span', { class: 'chip', text: ages }), h('span', { class: 'chip', text: `${g.memberCount ?? members.length} members` })),
     g.description ? h('p', { class: 'desc', text: T(g.description) }) : null,
-    members.length ? h('div', { class: 'members stagger-pop', 'aria-label': 'Members' }, members.map(m => h('span', { class: 'member' }, avatar(m, 'sm'), nm(m)))) : null);
+    members.length ? h('div', { class: 'members stagger-pop', 'aria-label': 'Members' }, members.map(m => h('button', { class: 'member', type: 'button', 'aria-label': 'View ' + nm(m) + '’s profile', onclick: () => openProfile(m.id) }, avatar(m, 'sm'), nm(m)))) : null);
   head.querySelectorAll('.btn.small').forEach(b => b.style.minHeight = '32px');
   head.querySelectorAll('.stagger-pop').forEach(stagger);
   const showPage = () => show(page, morph ? { from: morph, to: () => head } : {});
@@ -611,10 +728,17 @@ async function groupView(id, tok) {
   if (matchMedia('(min-width:900px)').matches) input.focus();
 }
 function leaveGroup(g, b) {
-  const close = openSheet('Leave group?', h('div', { class: 'stack' }, h('p', { class: 'muted', text: `You’ll stop seeing ${T(g.name)} and its chat.` }),
+  const alone = (g.memberCount ?? 2) <= 1;
+  const close = openSheet(alone ? 'Delete group?' : 'Leave group?', h('div', { class: 'stack' }, h('p', { class: 'muted', text: alone
+    ? `You’re the only member of ${T(g.name)}. Leaving will delete the group and its chat for good.`
+    : `You’ll stop seeing ${T(g.name)} and its chat.` }),
     h('div', { class: 'row' }, btn('Stay', { cls: 'ghost', onclick: () => close() }), (() => {
-      const d = btn('Leave group', { cls: 'danger' });
-      d.addEventListener('click', () => busy(d, async () => { await api('POST', `/api/groups/${enc(g.id)}/leave`); await refreshMine(); close(); go('#/feed'); toast('You left ' + T(g.name)); }));
+      const d = btn(alone ? 'Delete group' : 'Leave group', { cls: 'danger' });
+      d.addEventListener('click', () => busy(d, async () => {
+        const r = await api('POST', `/api/groups/${enc(g.id)}/leave`);
+        S.feedCache = null; await refreshMine(); close(); go('#/feed');
+        toast(r && r.deleted ? T(g.name) + ' was deleted' : 'You left ' + T(g.name));
+      }));
       return d;
     })())));
 }
@@ -628,6 +752,239 @@ function openInvite(g, members) {
     list.append(personRow(f, { action: b }));
   }
   openSheet('Invite a friend', cands.length ? list : emptyState('No one to invite', 'All your friends are already here, or you haven’t added any yet.'));
+}
+
+/* ================= profiles + direct messages ================= */
+async function openProfile(id) {
+  let p;
+  try { p = await api('GET', '/api/users/' + enc(id)); } catch (e) { toast(e.message, 'error'); return; }
+  const sk = statusKey(p.status);
+  let close = () => {};
+  const row = (k, v) => v ? h('div', { class: 'prow' }, h('span', { class: 'k', text: k }), h('span', { class: 'v', text: v })) : null;
+  const joined = new Date(p.joined);
+  const actions = h('div', { class: 'row', style: 'gap:8px;flex:none' });
+  if (p.isMe) actions.append(btn('Edit profile', { onclick: () => { close(); go('#/settings'); } }));
+  else if (p.isFriend) actions.append(btn('Message', { icon: 'send', onclick: () => { close(); go('#/dm/' + enc(p.id)); } }));
+  else {
+    const add = btn('Add friend', { icon: 'plus' });
+    add.addEventListener('click', () => busy(add, async () => { await api('POST', '/api/friends/request', { username: p.username }); add.replaceWith(h('span', { class: 'chip ok' }, icon('check', 12), 'Requested')); toast('Friend request sent'); }));
+    actions.append(add);
+  }
+  const games = p.favoriteGames || [];
+  const body = h('div', { class: 'profile' },
+    h('div', { class: 'profile-top' }, avatar(p, 'xl', true),
+      h('div', { class: 'profile-names' }, h('h2', { text: nm(p) }), h('p', { class: 'muted', text: '@' + T(p.username) }),
+        h('p', { class: 'status-line' + (p.playing ? ' playing' : ''), text: p.playing ? 'Playing ' + T(p.playing) : STATUS[sk] }))),
+    h('div', { class: 'prows' }, row('Region', T(p.region)), row('Age', p.ageRange), row('Member since', isNaN(joined) ? '' : joined.toLocaleDateString(undefined, { month: 'long', year: 'numeric' }))),
+    games.length ? h('div', { class: 'section' }, h('div', { class: 'section-title', text: 'Favorite games' }), h('div', { class: 'chips' }, games.map(g => h('span', { class: 'chip', text: T(g) })))) : null,
+    actions);
+  close = openSheet('Profile', body);
+}
+
+/* Shared chat pane (used by DMs). */
+function makeChat({ placeholder, label, list, post, tok }) {
+  const log = h('div', { class: 'chat-log', role: 'log', 'aria-live': 'polite', 'aria-label': label, tabindex: '0' });
+  const input = h('input', { class: 'input', type: 'text', maxlength: 500, placeholder, 'aria-label': 'Message', autocomplete: 'off' });
+  const send = h('button', { class: 'btn', type: 'submit', 'aria-label': 'Send message' }, icon('send', 18));
+  const seen = new Set(); let lastId = 0, initial = true;
+  const composer = h('form', { class: 'composer', onsubmit: async (e) => {
+    e.preventDefault(); const text = input.value.trim(); if (!text) return;
+    send.disabled = true;
+    const rect = input.getBoundingClientRect();
+    try {
+      const m = await post(text); input.value = '';
+      send.classList.add('sent'); setTimeout(() => send.classList.remove('sent'), 600);
+      if (m && m.id) append([m], true, rect); else poll();
+    } catch (ex) { toast(ex.message, 'error'); } finally { send.disabled = false; input.focus(); }
+  } }, input, send);
+  function append(msgs, force, fromRect) {
+    const fresh = msgs.filter(m => !seen.has(m.id)); if (!fresh.length) return;
+    const near = force || log.scrollHeight - log.scrollTop - log.clientHeight < 120;
+    const gone = log.querySelector('[data-empty]'); if (gone) gone.remove();
+    const made = [];
+    for (const m of fresh) {
+      seen.add(m.id); if (typeof m.id === 'number' && m.id > lastId) lastId = m.id;
+      const when = new Date(m.createdAt);
+      const el = h('div', { class: 'msg' + (m.userId === S.me.id ? ' own' : '') }, avatar(m, 'md'),
+        h('div', { class: 'body' }, h('div', { class: 'head' }, h('b', { text: nm(m) }), h('time', { text: isNaN(when) ? '' : when.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }), datetime: isNaN(when) ? null : when.toISOString() })),
+          h('p', { text: T(m.text) })));
+      if (initial) el.style.animationDelay = (300 + Math.min(made.length, 12) * 40) + 'ms';
+      log.append(el); made.push(el);
+    }
+    if (near) log.scrollTo({ top: log.scrollHeight, behavior: fromRect || initial ? 'instant' : 'smooth' });
+    if (fromRect && made.length) TWM.flyFrom(made[made.length - 1], fromRect);
+  }
+  async function poll() { try { const m = await list(lastId || ''); if (!stale(tok)) append(m || []); } catch { /* retry next tick */ } }
+  return {
+    log, composer, input, poll,
+    fill(first, emptyTitle, emptyText) {
+      if (!first.length) log.append(h('div', { class: 'empty', 'data-empty': '' }, h('b', { text: emptyTitle }), h('p', { text: emptyText })));
+      append(first, true);
+    },
+    done() { setTimeout(() => { initial = false; }, 0); }
+  };
+}
+
+async function dmView(id, tok) {
+  const [p, first] = await Promise.all([api('GET', '/api/users/' + enc(id)), api('GET', '/api/dms/' + enc(id))]);
+  if (stale(tok)) return;
+  const sub = h('span', { class: 'muted small' });
+  const paintSub = () => { const f = S.friends.find(x => x.id === p.id) || p; sub.textContent = f.playing ? 'Playing ' + T(f.playing) : STATUS[statusKey(f.status)]; };
+  paintSub();
+  const who = h('button', { class: 'dm-who', type: 'button', 'aria-label': 'View ' + nm(p) + '’s profile', onclick: () => openProfile(p.id) },
+    avatar(p, 'md', true), h('span', { class: 'dm-names' }, h('b', { text: nm(p) }), sub));
+  const head = h('div', { class: 'ghead dmhead' }, h('div', { class: 'top' },
+    h('a', { class: 'icon-btn mobile-only', href: '#/friends', 'aria-label': 'Back to friends' }, icon('back')), who));
+  const chat = makeChat({
+    placeholder: 'Message ' + nm(p), label: 'Direct messages with ' + nm(p), tok,
+    list: (after) => api('GET', `/api/dms/${enc(p.id)}` + qs({ after })),
+    post: (text) => api('POST', `/api/dms/${enc(p.id)}`, { text })
+  });
+  chat.fill(first, 'Say hi 👋', 'This is the start of your chat with ' + nm(p) + '.');
+  const page = h('div', { class: 'chat-page' }, head, chat.log, chat.composer);
+  show(page);
+  chat.log.scrollTo({ top: chat.log.scrollHeight, behavior: 'instant' });
+  chat.done();
+  S.chatTimer = setInterval(() => { if (!document.hidden) { chat.poll(); paintSub(); } }, 2500);
+  if (matchMedia('(min-width:900px)').matches) chat.input.focus();
+}
+
+/* ================= admin panel ================= */
+const PAGE_LABELS = { feed: 'Feed', search: 'Find groups', friends: 'Friends & invites', dms: 'Direct messages', groups: 'Groups & group chats', signup: 'New sign-ups' };
+function confirmSheet(title, text, label, fn, extra) {
+  let close = () => {};
+  const go = btn(label, { cls: 'danger' });
+  go.addEventListener('click', () => busy(go, async () => { await fn(); close(); }));
+  close = openSheet(title, h('div', { class: 'stack' }, h('p', { class: 'muted', text }), extra || null,
+    h('div', { class: 'row' }, btn('Cancel', { cls: 'ghost', onclick: () => close() }), go)));
+}
+const when = (iso) => { const d = new Date(iso); return isNaN(d) ? '' : d.toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }); };
+
+async function adminView(_, tok) {
+  if (!S.me.isAdmin) { show(h('div', { class: 'page' }, emptyState('Admins only', 'You don’t have access to this page.'))); return; }
+  const body = h('div', { class: 'section' });
+  let seq = 0;
+  const tb = tabs([['overview', 'Overview'], ['users', 'Users'], ['groups', 'Groups']], S.adminTab || 'overview', (k) => { S.adminTab = k; draw(); TWM.slide(body, 1); }, 'Admin sections');
+  show(h('div', { class: 'page' }, h('div', { class: 'page-head' }, h('div', {}, h('h1', { text: 'Admin' }), h('p', { class: 'muted', text: 'Manage people, groups and the whole site.' }))), tb, body));
+  draw();
+
+  function draw() {
+    const mine = ++seq, tab = S.adminTab || 'overview';
+    tb.set(tab);
+    body.replaceChildren(h('span', { class: 'spinner', role: 'status', 'aria-label': 'Loading' }));
+    const run = tab === 'users' ? usersTab : tab === 'groups' ? groupsTab : overviewTab;
+    run(() => mine !== seq || stale(tok)).catch(e => { if (mine === seq) body.replaceChildren(emptyState('That didn’t load', e.message || 'Please try again.')); });
+  }
+
+  async function overviewTab(dead) {
+    const [st, site] = await Promise.all([api('GET', '/api/admin/stats'), api('GET', '/api/site')]); if (dead()) return;
+    const stat = (n, label) => h('div', { class: 'card stat' }, h('b', { text: String(n) }), h('span', { class: 'muted small', text: label }));
+    const maintOn = switchEl(site.maintenance.on, () => {}, 'Maintenance mode');
+    const maintMsg = h('input', { class: 'input', type: 'text', maxlength: 200, value: site.maintenance.on ? T(site.maintenance.message) : '', placeholder: 'Message shown to users, e.g. Back at 5pm', 'aria-label': 'Maintenance message' });
+    const rows = (site.pages || Object.keys(PAGE_LABELS)).map(p => {
+      const on = switchEl(!!site.closed[p], () => {}, 'Close ' + PAGE_LABELS[p]);
+      const msg = h('input', { class: 'input', type: 'text', maxlength: 200, value: site.closed[p] ? T(site.closed[p]) : '', placeholder: 'Message shown to users', 'aria-label': 'Message for ' + PAGE_LABELS[p] });
+      return { p, on, msg, el: h('div', { class: 'ctl-row' }, on, h('span', { class: 'ctl-name', text: PAGE_LABELS[p] }), msg) };
+    });
+    const save = btn('Save site controls', { icon: 'check' });
+    save.addEventListener('click', () => busy(save, async () => {
+      const closed = {}; rows.forEach(r => { if (r.on.getAttribute('aria-checked') === 'true') closed[r.p] = r.msg.value.trim(); });
+      const on = maintOn.getAttribute('aria-checked') === 'true';
+      S.site = await api('PUT', '/api/admin/site', { maintenance: { on, message: maintMsg.value.trim() }, closed });
+      toast(on ? 'Maintenance mode is ON for everyone except admins' : 'Site controls saved');
+    }));
+    body.replaceChildren(
+      h('div', { class: 'stats' }, stat(st.users, 'Users'), stat(st.online, 'Online now'), stat(st.banned, 'Suspended'), stat(st.groups, 'Groups'), stat(st.groupMessages, 'Group messages'), stat(st.directMessages, 'Direct messages')),
+      h('div', { class: 'card', style: 'padding:20px;display:flex;flex-direction:column;gap:14px' },
+        h('h3', { text: 'Maintenance mode' }),
+        h('div', { class: 'ctl-row' }, maintOn, h('span', { class: 'ctl-name', text: 'Close the whole site' }), maintMsg),
+        h('p', { class: 'muted small', text: 'Everyone except admins sees the message and can’t use the app. Admins keep full access.' }),
+        h('h3', { text: 'Close individual pages', style: 'margin-top:8px' }), ...rows.map(r => r.el), h('div', {}, save)),
+      h('div', { class: 'section' }, h('div', { class: 'section-title', text: 'Recent admin activity' }),
+        st.recent.length ? h('div', { class: 'stack', style: 'gap:6px' }, st.recent.map(r => h('div', { class: 'arow small-row' },
+          h('span', {}, h('b', { text: T(r.admin || 'admin') }), ' ' + r.action + ' ', h('span', { class: 'muted', text: T(r.target) })), h('span', { class: 'muted small', text: when(r.at) }))))
+          : h('p', { class: 'muted', text: 'Nothing yet.' })));
+  }
+
+  function searchTab(placeholder, load, dead) {
+    const q = h('input', { class: 'input', type: 'search', placeholder, 'aria-label': placeholder, autocomplete: 'off', maxlength: 40 });
+    const list = h('div', { class: 'stack', style: 'gap:8px' });
+    let timer = 0, n = 0;
+    const refresh = async () => { const my = ++n; try { const rows = await load(q.value.trim()); if (my === n && !dead()) paint(rows); } catch (e) { if (my === n) toast(e.message, 'error'); } };
+    let paint = () => {};
+    q.addEventListener('input', () => { clearTimeout(timer); timer = setTimeout(refresh, 250); });
+    return { q, list, refresh, setPaint(fn) { paint = fn; } };
+  }
+
+  async function usersTab(dead) {
+    const t = searchTab('Search users by username', (q) => api('GET', '/api/admin/users' + qs({ q })), dead);
+    const act = (label, cls, fn) => { const b = btn(label, { cls: 'small ' + cls }); b.addEventListener('click', () => Promise.resolve(fn()).catch(e => toast(e.message, 'error'))); return b; };
+    t.setPaint((rows) => {
+      TWM.flip(t.list, '.arow', () => t.list.replaceChildren(...(rows.length ? rows.map(u => {
+        const self = u.id === S.me.id;
+        const acts = [];
+        if (!self && !u.isAdmin) acts.push(u.banned
+          ? act('Unsuspend', 'ghost', async () => { await api('POST', `/api/admin/users/${u.id}/ban`, { banned: false }); toast('Unsuspended ' + u.username); t.refresh(); })
+          : act('Suspend', 'ghost', () => {
+              const why = h('input', { class: 'input', type: 'text', maxlength: 120, placeholder: 'Reason (shown to them)', 'aria-label': 'Reason' });
+              confirmSheet('Suspend ' + u.username + '?', 'They’ll be signed out and unable to log in until you unsuspend them.', 'Suspend',
+                async () => { await api('POST', `/api/admin/users/${u.id}/ban`, { banned: true, reason: why.value.trim() }); toast('Suspended ' + u.username); t.refresh(); }, why);
+            }));
+        if (!self) acts.push(act(u.isAdmin ? 'Remove admin' : 'Make admin', 'ghost', () => confirmSheet(u.isAdmin ? 'Remove admin?' : 'Make admin?',
+          u.isAdmin ? u.username + ' will lose access to this panel.' : u.username + ' will be able to manage every user, group and site setting.',
+          u.isAdmin ? 'Remove admin' : 'Make admin', async () => { await api('POST', `/api/admin/users/${u.id}/role`, { isAdmin: !u.isAdmin }); toast('Updated ' + u.username); t.refresh(); })));
+        if (!self && !u.isAdmin) acts.push(act('Delete', 'danger', () => confirmSheet('Delete ' + u.username + '?',
+          'This permanently removes the account, their messages, friendships and avatar. Groups left empty are deleted too. This can’t be undone.', 'Delete account',
+          async () => { await api('DELETE', `/api/admin/users/${u.id}`); toast('Deleted ' + u.username); t.refresh(); })));
+        return h('div', { class: 'arow', 'data-key': 'u' + u.id },
+          avatar(u, 'md'),
+          h('div', { class: 'meta' }, h('b', { text: nm(u) }, u.displayName ? h('small', { class: 'handle', text: ' @' + T(u.username) }) : null),
+            h('span', { class: 'muted small', text: `${u.groups} group${u.groups === 1 ? '' : 's'} · joined ${when(u.created)}${u.banned && u.banReason ? ' · ' + T(u.banReason) : ''}` })),
+          h('div', { class: 'badges' }, u.isAdmin ? h('span', { class: 'chip accent', text: 'Admin' }) : null, u.banned ? h('span', { class: 'chip bad', text: 'Suspended' }) : null, self ? h('span', { class: 'chip', text: 'You' }) : null),
+          h('div', { class: 'act' }, acts));
+      }) : [emptyState('No users found', 'Try a different name.')])));
+    });
+    body.replaceChildren(t.q, t.list); t.refresh();
+  }
+
+  async function groupsTab(dead) {
+    const t = searchTab('Search groups by name or game', (q) => api('GET', '/api/admin/groups' + qs({ q })), dead);
+    t.setPaint((rows) => {
+      TWM.flip(t.list, '.arow', () => t.list.replaceChildren(...(rows.length ? rows.map(g => {
+        const del = btn('Delete', { cls: 'small danger' });
+        del.addEventListener('click', () => confirmSheet('Delete ' + T(g.name) + '?', 'The group, its chat and all invites to it are removed for everyone. This can’t be undone.', 'Delete group',
+          async () => { await api('DELETE', `/api/admin/groups/${g.id}`); S.feedCache = null; refreshMine(); toast('Deleted ' + T(g.name)); t.refresh(); }));
+        return h('div', { class: 'arow', 'data-key': 'g' + g.id },
+          h('div', { class: 'meta' }, h('b', { text: T(g.name) }), h('span', { class: 'muted small', text: `${T(g.game)} · ${g.mode} · ${T(g.region)} · ${g.memberCount} member${g.memberCount === 1 ? '' : 's'} · ${when(g.created)}` })),
+          h('div', { class: 'act' }, h('a', { class: 'btn small ghost', href: '#/group/' + g.id }, 'Open'), del));
+      }) : [emptyState('No groups found', 'Try a different name or game.')])));
+    });
+    body.replaceChildren(t.q, t.list); t.refresh();
+  }
+}
+
+/* ================= game detection (desktop app) ================= */
+/* The desktop shell reports the game it sees running; we mirror it into "Playing …" and clear it when the game closes. */
+const AUTO = { detected: null, applied: null };
+const autoOn = () => { try { return localStorage.getItem('tw_autogame') !== 'off'; } catch { return true; } };
+async function applyAutoGame() {
+  if (!window.__TW_DESKTOP || !S.me || !S.me.onboarded) return;
+  const want = autoOn() ? AUTO.detected : null, cur = T(S.me.playing || '');
+  try {
+    if (want && cur !== want) { S.me = await api('PUT', '/api/me/playing', { playing: want }); AUTO.applied = want; renderUserPanel(); toast('Now playing ' + want); }
+    else if (!want && AUTO.applied && cur === AUTO.applied) { S.me = await api('PUT', '/api/me/playing', { playing: '' }); AUTO.applied = null; renderUserPanel(); }
+    else if (!want) AUTO.applied = null;
+  } catch { /* try again on the next detection tick */ }
+}
+window.TWApp = { game(name) { AUTO.detected = typeof name === 'string' && name ? name : null; applyAutoGame(); } };
+addEventListener('pagehide', () => {
+  if (AUTO.applied && S.me) fetch('/api/me/playing', { method: 'PUT', keepalive: true, credentials: 'same-origin', headers: { 'X-TW': '1', 'Content-Type': 'application/json' }, body: JSON.stringify({ playing: '' }) }).catch(() => {});
+});
+
+function switchEl(on, onChange, label) {
+  const b = h('button', { type: 'button', class: 'switch', role: 'switch', 'aria-checked': String(!!on), 'aria-label': label }, h('span', { class: 'knob' }));
+  b.addEventListener('click', () => { const v = b.getAttribute('aria-checked') !== 'true'; b.setAttribute('aria-checked', String(v)); onChange(v); });
+  return b;
 }
 
 /* ================= create group ================= */
@@ -691,7 +1048,7 @@ async function friendsView(_, tok) {
         return personRow(r.from || {}, { big: true, action: [a, d] });
       }),
       ...out.map(r => personRow(r.to || r.from || { username: r.username || 'Pending' }, { big: true, action: h('span', { class: 'chip', text: 'Pending' }) }))])] : []));
-    friendBox.replaceChildren(h('div', { class: 'section-title', text: `Friends — ${S.friends.length}` }), S.friends.length ? stackOf(S.friends.map(f => personRow(f, { big: true }))) : emptyState('No friends yet', 'Send a request above or find people in Search.'));
+    friendBox.replaceChildren(h('div', { class: 'section-title', text: `Friends — ${S.friends.length}` }), S.friends.length ? stackOf(S.friends.map(f => personRow(f, { big: true, href: '#/dm/' + enc(f.id) }))) : emptyState('No friends yet', 'Send a request above or find people in Search.'));
     groupBox.replaceChildren(h('div', { class: 'section-title' }, 'My groups', h('button', { class: 'btn small ghost', type: 'button', onclick: openCreate }, 'New')),
       S.mine.length ? stackOf(S.mine.map(g => { const t = h('span', { class: 'gtile', 'aria-hidden': 'true' }, (T(g.name)[0] || '?').toUpperCase()); t.style.background = safeColor(g.color); t.style.color = ink(g.color);
         return h('a', { class: 'frow big', href: '#/group/' + enc(g.id) }, t, h('div', { class: 'meta' }, h('b', { text: T(g.name) }), h('span', { text: T(g.game) }))); })) : emptyState('No groups yet', 'Join one from the feed.'));
@@ -777,8 +1134,8 @@ async function settingsView() {
   const region = selectEl(S.meta.regions, me.region || '', 'Choose a region');
   const age = h('input', { class: 'input', type: 'number', min: 13, max: 99, value: me.age || '', inputmode: 'numeric' });
   const status = selectEl([['online', 'Online'], ['idle', 'Idle'], ['dnd', 'Do not disturb'], ['offline', 'Appear offline']], statusKey(me.status) || 'online');
-  const playing = h('input', { class: 'input', type: 'text', maxlength: 40, value: T(me.playing || ''), placeholder: 'What are you playing right now?', list: 'games-list' });
-  const dl = h('datalist', { id: 'games-list' }, S.meta.games.map(g => h('option', { value: T(gname(g)) })));
+  const playing = h('input', { class: 'input', type: 'text', maxlength: 40, value: T(me.playing || ''), placeholder: 'What are you playing right now?', autocomplete: 'off' });
+  suggestInput(playing, () => S.meta.games.map(g => [gname(g), gname(g)]));
   const games = [...(me.favoriteGames || [])];
   const gw = h('div', { class: 'chips', role: 'group', 'aria-label': 'Favorite games' }, S.meta.games.map(g => { const n = gname(g);
     return h('button', { type: 'button', class: 'chip', 'aria-pressed': String(games.includes(n)), onclick: (e) => { const i = games.indexOf(n); if (i >= 0) games.splice(i, 1); else games.push(n); e.currentTarget.setAttribute('aria-pressed', String(i < 0)); } }, T(n)); }));
@@ -786,6 +1143,9 @@ async function settingsView() {
   const motion = selectEl([['system', 'Follow system'], ['on', 'Always on'], ['off', 'Off']], TWM.motionPref());
   motion.addEventListener('change', () => { TWM.setMotionPref(motion.value); toast(motion.value === 'off' ? 'Animations off' : motion.value === 'on' ? 'Animations always on' : 'Animations follow your system'); });
   const fm = field('Animations', motion, 'Use “Always on” if your system turns animations off.');
+  const detect = window.__TW_DESKTOP ? h('div', { class: 'field' }, h('span', { class: 'label', text: 'Game detection' }),
+    h('div', { class: 'switch-row' }, switchEl(autoOn(), (v) => { try { localStorage.setItem('tw_autogame', v ? 'on' : 'off'); } catch { /* ignore */ } applyAutoGame(); }, 'Detect the game I’m playing automatically'),
+      h('span', { class: 'muted small', text: 'Shows the game you’re playing as your status. Only the game’s name is shared.' }))) : null;
   const save = h('button', { class: 'btn', type: 'submit' }, 'Save changes');
   const form = h('form', { class: 'stack', novalidate: true, onsubmit: async (e) => {
     e.preventDefault();
@@ -796,7 +1156,7 @@ async function settingsView() {
       await api('PUT', '/api/me/settings', { region: region.value, age: a, favoriteGames: games, playing: playing.value.trim(), status: status.value, onboarded: true });
       S.me = await api('GET', '/api/me'); renderUserPanel(); toast('Settings saved');
     });
-  } }, h('div', { class: 'row' }, fr, fa), h('div', { class: 'row' }, fs, fp), fm, dl,
+  } }, h('div', { class: 'row' }, fr, fa), h('div', { class: 'row' }, fs, fp), detect, fm,
     h('div', { class: 'field' }, h('span', { class: 'label', text: 'Favorite games' }), gw), h('div', {}, save));
   const out = btn('Log out', { cls: 'danger', onclick: async (e) => { try { await api('POST', '/api/auth/logout'); } catch { /* ignore */ } loggedOut(); } });
   show(h('div', { class: 'page', style: 'max-width:720px' }, h('div', { class: 'page-head' }, h('div', {}, h('h1', { text: 'Settings' }), who)),
@@ -819,9 +1179,35 @@ function applySocial(f, i, r, forced) {
   if (cf || forced) renderFriends();
   if (ci || cr || forced) { renderBadge(); if (S.onData) S.onData(); }
 }
+/* ---- site status: maintenance mode + closed pages (set by admins) ---- */
+function showMaintenance() {
+  S.maint = true; clearTimers();
+  document.title = 'Third Wheel — maintenance';
+  $('#app').replaceChildren(h('main', { class: 'center-screen' }, h('div', { class: 'card auth-card maint' },
+    h('div', { class: 'brand' }, h('img', { src: 'icon.svg', alt: '', width: 32, height: 32 }), 'Third Wheel'),
+    h('h1', { text: 'Down for maintenance', style: 'margin-top:20px' }),
+    h('p', { class: 'muted', style: 'margin-top:8px', text: T(S.site.maintenance.message) }),
+    h('p', { class: 'muted small', style: 'margin:12px 0 20px', text: 'You’ll be brought back automatically when it’s over.' }),
+    btn('Log out', { cls: 'ghost', onclick: async () => { try { await api('POST', '/api/auth/logout'); } catch { /* ignore */ } loggedOut(); } }))));
+}
+function applySite() {
+  const down = S.site.maintenance.on && S.me && !S.me.isAdmin;
+  if (down && !S.maint) showMaintenance();
+  else if (!down && S.maint) { S.maint = false; start(); }
+  else if (!down && S.el.view) {
+    const sig = JSON.stringify(S.site.closed);
+    if (sig !== S.closedSig) { S.closedSig = sig; route(); }
+  }
+}
+async function loadSite() {
+  try { S.site = await api('GET', '/api/site'); applySite(); } catch { /* keep the last known state */ }
+}
+
 async function poll() {
   if (!S.me || document.hidden) return;
   S.tick++;
+  if (S.tick % 3 === 0 || S.maint) await loadSite();
+  if (S.maint) return;
   try {
     const [f, i, r, m] = await Promise.all([api('GET', '/api/friends'), api('GET', '/api/invites'), api('GET', '/api/friends/requests'), S.tick % 3 === 1 ? api('GET', '/api/groups/mine') : Promise.resolve(null)]);
     applySocial(f, i, r, false);
@@ -829,18 +1215,26 @@ async function poll() {
   } catch { /* transient */ }
 }
 function loggedOut() {
+  S.maint = false; S.feedCache = null; S.adminTab = null;
   clearTimers(); clearInterval(S.pollTimer); S.pollTimer = null; S.me = null; S.sig = {}; S.el = {}; renderResults = null;
   S.friends = []; S.mine = []; S.invites = []; S.reqs = { incoming: [], outgoing: [] };
   renderAuth();
 }
 async function start() {
   try { const m = await api('GET', '/api/meta'); S.meta = { games: m.games || [], regions: m.regions || [] }; } catch (e) { toast(e.message, 'error'); }
+  try { S.site = await api('GET', '/api/site'); S.closedSig = JSON.stringify(S.site.closed); } catch { /* assume open */ }
+  if (S.site.maintenance.on && !S.me.isAdmin) {
+    clearInterval(S.pollTimer); S.pollTimer = setInterval(poll, 2500);
+    showMaintenance(); return;
+  }
+  S.maint = false;
   if (!S.me.onboarded) { renderOnboarding(); return; }
   buildShell();
   try { await Promise.all([loadSocial(), refreshMine()]); } catch (e) { toast(e.message, 'error'); }
   clearInterval(S.pollTimer); S.pollTimer = setInterval(poll, 2500);
   if (!location.hash || location.hash === '#/') location.hash = '#/feed';
   route();
+  applyAutoGame();
 }
 
 document.addEventListener('click', (e) => { const c = e.target.closest && e.target.closest('.gcard'); if (c) S.morphFrom = c; }, true);

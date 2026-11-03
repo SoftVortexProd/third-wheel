@@ -13,6 +13,17 @@
 5. **Point the desktop app at it:** copy `desktop\config.example.json` to `desktop\config.json`, set `"server"`, run `.\build.ps1`. (`config.json` is git-ignored.) Or set the `TW_SERVER` environment variable.
 6. **Phones:** open the server URL in the phone browser → "Add to Home Screen".
 
+## Admin account
+
+Run this **on the server** (elevated PowerShell). It promotes an existing account, or creates a new admin and asks for its password (typed hidden, never stored in a file or environment variable):
+
+```powershell
+$env:TW_DATA = "C:\ThirdWheel\data"
+C:\ThirdWheel\app\Server.exe --create-admin YourName
+```
+
+Admins get an **Admin** shield icon in the top bar: overview and site controls (maintenance mode, closing individual pages with a message), user management (suspend, make/remove admin, delete) and group management (delete). Admins keep full access while the site is in maintenance mode.
+
 Update later: repeat steps 1–3 (data is kept).
 
 **Use HTTPS.** Over plain HTTP, passwords and login cookies cross the internet unencrypted. HTTPS needs a domain name pointing at the server (a free DuckDNS name works).

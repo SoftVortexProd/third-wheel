@@ -12,6 +12,41 @@ var dataDir = Environment.GetEnvironmentVariable("TW_DATA")
 Directory.CreateDirectory(dataDir);
 Db.ConnString = new SqliteConnectionStringBuilder { DataSource = Path.Combine(dataDir, "tw.db"), Pooling = true }.ToString();
 Db.Init();
+Site.Load();
+
+// Owner tool, run on the server:  Server.exe --create-admin <username>
+// Promotes an existing account to admin, or creates one (password read from the console, never stored in a file or env var).
+if (args.Length >= 2 && args[0] == "--create-admin")
+{
+    var an = args[1].Trim();
+    if (!Regex.IsMatch(an, "^[A-Za-z0-9_]{3,20}$")) { Console.Error.WriteLine("Username must be 3-20 letters, numbers or underscores."); return 1; }
+    var existing = Db.Row("SELECT id FROM users WHERE username=@u COLLATE NOCASE", ("@u", an));
+    if (existing != null)
+    {
+        Db.Exec("UPDATE users SET isAdmin=1, banned=0 WHERE id=@i", ("@i", existing["id"]));
+        Console.WriteLine($"'{an}' is now an admin.");
+        return 0;
+    }
+    string pw;
+    if (Console.IsInputRedirected) pw = Console.ReadLine() ?? "";
+    else
+    {
+        Console.Write($"New admin '{an}' does not exist yet. Choose a password (8-72 chars, hidden): ");
+        var sb = new StringBuilder(); ConsoleKeyInfo k;
+        while ((k = Console.ReadKey(true)).Key != ConsoleKey.Enter)
+        {
+            if (k.Key == ConsoleKey.Backspace) { if (sb.Length > 0) sb.Length--; }
+            else if (!char.IsControl(k.KeyChar)) sb.Append(k.KeyChar);
+        }
+        Console.WriteLine(); pw = sb.ToString();
+    }
+    pw = pw.TrimStart('﻿').TrimEnd('\r', '\n');   // piped input from PowerShell can start with a byte-order mark
+    if (pw.Length < 8 || pw.Length > 72) { Console.Error.WriteLine("Password must be 8-72 characters."); return 1; }
+    var nid = Db.CreateUser(an, pw, "NA-East", 0, Array.Empty<string>(), "offline", null, true);
+    Db.Exec("UPDATE users SET isAdmin=1 WHERE id=@i", ("@i", nid));
+    Console.WriteLine($"Admin account '{an}' created.");
+    return 0;
+}
 
 // A published server ships its wwwroot beside the exe; as a Windows service the working dir is System32, so pin the content root.
 var exeDir = AppContext.BaseDirectory;
@@ -49,6 +84,23 @@ app.Use(async (ctx, next) =>
             ctx.Response.StatusCode = 403;
             await ctx.Response.WriteAsJsonAsync(new { error = "Missing CSRF header." });
             return;
+        }
+
+        // Maintenance mode / closed pages: everyone except admins gets a 503 with the admin's message.
+        var path = ctx.Request.Path.Value ?? "";
+        var page = Site.PageOf(path);
+        bool exempt = path is "/api/site" or "/api/me" or "/api/meta" or "/api/auth/login" or "/api/auth/logout"
+            || path.StartsWith("/api/admin") || path.StartsWith("/api/avatars");
+        if (!exempt && (Site.Maintenance || (page != null && Site.Closed.ContainsKey(page))))
+        {
+            var who = CurrentUser(ctx);
+            var admin = who != null && Convert.ToInt32(Db.Scalar("SELECT isAdmin FROM users WHERE id=@i", ("@i", who.Value))) == 1;
+            if (!admin)
+            {
+                ctx.Response.StatusCode = 503;
+                await ctx.Response.WriteAsJsonAsync(new { error = Site.Maintenance ? Site.MaintenanceMessage : Site.Closed[page!], maintenance = Site.Maintenance, page });
+                return;
+            }
         }
     }
     await next();
@@ -110,7 +162,7 @@ static object UserObj(Dictionary<string, object?> u)
     return new
     {
         id = (long)u["id"]!, username = (string)u["username"]!, displayName = u["display"] as string, avatar = AvatarUrl((long)u["id"]!, u["avatarVer"]),
-        avatarColor = (string)u["color"]!,
+        avatarColor = (string)u["color"]!, isAdmin = Convert.ToInt32(u["isAdmin"]) == 1,
         region = (string)u["region"]!, age, ageRange = AgeRange(age),
         favoriteGames = JsonSerializer.Deserialize<string[]>((string)u["games"]!) ?? Array.Empty<string>(),
         onboarded = Convert.ToInt32(u["onboarded"]) == 1, status = (string)u["status"]!,
@@ -172,6 +224,11 @@ api.MapPost("auth/login", (HttpContext c, Creds b) =>
     if (u == null) { Db.Verify(b.Password ?? "", (byte[])dummy.Clone(), dummy); ok = false; }
     else ok = Db.Verify(b.Password ?? "", Convert.FromBase64String((string)u["salt"]!), Convert.FromBase64String((string)u["hash"]!));
     if (!ok || u == null) { Limited(key, 5, TimeSpan.FromMinutes(5), true); return Err("Wrong username or password.", 401); }
+    if (Convert.ToInt32(u["banned"]) == 1)
+    {
+        var why = u["banReason"] as string;
+        return Err("This account has been suspended." + (string.IsNullOrEmpty(why) ? "" : " Reason: " + why), 403);
+    }
     rate.TryRemove(key, out _);
     var id = (long)u["id"]!;
     Db.Exec("UPDATE users SET status='online' WHERE id=@i AND status='offline'", ("@i", id));
@@ -286,6 +343,109 @@ static string? SniffImage(byte[] d)
     return null;
 }
 
+// ---------- site status (public) + admin ----------
+api.MapGet("site", () => Results.Json(Site.Snapshot()));
+
+IResult WithAdmin(HttpContext c, Func<long, IResult> f) => WithUser(c, uid =>
+    Convert.ToInt32(Db.Scalar("SELECT isAdmin FROM users WHERE id=@i", ("@i", uid))) == 1 ? f(uid) : Err("Admins only.", 403));
+void Audit(long admin, string action, string target) =>
+    Db.Exec("INSERT INTO audit(adminId,action,target,at) VALUES(@a,@x,@t,@n)", ("@a", admin), ("@x", action), ("@t", target), ("@n", Now()));
+long Count(string sql) => Convert.ToInt64(Db.Scalar(sql));
+
+api.MapGet("admin/stats", (HttpContext c) => WithAdmin(c, _ => Results.Json(new
+{
+    users = Count("SELECT COUNT(*) FROM users"), online = Count("SELECT COUNT(*) FROM users WHERE status<>'offline'"),
+    banned = Count("SELECT COUNT(*) FROM users WHERE banned=1"), groups = Count("SELECT COUNT(*) FROM grps"),
+    groupMessages = Count("SELECT COUNT(*) FROM messages"), directMessages = Count("SELECT COUNT(*) FROM dms"),
+    recent = Db.Rows("SELECT a.action, a.target, a.at, u.username admin FROM audit a LEFT JOIN users u ON u.id=a.adminId ORDER BY a.id DESC LIMIT 12")
+        .Select(r => new { action = (string)r["action"]!, target = (string)r["target"]!, at = (string)r["at"]!, admin = r["admin"] as string })
+})));
+
+api.MapGet("admin/users", (HttpContext c, string? q) => WithAdmin(c, _ =>
+{
+    var like = "%" + (q ?? "").Trim().Replace("\\", "\\\\").Replace("%", "\\%").Replace("_", "\\_") + "%";
+    var rows = Db.Rows(@"SELECT u.id,u.username,u.display,u.avatarVer,u.color,u.isAdmin,u.banned,u.banReason,u.created,u.status,
+        (SELECT COUNT(*) FROM members m WHERE m.userId=u.id) groups FROM users u WHERE u.username LIKE @q ESCAPE '\' ORDER BY u.id DESC LIMIT 100", ("@q", like));
+    return Results.Json(rows.Select(r => new
+    {
+        id = (long)r["id"]!, username = (string)r["username"]!, displayName = r["display"] as string, avatar = AvatarUrl((long)r["id"]!, r["avatarVer"]),
+        avatarColor = (string)r["color"]!, isAdmin = Convert.ToInt32(r["isAdmin"]) == 1, banned = Convert.ToInt32(r["banned"]) == 1,
+        banReason = r["banReason"] as string, created = (string)r["created"]!, status = (string)r["status"]!, groups = Convert.ToInt32(r["groups"])
+    }));
+}));
+
+api.MapPost("admin/users/{id:long}/ban", (HttpContext c, long id, BanIn b) => WithAdmin(c, me =>
+{
+    var u = Db.Row("SELECT * FROM users WHERE id=@i", ("@i", id));
+    if (u == null) return Err("User not found.", 404);
+    if (id == me) return Err("You can't suspend yourself.");
+    if (Convert.ToInt32(u["isAdmin"]) == 1) return Err("Remove their admin role first.");
+    var ban = b.Banned;
+    Db.Exec("UPDATE users SET banned=@b, banReason=@r WHERE id=@i", ("@b", ban ? 1 : 0), ("@r", ban ? Enc(Clean(b.Reason, 120)) : null), ("@i", id));
+    if (ban) { Db.Exec("DELETE FROM sessions WHERE userId=@i", ("@i", id)); Db.Exec("UPDATE users SET status='offline', playing=NULL WHERE id=@i", ("@i", id)); }
+    Audit(me, ban ? "suspended" : "unsuspended", (string)u["username"]!);
+    return Results.Json(new { ok = true });
+}));
+
+api.MapPost("admin/users/{id:long}/role", (HttpContext c, long id, RoleIn b) => WithAdmin(c, me =>
+{
+    var u = Db.Row("SELECT username FROM users WHERE id=@i", ("@i", id));
+    if (u == null) return Err("User not found.", 404);
+    if (id == me) return Err("You can't change your own role.");
+    Db.Exec("UPDATE users SET isAdmin=@a WHERE id=@i", ("@a", b.IsAdmin ? 1 : 0), ("@i", id));
+    Audit(me, b.IsAdmin ? "made admin" : "removed admin", (string)u["username"]!);
+    return Results.Json(new { ok = true });
+}));
+
+api.MapDelete("admin/users/{id:long}", (HttpContext c, long id) => WithAdmin(c, me =>
+{
+    var u = Db.Row("SELECT * FROM users WHERE id=@i", ("@i", id));
+    if (u == null) return Err("User not found.", 404);
+    if (id == me) return Err("You can't delete yourself.");
+    if (Convert.ToInt32(u["isAdmin"]) == 1) return Err("Remove their admin role first.");
+    var ps = new (string, object?)[] { ("@i", id) };
+    foreach (var sql in new[] {
+        "DELETE FROM sessions WHERE userId=@i", "DELETE FROM messages WHERE userId=@i", "DELETE FROM dms WHERE a=@i OR b=@i",
+        "DELETE FROM friends WHERE a=@i OR b=@i", "DELETE FROM frequests WHERE fromId=@i OR toId=@i", "DELETE FROM invites WHERE fromId=@i OR toId=@i",
+        "DELETE FROM members WHERE userId=@i", "DELETE FROM avatars WHERE userId=@i", "DELETE FROM users WHERE id=@i" })
+        Db.Exec(sql, ps);
+    foreach (var g in Db.Rows("SELECT g.id FROM grps g WHERE NOT EXISTS (SELECT 1 FROM members m WHERE m.groupId=g.id)")) DeleteGroup((long)g["id"]!);
+    Audit(me, "deleted user", (string)u["username"]!);
+    return Results.Json(new { ok = true });
+}));
+
+api.MapGet("admin/groups", (HttpContext c, string? q) => WithAdmin(c, _ =>
+{
+    var like = "%" + (q ?? "").Trim().Replace("\\", "\\\\").Replace("%", "\\%").Replace("_", "\\_") + "%";
+    return Results.Json(Db.Rows(@"SELECT g.id,g.name,g.game,g.mode,g.region,g.created,(SELECT COUNT(*) FROM members m WHERE m.groupId=g.id) memberCount
+        FROM grps g WHERE g.name LIKE @q ESCAPE '\' OR g.game LIKE @q ESCAPE '\' ORDER BY g.id DESC LIMIT 100", ("@q", like))
+        .Select(r => new { id = (long)r["id"]!, name = (string)r["name"]!, game = (string)r["game"]!, mode = (string)r["mode"]!, region = (string)r["region"]!,
+            created = (string)r["created"]!, memberCount = Convert.ToInt32(r["memberCount"]) }));
+}));
+
+api.MapDelete("admin/groups/{id:long}", (HttpContext c, long id) => WithAdmin(c, me =>
+{
+    var g = Db.Row("SELECT name FROM grps WHERE id=@i", ("@i", id));
+    if (g == null) return Err("Group not found.", 404);
+    DeleteGroup(id);
+    Audit(me, "deleted group", (string)g["name"]!);
+    return Results.Json(new { ok = true });
+}));
+
+api.MapPut("admin/site", (HttpContext c, SiteIn b) => WithAdmin(c, me =>
+{
+    var closed = new Dictionary<string, string>();
+    foreach (var (page, msg) in b.Closed ?? new())
+    {
+        if (!Site.Pages.Contains(page)) return Err("Unknown page: " + page);
+        closed[page] = string.IsNullOrWhiteSpace(msg) ? "This part of Third Wheel is temporarily closed." : Enc(Clean(msg, 200));
+    }
+    var m = b.Maintenance;
+    Site.Set(m?.On ?? false, string.IsNullOrWhiteSpace(m?.Message) ? "Third Wheel is down for maintenance. Please check back soon." : Enc(Clean(m!.Message, 200)), closed);
+    Audit(me, "updated site controls", (m?.On ?? false ? "maintenance ON" : "maintenance off") + $", {closed.Count} page(s) closed");
+    return Results.Json(Site.Snapshot());
+}));
+
 api.MapGet("meta", () => Results.Json(new { games = Db.Games, regions = Db.Regions }));
 
 // ---------- search / feed ----------
@@ -367,10 +527,23 @@ api.MapPost("groups/{id:long}/join", (HttpContext c, long id) => WithUser(c, uid
     return Results.Json(GroupObj(Db.Row(GroupSel + " WHERE g.id=@g", ("@g", id), ("@me", uid))!));
 }));
 
+// Removes a group and everything attached to it.
+void DeleteGroup(long id)
+{
+    Db.Exec("DELETE FROM messages WHERE groupId=@g", ("@g", id));
+    Db.Exec("DELETE FROM invites WHERE groupId=@g", ("@g", id));
+    Db.Exec("DELETE FROM members WHERE groupId=@g", ("@g", id));
+    Db.Exec("DELETE FROM grps WHERE id=@g", ("@g", id));
+}
+
 api.MapPost("groups/{id:long}/leave", (HttpContext c, long id) => WithUser(c, uid =>
 {
+    if (!IsMember(id, uid)) return Err("You are not in this group.", 404);
     Db.Exec("DELETE FROM members WHERE groupId=@g AND userId=@u", ("@g", id), ("@u", uid));
-    return Results.Json(new { ok = true });
+    // Last one out turns off the lights: an empty group is deleted.
+    var deleted = Convert.ToInt64(Db.Scalar("SELECT COUNT(*) FROM members WHERE groupId=@g", ("@g", id))) == 0;
+    if (deleted) DeleteGroup(id);
+    return Results.Json(new { ok = true, deleted });
 }));
 
 api.MapGet("groups/{id:long}/messages", (HttpContext c, long id, long? after) => WithUser(c, uid =>
@@ -392,6 +565,54 @@ api.MapPost("groups/{id:long}/messages", (HttpContext c, long id, MessageIn b) =
     var mid = Db.Insert("INSERT INTO messages(groupId,userId,text,createdAt) VALUES(@g,@u,@t,@c)", ("@g", id), ("@u", uid), ("@t", Enc(text)), ("@c", Now()));
     var r = Db.Row(MsgSel + " WHERE m.id=@i", ("@i", mid))!;
     return Results.Json(MsgObj(r));
+}));
+
+// ---------- profiles + direct messages (friends only) ----------
+api.MapGet("users/{id:long}", (HttpContext c, long id) => WithUser(c, uid =>
+{
+    var u = Db.Row("SELECT * FROM users WHERE id=@i", ("@i", id));
+    if (u == null) return Err("User not found.", 404);
+    var friend = id == uid || AreFriends(uid, id);
+    var games = JsonSerializer.Deserialize<string[]>((string)u["games"]!) ?? Array.Empty<string>();
+    return Results.Json(new
+    {
+        id, username = (string)u["username"]!, displayName = u["display"] as string, avatar = AvatarUrl(id, u["avatarVer"]),
+        avatarColor = (string)u["color"]!, status = (string)u["status"]!, playing = u["playing"] as string,
+        region = (string)u["region"]!, ageRange = AgeRange(Convert.ToInt32(u["age"])), favoriteGames = games,
+        isFriend = friend, isMe = id == uid, joined = (string)u["created"]!
+    });
+}));
+
+const string DmSel = "SELECT d.id, d.fromId userId, u.username, u.display, u.avatarVer, u.color avatarColor, d.text, d.createdAt FROM dms d JOIN users u ON u.id=d.fromId WHERE d.a=@a AND d.b=@b";
+api.MapGet("dms/{id:long}", (HttpContext c, long id, long? after) => WithUser(c, uid =>
+{
+    if (id == uid || !AreFriends(uid, id)) return Err("You can only message friends.", 403);
+    var ps = new (string, object?)[] { ("@a", Math.Min(uid, id)), ("@b", Math.Max(uid, id)), ("@after", after) };
+    List<Dictionary<string, object?>> rows;
+    if (after != null) rows = Db.Rows(DmSel + " AND d.id>@after ORDER BY d.id ASC LIMIT 200", ps);
+    else { rows = Db.Rows(DmSel + " ORDER BY d.id DESC LIMIT 100", ps); rows.Reverse(); }
+    return Results.Json(rows.Select(MsgObj));
+}));
+
+api.MapPost("dms/{id:long}", (HttpContext c, long id, MessageIn b) => WithUser(c, uid =>
+{
+    if (id == uid || !AreFriends(uid, id)) return Err("You can only message friends.", 403);
+    var text = Clean(b.Text, 1000);
+    if (text.Length == 0) return Err("Message is empty.");
+    if (Limited($"dm:{uid}", 40, TimeSpan.FromMinutes(1), true)) return Err("Slow down a little.", 429);
+    var mid = Db.Insert("INSERT INTO dms(a,b,fromId,text,createdAt) VALUES(@a,@b,@f,@t,@c)",
+        ("@a", Math.Min(uid, id)), ("@b", Math.Max(uid, id)), ("@f", uid), ("@t", Enc(text)), ("@c", Now()));
+    var r = Db.Row(DmSel + " AND d.id=@i", ("@a", Math.Min(uid, id)), ("@b", Math.Max(uid, id)), ("@i", mid))!;
+    return Results.Json(MsgObj(r));
+}));
+
+// The desktop app reports the game it detects; this only touches the "playing" line.
+api.MapPut("me/playing", (HttpContext c, PlayingIn b) => WithUser(c, uid =>
+{
+    if (Limited($"pl:{uid}", 30, TimeSpan.FromMinutes(1), true)) return Err("Slow down a little.", 429);
+    string? playing = string.IsNullOrWhiteSpace(b.Playing) ? null : Enc(Clean(b.Playing, 40));
+    Db.Exec("UPDATE users SET playing=@p WHERE id=@i", ("@p", playing), ("@i", uid));
+    return Results.Json(UserDto(uid));
 }));
 
 // ---------- friends ----------
@@ -485,8 +706,51 @@ catch (Exception ex)
     try { File.AppendAllText(Path.Combine(dataDir, "server.log"), $"{DateTime.UtcNow:o} startup failed: {ex}\n"); } catch { /* best effort */ }
     throw;
 }
+return 0;
 
 record Creds(string? Username, string? Password);
+record PlayingIn(string? Playing);
+record BanIn(bool Banned, string? Reason);
+record RoleIn(bool IsAdmin);
+record MaintIn(bool On, string? Message);
+record SiteIn(MaintIn? Maintenance, Dictionary<string, string>? Closed);
+
+// Site-wide switches: maintenance mode and per-page closures (persisted, cached in memory).
+static class Site
+{
+    public static readonly string[] Pages = { "feed", "search", "friends", "dms", "groups", "signup" };
+    static readonly object L = new();
+    public static bool Maintenance;
+    public static string MaintenanceMessage = "Third Wheel is down for maintenance. Please check back soon.";
+    public static Dictionary<string, string> Closed = new();
+
+    public static string? PageOf(string path) =>
+        path.StartsWith("/api/feed") ? "feed" : path.StartsWith("/api/search") ? "search" :
+        path.StartsWith("/api/friends") || path.StartsWith("/api/invites") ? "friends" : path.StartsWith("/api/dms") ? "dms" :
+        path.StartsWith("/api/groups") ? "groups" : path == "/api/auth/signup" ? "signup" : null;
+
+    public static void Load()
+    {
+        var json = Db.Scalar("SELECT value FROM site WHERE key='state'") as string;
+        if (string.IsNullOrEmpty(json)) return;
+        try
+        {
+            using var d = JsonDocument.Parse(json); var r = d.RootElement;
+            lock (L)
+            {
+                Maintenance = r.GetProperty("on").GetBoolean(); MaintenanceMessage = r.GetProperty("message").GetString() ?? MaintenanceMessage;
+                Closed = r.GetProperty("closed").EnumerateObject().Where(p => Pages.Contains(p.Name)).ToDictionary(p => p.Name, p => p.Value.GetString() ?? "");
+            }
+        }
+        catch { /* ignore a corrupt row, keep defaults */ }
+    }
+    public static void Set(bool on, string message, Dictionary<string, string> closed)
+    {
+        lock (L) { Maintenance = on; MaintenanceMessage = message; Closed = closed; }
+        Db.Exec("INSERT OR REPLACE INTO site(key,value) VALUES('state',@v)", ("@v", JsonSerializer.Serialize(new { on, message, closed })));
+    }
+    public static object Snapshot() { lock (L) return new { maintenance = new { on = Maintenance, message = MaintenanceMessage }, closed = new Dictionary<string, string>(Closed), pages = Pages }; }
+}
 record ProfileIn(string? DisplayName, string? Username, string? Password);
 record SettingsIn(string? Region, int? Age, string[]? FavoriteGames, string? Playing, string? Status, bool? Onboarded);
 record GroupIn(string? Name, string? Game, string? Mode, string? Region, int? AgeMin, int? AgeMax, string? Description);
@@ -565,10 +829,17 @@ CREATE INDEX IF NOT EXISTS ix_msg ON messages(groupId,id);
 CREATE TABLE IF NOT EXISTS friends(a INTEGER, b INTEGER, PRIMARY KEY(a,b));
 CREATE TABLE IF NOT EXISTS frequests(id INTEGER PRIMARY KEY, fromId INTEGER, toId INTEGER, UNIQUE(fromId,toId));
 CREATE TABLE IF NOT EXISTS invites(id INTEGER PRIMARY KEY, groupId INTEGER, fromId INTEGER, toId INTEGER, UNIQUE(groupId,toId));
+CREATE TABLE IF NOT EXISTS site(key TEXT PRIMARY KEY, value TEXT);
+CREATE TABLE IF NOT EXISTS audit(id INTEGER PRIMARY KEY, adminId INTEGER, action TEXT, target TEXT, at TEXT);
+CREATE TABLE IF NOT EXISTS dms(id INTEGER PRIMARY KEY, a INTEGER, b INTEGER, fromId INTEGER, text TEXT, createdAt TEXT);
+CREATE INDEX IF NOT EXISTS ix_dms ON dms(a,b,id);
 CREATE TABLE IF NOT EXISTS avatars(userId INTEGER PRIMARY KEY, mime TEXT NOT NULL, data BLOB NOT NULL);");
         // Upgrade databases created before profiles existed.
         var cols = Rows("PRAGMA table_info(users)").Select(r => (string)r["name"]!).ToHashSet(StringComparer.OrdinalIgnoreCase);
         if (!cols.Contains("display")) Exec("ALTER TABLE users ADD COLUMN display TEXT");
         if (!cols.Contains("avatarVer")) Exec("ALTER TABLE users ADD COLUMN avatarVer INTEGER DEFAULT 0");
+        if (!cols.Contains("isAdmin")) Exec("ALTER TABLE users ADD COLUMN isAdmin INTEGER DEFAULT 0");
+        if (!cols.Contains("banned")) Exec("ALTER TABLE users ADD COLUMN banned INTEGER DEFAULT 0");
+        if (!cols.Contains("banReason")) Exec("ALTER TABLE users ADD COLUMN banReason TEXT");
     }
 }

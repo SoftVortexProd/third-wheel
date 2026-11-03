@@ -106,6 +106,95 @@ class Job:
                 ctypes.c_void_p(self.handle), ctypes.c_void_p(int(proc._handle)))
 
 
+# ---- game detection: matches running programs against a fixed list; only the game NAME ever leaves this process ----
+# Names must match the game list the server offers.
+GAME_EXES = {
+    "valorant-win64-shipping.exe": "Valorant", "robloxplayerbeta.exe": "Roblox", "fortniteclient-win64-shipping.exe": "Fortnite",
+    "league of legends.exe": "League of Legends", "cs2.exe": "Counter-Strike 2", "r5apex.exe": "Apex Legends", "r5apex_dx12.exe": "Apex Legends",
+    "overwatch.exe": "Overwatch 2", "rocketleague.exe": "Rocket League", "among us.exe": "Among Us", "genshinimpact.exe": "Genshin Impact",
+    "yuanshen.exe": "Genshin Impact", "cod.exe": "Call of Duty", "modernwarfare.exe": "Call of Duty", "rainbowsix.exe": "Rainbow Six Siege",
+    "rainbowsix_vulkan.exe": "Rainbow Six Siege", "dota2.exe": "Dota 2", "eldenring.exe": "Elden Ring", "stardew valley.exe": "Stardew Valley",
+    "helldivers2.exe": "Helldivers 2", "destiny2.exe": "Destiny 2", "marvel-win64-shipping.exe": "Marvel Rivals",
+    "palworld-win64-shipping.exe": "Palworld", "terraria.exe": "Terraria", "minecraft.windows.exe": "Minecraft", "re9.exe": "Resident Evil Requiem",
+    "fc24.exe": "FIFA / FC", "fc25.exe": "FIFA / FC", "fc26.exe": "FIFA / FC", "fifa23.exe": "FIFA / FC", "mk8.exe": "Mario Kart",
+}
+
+
+def _processes() -> dict[int, str]:
+    """pid -> lower-case exe name, via the Windows toolhelp snapshot (no extra dependencies)."""
+    from ctypes import wintypes
+
+    class ENTRY(ctypes.Structure):
+        _fields_ = [("dwSize", wintypes.DWORD), ("cntUsage", wintypes.DWORD), ("th32ProcessID", wintypes.DWORD),
+                    ("th32DefaultHeapID", ctypes.c_size_t), ("th32ModuleID", wintypes.DWORD), ("cntThreads", wintypes.DWORD),
+                    ("th32ParentProcessID", wintypes.DWORD), ("pcPriClassBase", wintypes.LONG), ("dwFlags", wintypes.DWORD),
+                    ("szExeFile", ctypes.c_wchar * 260)]
+
+    k32 = ctypes.windll.kernel32
+    k32.CreateToolhelp32Snapshot.restype = wintypes.HANDLE
+    k32.CreateToolhelp32Snapshot.argtypes = [wintypes.DWORD, wintypes.DWORD]
+    k32.Process32FirstW.argtypes = k32.Process32NextW.argtypes = [wintypes.HANDLE, ctypes.POINTER(ENTRY)]
+    k32.CloseHandle.argtypes = [wintypes.HANDLE]
+    snap = k32.CreateToolhelp32Snapshot(0x2, 0)
+    out: dict[int, str] = {}
+    if not snap or snap == wintypes.HANDLE(-1).value:
+        return out
+    try:
+        e = ENTRY()
+        e.dwSize = ctypes.sizeof(ENTRY)
+        ok = k32.Process32FirstW(snap, ctypes.byref(e))
+        while ok:
+            out[e.th32ProcessID] = e.szExeFile.lower()
+            ok = k32.Process32NextW(snap, ctypes.byref(e))
+    finally:
+        k32.CloseHandle(snap)
+    return out
+
+
+def _window_titles() -> list[tuple[int, str]]:
+    from ctypes import wintypes
+    u32 = ctypes.windll.user32
+    found: list[tuple[int, str]] = []
+    proc = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+
+    def cb(hwnd, _):
+        if u32.IsWindowVisible(hwnd):
+            n = u32.GetWindowTextLengthW(hwnd)
+            if n:
+                buf = ctypes.create_unicode_buffer(n + 1)
+                u32.GetWindowTextW(hwnd, buf, n + 1)
+                pid = wintypes.DWORD()
+                u32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+                found.append((pid.value, buf.value))
+        return True
+
+    u32.EnumWindows(proc(cb), 0)
+    return found
+
+
+def detect_game() -> str | None:
+    if os.name != "nt":
+        return None
+    try:
+        procs = _processes()
+        running = set(procs.values())
+        for exe, game in GAME_EXES.items():
+            if exe in running:
+                return game
+        # Minecraft / Lunar Client run inside java: tell them apart by window title.
+        java = {pid for pid, exe in procs.items() if exe in ("javaw.exe", "java.exe")}
+        if java:
+            for pid, title in _window_titles():
+                if pid in java:
+                    if title.startswith("Lunar Client"):
+                        return "Lunar Client"
+                    if title.startswith("Minecraft"):
+                        return "Minecraft"
+    except Exception:
+        pass
+    return None
+
+
 class Page(QWebEnginePage):
     def acceptNavigationRequest(self, url, nav_type, is_main):
         if url.scheme() in ("about", "blob", "data") or same_origin(url):
@@ -150,7 +239,7 @@ class Main(QMainWindow):
         # Default the desktop app to animations on (still changeable in Settings -> Animations).
         motion = QWebEngineScript()
         motion.setName("tw-motion-default")
-        motion.setSourceCode("try{if(!localStorage.getItem('tw_motion'))localStorage.setItem('tw_motion','on')}catch(e){}")
+        motion.setSourceCode("window.__TW_DESKTOP=true;try{if(!localStorage.getItem('tw_motion'))localStorage.setItem('tw_motion','on')}catch(e){}")
         motion.setInjectionPoint(QWebEngineScript.InjectionPoint.DocumentCreation)
         motion.setWorldId(QWebEngineScript.ScriptWorldId.MainWorld)
         motion.setRunsOnSubFrames(False)
@@ -174,6 +263,13 @@ class Main(QMainWindow):
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.poll)
         self.timer.start(400)
+
+        # Game detection: look every few seconds, tell the page only when it changes (and again after any reload).
+        self.game = None
+        self.view.loadFinished.connect(lambda ok: ok and self.push_game())
+        self.game_timer = QTimer(self)
+        self.game_timer.timeout.connect(self.scan_game)
+        self.game_timer.start(6000)
 
     def setIcon(self):
         for p in (resource("app.ico"), base_dir() / "app.ico"):
@@ -212,6 +308,15 @@ class Main(QMainWindow):
         elif self.tries > 100:
             self.timer.stop()
             self.splash.setText("Third Wheel\n\nServer did not respond.")
+
+    def scan_game(self):
+        g = detect_game()
+        if g != self.game:
+            self.game = g
+            self.push_game()
+
+    def push_game(self):
+        self.page.runJavaScript(f"window.TWApp&&window.TWApp.game({json.dumps(self.game)})")
 
     def stop_server(self):
         if self.proc and self.proc.poll() is None:
