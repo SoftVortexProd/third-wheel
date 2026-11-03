@@ -93,12 +93,40 @@ function avatar(u, size = 'md', withStatus = false) {
   const el = h('span', { class: 'avatar ' + size, 'aria-hidden': 'true' }, (nm(u).trim()[0] || '?').toUpperCase());
   el.style.background = safeColor(u.avatarColor); el.style.color = ink(u.avatarColor);
   if (typeof u.avatar === 'string' && AV_RE.test(u.avatar)) {
-    const img = h('img', { src: u.avatar, alt: '', decoding: 'async' });
-    img.addEventListener('error', () => img.remove());
-    el.append(img);
+    const noAnim = typeof TWPrefs !== 'undefined' && TWPrefs.get().disablePfpAnimation;
+    if (noAnim) {
+      const cv = h('canvas', { class: 'avatar-static' });
+      const img = new Image();
+      img.src = u.avatar;
+      img.onload = () => {
+        try {
+          cv.width = img.naturalWidth || 64;
+          cv.height = img.naturalHeight || 64;
+          const ctx = cv.getContext('2d');
+          if (ctx) ctx.drawImage(img, 0, 0, cv.width, cv.height);
+        } catch { /* fallback */ }
+      };
+      el.append(cv);
+    } else {
+      const img = h('img', { src: u.avatar, alt: '', decoding: 'async' });
+      img.addEventListener('error', () => img.remove());
+      el.append(img);
+    }
   }
   if (!withStatus) return el;
   return h('span', { class: 'av-wrap' }, el, h('span', { class: 'dot ' + statusKey(u.status), 'aria-hidden': 'true' }));
+}
+
+function groupTile(g, sz = '') {
+  const cls = 'gtile' + (sz ? ' ' + sz : '');
+  if (g && g.icon) {
+    return h('span', { class: cls, 'aria-hidden': 'true' },
+      h('img', { src: g.icon, alt: '', style: 'width:100%;height:100%;object-fit:cover;border-radius:inherit;display:block;' }));
+  }
+  const tile = h('span', { class: cls, 'aria-hidden': 'true', text: (T(g ? g.name : '?')[0] || '?').toUpperCase() });
+  tile.style.background = safeColor(g ? g.color : '#7c8cff');
+  tile.style.color = ink(g ? g.color : '#7c8cff');
+  return tile;
 }
 
 /* ================= api ================= */
@@ -272,17 +300,23 @@ function suggestInput(input, getList) {
 /* Game cover thumbnails: filled from search results and looked up lazily by name. */
 const gameCovers = new Map();
 function gameThumb(name) {
-  const key = String(name || '').toLowerCase();
+  const key = String(name || '').toLowerCase().trim();
   const el = h('span', { class: 'gp-thumb', 'aria-hidden': 'true' });
-  const paint = (url) => { el.replaceChildren(url ? h('img', { src: url, alt: '', loading: 'lazy', onerror: (e) => e.target.replaceWith(icon('pad', 16)) }) : icon('pad', 16)); };
+  const paint = (url) => { el.replaceChildren(url ? h('img', { src: url, alt: '', loading: 'lazy', onerror: (e) => e.target.replaceWith(icon('pad', 14)) }) : icon('pad', 14)); };
+  if (!key) { paint(null); return el; }
   const known = gameCovers.get(key);
   paint(known || null);
   if (known === undefined) {
     gameCovers.set(key, '');   // look up once
     api('GET', '/api/games/search?q=' + encodeURIComponent(name)).then(list => {
-      const hit = (list || []).find(x => String(x.name || '').toLowerCase() === key && x.coverUrl);
-      if (hit) { gameCovers.set(key, hit.coverUrl); paint(hit.coverUrl); } else gameCovers.delete(key);
-    }).catch(() => gameCovers.delete(key));
+      const arr = list || [];
+      const hit = arr.find(x => String(x.name || '').toLowerCase().trim() === key && x.coverUrl)
+               || arr.find(x => String(x.name || '').toLowerCase().includes(key) && x.coverUrl)
+               || arr.find(x => key.includes(String(x.name || '').toLowerCase()) && x.coverUrl)
+               || (arr[0]?.coverUrl ? arr[0] : null);
+      if (hit && hit.coverUrl) { gameCovers.set(key, hit.coverUrl); paint(hit.coverUrl); }
+      else gameCovers.set(key, null);
+    }).catch(() => gameCovers.set(key, null));
   }
   return el;
 }
@@ -385,7 +419,8 @@ function gamePicker(opts = {}) {
       chipsWrap.replaceChildren();
       for (const g of cur) {
         const c = h('span', { class: 'game-picker-chip', role: 'listitem' },
-          h('span', { text: T(g) }),
+          gameThumb(g),
+          h('span', { class: 'gp-chip-name', text: T(g) }),
           h('button', {
             type: 'button', class: 'gp-remove', 'aria-label': 'Remove ' + g,
             onclick: (e) => { e.preventDefault(); removeGame(g); }
@@ -614,6 +649,11 @@ function personRow(p, o = {}) {
     href: o.href,
     'data-key': p.id != null ? 'p' + p.id : null
   }, av, meta, o.action ? h('div', { class: 'act' }, o.action) : null);
+  if (p.banner) {
+    row.style.backgroundImage = 'linear-gradient(rgba(20, 20, 26, 0.78), rgba(20, 20, 26, 0.78)), url(' + p.banner + ')';
+    row.style.backgroundSize = 'cover';
+    row.style.backgroundPosition = 'center';
+  }
 
   if (!o.href) {
     row.style.cursor = 'pointer';
@@ -785,6 +825,13 @@ function renderUserPanel() {
   meta.addEventListener('click', () => openProfile(me.id));
   S.el.user.replaceChildren(av, meta,
     h('a', { class: 'icon-btn', href: '#/settings', 'aria-label': tr('Settings') }, icon('gear', 20)));
+  if (me.banner) {
+    S.el.user.style.backgroundImage = 'linear-gradient(rgba(18, 18, 24, 0.75), rgba(18, 18, 24, 0.75)), url(' + me.banner + ')';
+    S.el.user.style.backgroundSize = 'cover';
+    S.el.user.style.backgroundPosition = 'center';
+  } else {
+    S.el.user.style.backgroundImage = 'none';
+  }
 }
 function renderRail() {
   const rg = S.el.railGroups; if (!rg) return;
@@ -794,8 +841,7 @@ function renderRail() {
   if (rg.dataset.sig !== sig) {
     rg.dataset.sig = sig;
     const list = S.mine.map(g => {
-      const tile = h('span', { class: 'gtile', 'aria-hidden': 'true' }, (T(g.name)[0] || '?').toUpperCase());
-      tile.style.background = safeColor(g.color); tile.style.color = ink(g.color);
+      const tile = groupTile(g);
       return h('a', { class: 'nav-link', href: '#/group/' + enc(g.id), title: T(g.name), 'data-key': 'g' + g.id, 'data-gid': g.id }, tile, h('span', { class: 't', text: T(g.name) }));
     });
     TWM.flip(rg, '.nav-link', () => rg.replaceChildren(...(list.length ? list : [h('p', { class: 'muted small', style: 'padding:8px 12px', text: tr('No groups yet. Find one or create your own.') })])));
@@ -872,8 +918,8 @@ const stale = (tok) => tok !== S.tok;
 function groupCard(g) {
   const ages = g.ageMin || g.ageMax ? `Ages ${g.ageMin || '13'}–${g.ageMax || '99'}` : 'All ages';
   const card = h('article', { class: 'gcard', 'data-key': 'g' + g.id, 'data-id': g.id },
-    h('div', { class: 'title-row' }, h('h3', {}, h('a', { href: '#/group/' + enc(g.id) }, T(g.name)))),
-    h('div', { class: 'chips' }, h('span', { class: 'chip accent', text: T(g.game) }), h('span', { class: 'chip', text: g.mode === 'competitive' ? 'Competitive' : 'Casual' }),
+    h('div', { class: 'title-row', style: 'display:flex;align-items:center;gap:10px;' }, groupTile(g), h('h3', {}, h('a', { href: '#/group/' + enc(g.id) }, T(g.name)))),
+    h('div', { class: 'chips' }, h('span', { class: 'chip accent', style: 'display:inline-flex;align-items:center;gap:4px;' }, gameThumb(g.game), h('span', { text: T(g.game) })), h('span', { class: 'chip', text: g.mode === 'competitive' ? 'Competitive' : 'Casual' }),
       g.region ? h('span', { class: 'chip', text: T(g.region) }) : null, h('span', { class: 'chip', text: ages })),
     g.description ? h('p', { text: T(g.description) }) : null,
     h('div', { class: 'foot' }, h('span', {}, icon('users', 14), ' ', `${g.memberCount ?? 0} member${g.memberCount === 1 ? '' : 's'}`),
@@ -992,8 +1038,8 @@ async function groupView(id, tok) {
     actions.append(...G.joinControls(g, route));
   }
   const head = h('div', { class: 'ghead' },
-    h('div', { class: 'top' }, h('a', { class: 'icon-btn mobile-only', href: '#/feed', 'aria-label': 'Back to feed' }, icon('back')), h('h1', { text: T(g.name) }), actions),
-    h('div', { class: 'chips stagger-pop' }, h('span', { class: 'chip accent', text: T(g.game) }), h('span', { class: 'chip', text: g.mode === 'competitive' ? 'Competitive' : 'Casual' }),
+    h('div', { class: 'top', style: 'display:flex;align-items:center;gap:12px;' }, h('a', { class: 'icon-btn mobile-only', href: '#/feed', 'aria-label': 'Back to feed' }, icon('back')), groupTile(g, 'big'), h('h1', { text: T(g.name), style: 'flex:1;' }), actions),
+    h('div', { class: 'chips stagger-pop' }, h('span', { class: 'chip accent', style: 'display:inline-flex;align-items:center;gap:4px;' }, gameThumb(g.game), h('span', { text: T(g.game) })), h('span', { class: 'chip', text: g.mode === 'competitive' ? 'Competitive' : 'Casual' }),
       g.region ? h('span', { class: 'chip', text: T(g.region) }) : null, h('span', { class: 'chip', text: ages }), h('span', { class: 'chip', text: `${g.memberCount ?? members.length} members` }),
       g.privacy === 'private' ? h('span', { class: 'chip', text: 'Private' }) : g.privacy === 'request' ? h('span', { class: 'chip', text: 'Approval needed' }) : null,
       ...(G ? G.extraChips(g) : [])),
@@ -1076,12 +1122,14 @@ async function openProfile(id, opts) {
     more = h('button', { class: 'icon-btn profile-more', type: 'button', 'aria-haspopup': 'menu', 'aria-expanded': 'false', 'aria-label': 'More actions for ' + nm(p), text: '⋯' });
     more.addEventListener('click', () => TWG.profileMenu(more, p, opts, () => close()));
   }
+  const bannerHeader = p.banner ? h('div', { class: 'profile-banner', style: 'background-image:url(\'' + p.banner + '\');background-size:cover;background-position:center;' }) : null;
   const body = h('div', { class: 'profile' },
-    h('div', { class: 'profile-top' + (more ? ' has-more' : '') }, avatar(p, 'xl', true),
+    bannerHeader,
+    h('div', { class: 'profile-top' + (more ? ' has-more' : '') + (p.banner ? ' with-banner' : '') }, avatar(p, 'xl', true),
       h('div', { class: 'profile-names' }, h('h2', { text: nm(p) }), h('p', { class: 'muted', text: '@' + T(p.username) }),
         h('p', { class: 'status-line' + (p.playing ? ' playing' : ''), text: p.playing ? playingStatusText(p) : STATUS[sk] })), more),
     h('div', { class: 'prows' }, row('Region', T(p.region)), row('Age', p.ageRange), row('Member since', isNaN(joined) ? '' : joined.toLocaleDateString(undefined, { month: 'long', year: 'numeric' }))),
-    games.length ? h('div', { class: 'section' }, h('div', { class: 'section-title', text: 'Favorite games' }), h('div', { class: 'chips favgames' }, games.map(g => h('span', { class: 'chip', text: T(g) })))) : null,
+    games.length ? h('div', { class: 'section' }, h('div', { class: 'section-title', text: 'Favorite games' }), h('div', { class: 'chips favgames' }, games.map(g => h('span', { class: 'chip', style: 'display:inline-flex;align-items:center;gap:4px;' }, gameThumb(g), h('span', { class: 'chip-txt', text: T(g) }))))) : null,
     extra, actions);
   if (window.TWProfile) TWProfile.profileDetails(extra, p.id);   // bio, play style, ranks/roles, availability (profile.js)
   close = openSheet('Profile', body);
@@ -1381,7 +1429,7 @@ async function friendsView(_, tok) {
       ...out.map(r => personRow(r.to || r.from || { username: r.username || 'Pending' }, { big: true, action: h('span', { class: 'chip', text: 'Pending' }) }))])] : []));
     friendBox.replaceChildren(h('div', { class: 'section-title', text: `Friends — ${S.friends.length}` }), S.friends.length ? stackOf(S.friends.map(f => personRow(f, { big: true, href: '#/dm/' + enc(f.id) }))) : emptyState('No friends yet', 'Send a request above or find people in Search.'));
     groupBox.replaceChildren(h('div', { class: 'section-title' }, 'My groups', h('button', { class: 'btn small ghost', type: 'button', onclick: openCreate }, 'New')),
-      S.mine.length ? stackOf(S.mine.map(g => { const t = h('span', { class: 'gtile', 'aria-hidden': 'true' }, (T(g.name)[0] || '?').toUpperCase()); t.style.background = safeColor(g.color); t.style.color = ink(g.color);
+      S.mine.length ? stackOf(S.mine.map(g => { const t = groupTile(g);
         return h('a', { class: 'frow big', href: '#/group/' + enc(g.id) }, t, h('div', { class: 'meta' }, h('b', { text: T(g.name) }), h('span', { text: T(g.game) }))); })) : emptyState('No groups yet', 'Join one from the feed.'));
   }
   const peopleSlot = h('div', { class: 'rec-slot' });   // "People you may like" (profile.js)
@@ -1512,7 +1560,7 @@ document.addEventListener('visibilitychange', () => { if (!document.hidden) poll
 window.TW = {
   $, h, icon, api, qs, enc, toast, T, nm, avatar, safeColor, ink, STATUS, statusKey,
   openSheet, confirmSheet, btn, busy, field, tabs, selectEl, suggestInput, gamePicker, switchEl, emptyState, stagger, when,
-  personRow, groupCard, makeChat, openProfile, go, show, route, stale, playingStatusText,
+  personRow, groupCard, makeChat, openProfile, go, show, route, stale, playingStatusText, gameThumb, groupTile,
   loadSocial, refreshMine, renderFriends, renderBadge, renderUserPanel, applyAutoGame,
   t: tr, loggedOut, prepAvatar, sendAvatar, autoOn,
   get S() { return S; }, get me() { return S.me; }, set me(u) { S.me = u; }

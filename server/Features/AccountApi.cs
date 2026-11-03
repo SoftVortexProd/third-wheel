@@ -12,7 +12,8 @@ public static class AccountApi
     static readonly HttpClient ProxyHttp = new(new HttpClientHandler { AllowAutoRedirect = false }) { Timeout = TimeSpan.FromSeconds(10) };
     static readonly HttpClient Http = new(new HttpClientHandler { AutomaticDecompression = DecompressionMethods.All }) { Timeout = TimeSpan.FromSeconds(10) };
     /// <summary>Tenor API key, set on the server as the TW_TENOR_KEY environment variable (never committed to the repo). Without it GIF search returns notConfigured.</summary>
-    static string TenorKey => Environment.GetEnvironmentVariable("TW_TENOR_KEY") ?? "";
+    static string KlipyKey => Environment.GetEnvironmentVariable("TW_KLIPY_KEY") ?? Environment.GetEnvironmentVariable("TW_TENOR_KEY") ?? "";
+    static string TenorKey => KlipyKey;
 
     static void SetPassword(long uid, string pw)
     {
@@ -24,11 +25,13 @@ public static class AccountApi
     {
         Db.Exec(@"CREATE TABLE IF NOT EXISTS user_blocks(userId INTEGER, blockedId INTEGER, at TEXT, PRIMARY KEY(userId, blockedId));
 CREATE TABLE IF NOT EXISTS user_reports(id INTEGER PRIMARY KEY, reporterId INTEGER, reportedUserId INTEGER, messageId INTEGER, groupId INTEGER, reason TEXT, details TEXT, status TEXT DEFAULT 'pending', at TEXT);
-CREATE TABLE IF NOT EXISTS user_prefs(userId INTEGER PRIMARY KEY, accentColor TEXT DEFAULT '#7c8cff', fontScale REAL DEFAULT 1.0, language TEXT DEFAULT 'en', nsfwFilter INTEGER DEFAULT 1, profanityFilter INTEGER DEFAULT 1, favGifs TEXT DEFAULT '[]', gamerTags TEXT DEFAULT '{}');");
+CREATE TABLE IF NOT EXISTS user_prefs(userId INTEGER PRIMARY KEY, accentColor TEXT DEFAULT '#7c8cff', fontScale REAL DEFAULT 1.0, language TEXT DEFAULT 'en', nsfwFilter INTEGER DEFAULT 1, profanityFilter INTEGER DEFAULT 1, disablePfpAnimation INTEGER DEFAULT 0, favGifs TEXT DEFAULT '[]', gamerTags TEXT DEFAULT '{}');");
         // A report about a chat message records which chat it came from ('g' group / 'd' DM) and a snapshot of the text, so admins still see it after a delete.
         var rcols = Db.Rows("PRAGMA table_info(user_reports)").Select(r => (string)r["name"]!).ToHashSet(StringComparer.OrdinalIgnoreCase);
         if (!rcols.Contains("messageKind")) Db.Exec("ALTER TABLE user_reports ADD COLUMN messageKind TEXT");
         if (!rcols.Contains("snippet")) Db.Exec("ALTER TABLE user_reports ADD COLUMN snippet TEXT");
+        var pcols = Db.Rows("PRAGMA table_info(user_prefs)").Select(r => (string)r["name"]!).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        if (!pcols.Contains("disablePfpAnimation")) Db.Exec("ALTER TABLE user_prefs ADD COLUMN disablePfpAnimation INTEGER DEFAULT 0");
     }
 
     public static void Map(RouteGroupBuilder api)
@@ -66,13 +69,14 @@ CREATE TABLE IF NOT EXISTS user_prefs(userId INTEGER PRIMARY KEY, accentColor TE
         api.MapGet("me/preferences", (HttpContext c) => WithUser(c, uid =>
         {
             var row = Db.Row("SELECT * FROM user_prefs WHERE userId=@u", ("@u", uid));
-            if (row == null) return Results.Json(new { accentColor = "#7c8cff", fontScale = 1.0, language = "en", nsfwFilter = true, profanityFilter = true, favGifs = Array.Empty<string>(), gamerTags = new Dictionary<string, string>() });
+            if (row == null) return Results.Json(new { accentColor = "#7c8cff", fontScale = 1.0, language = "en", nsfwFilter = true, profanityFilter = true, disablePfpAnimation = false, favGifs = Array.Empty<string>(), gamerTags = new Dictionary<string, string>() });
             return Results.Json(new {
                 accentColor = row["accentColor"] as string ?? "#7c8cff",
                 fontScale = Convert.ToDouble(row["fontScale"] ?? 1.0),
                 language = row["language"] as string ?? "en",
                 nsfwFilter = Convert.ToInt32(row["nsfwFilter"] ?? 1) == 1,
                 profanityFilter = Convert.ToInt32(row["profanityFilter"] ?? 1) == 1,
+                disablePfpAnimation = Convert.ToInt32(row["disablePfpAnimation"] ?? 0) == 1,
                 favGifs = JsonSerializer.Deserialize<string[]>(row["favGifs"] as string ?? "[]") ?? Array.Empty<string>(),
                 gamerTags = JsonSerializer.Deserialize<Dictionary<string, string>>(row["gamerTags"] as string ?? "{}") ?? new Dictionary<string, string>()
             });
@@ -86,14 +90,15 @@ CREATE TABLE IF NOT EXISTS user_prefs(userId INTEGER PRIMARY KEY, accentColor TE
             var lang = Clean(b.Language ?? (existing?["language"] as string ?? "en"), 10);
             var nsfw = b.NsfwFilter ?? (existing == null || Convert.ToInt32(existing["nsfwFilter"]) == 1);
             var prof = b.ProfanityFilter ?? (existing == null || Convert.ToInt32(existing["profanityFilter"]) == 1);
+            var noPfpAnim = b.DisablePfpAnimation ?? (existing != null && Convert.ToInt32(existing["disablePfpAnimation"] ?? 0) == 1);
             if (b.FavGifs != null && Limited($"prefs:{uid}", 60, TimeSpan.FromMinutes(1), true)) return Err("Slow down a little.", 429);
             var favGifs = b.FavGifs != null ? JsonSerializer.Serialize(GifRules.SanitizeFavorites(b.FavGifs)) : (existing?["favGifs"] as string ?? "[]");
             var gamerTags = b.GamerTags != null ? JsonSerializer.Serialize(b.GamerTags) : (existing?["gamerTags"] as string ?? "{}");
-            Db.Exec(@"INSERT INTO user_prefs(userId, accentColor, fontScale, language, nsfwFilter, profanityFilter, favGifs, gamerTags)
-                      VALUES(@u, @ac, @fs, @l, @nf, @pf, @fg, @gt)
+            Db.Exec(@"INSERT INTO user_prefs(userId, accentColor, fontScale, language, nsfwFilter, profanityFilter, disablePfpAnimation, favGifs, gamerTags)
+                      VALUES(@u, @ac, @fs, @l, @nf, @pf, @pa, @fg, @gt)
                       ON CONFLICT(userId) DO UPDATE SET
-                      accentColor=@ac, fontScale=@fs, language=@l, nsfwFilter=@nf, profanityFilter=@pf, favGifs=@fg, gamerTags=@gt",
-                      ("@u", uid), ("@ac", accent), ("@fs", fontScale), ("@l", lang), ("@nf", nsfw ? 1 : 0), ("@pf", prof ? 1 : 0), ("@fg", favGifs), ("@gt", gamerTags));
+                      accentColor=@ac, fontScale=@fs, language=@l, nsfwFilter=@nf, profanityFilter=@pf, disablePfpAnimation=@pa, favGifs=@fg, gamerTags=@gt",
+                      ("@u", uid), ("@ac", accent), ("@fs", fontScale), ("@l", lang), ("@nf", nsfw ? 1 : 0), ("@pf", prof ? 1 : 0), ("@pa", noPfpAnim ? 1 : 0), ("@fg", favGifs), ("@gt", gamerTags));
             return Results.Json(new { ok = true });
         }));
 
@@ -155,45 +160,23 @@ CREATE TABLE IF NOT EXISTS user_prefs(userId INTEGER PRIMARY KEY, accentColor TE
             return Results.Json(new { ok = true });
         }));
 
-        // ---- GIF search & media proxy (Tenor v2 + CSP 'self') ----
+        // ---- GIF search & media proxy (Klipy API + CSP 'self') ----
         api.MapGet("media/gifs/trending", async (HttpContext c) =>
         {
             try
             {
-                if (TenorKey.Length == 0) return Results.Json(new { results = Array.Empty<object>(), notConfigured = true });
-                var uri = $"https://tenor.googleapis.com/v2/featured?key={TenorKey}&client_key=tenor_web&limit=24&media_filter=tinygif,gif";
+                if (KlipyKey.Length == 0) return Results.Json(new { results = Array.Empty<object>(), notConfigured = true });
+                var uri = $"https://api.klipy.com/api/v1/{KlipyKey}/gifs/trending?page=1&per_page=24";
                 var resp = await Http.GetAsync(uri);
-                if (!resp.IsSuccessStatusCode) return Results.Json(new { results = Array.Empty<object>() });
-                using var doc = await JsonDocument.ParseAsync(await resp.Content.ReadAsStreamAsync());
-                var list = new List<object>();
-                if (doc.RootElement.TryGetProperty("results", out var items))
+                if (!resp.IsSuccessStatusCode)
                 {
-                    foreach (var item in items.EnumerateArray())
-                    {
-                        var id = item.GetProperty("id").GetString() ?? "";
-                        var title = item.TryGetProperty("content_description", out var cd) ? cd.GetString() ?? "" : "";
-                        var formats = item.GetProperty("media_formats");
-                        string? tinyUrl = null, fullUrl = null;
-                        int w = 200, h = 150;
-                        if (formats.TryGetProperty("tinygif", out var tg))
-                        {
-                            tinyUrl = tg.GetProperty("url").GetString();
-                            if (tg.TryGetProperty("dims", out var dm) && dm.GetArrayLength() == 2)
-                            { w = dm[0].GetInt32(); h = dm[1].GetInt32(); }
-                        }
-                        if (formats.TryGetProperty("gif", out var gf)) fullUrl = gf.GetProperty("url").GetString();
-                        if (!string.IsNullOrEmpty(fullUrl))
-                        {
-                            list.Add(new {
-                                id, title,
-                                preview = "/api/media/proxy?url=" + WebUtility.UrlEncode(tinyUrl ?? fullUrl),
-                                url = "/api/media/proxy?url=" + WebUtility.UrlEncode(fullUrl),
-                                width = w, height = h
-                            });
-                        }
-                    }
+                    // Fallback to Tenor if key was a Tenor key
+                    uri = $"https://tenor.googleapis.com/v2/featured?key={KlipyKey}&client_key=tenor_web&limit=24&media_filter=tinygif,gif";
+                    resp = await Http.GetAsync(uri);
+                    if (!resp.IsSuccessStatusCode) return Results.Json(new { results = Array.Empty<object>() });
                 }
-                return Results.Json(new { results = list });
+                using var doc = await JsonDocument.ParseAsync(await resp.Content.ReadAsStreamAsync());
+                return Results.Json(new { results = ParseGifItems(doc.RootElement) });
             }
             catch { return Results.Json(new { results = Array.Empty<object>() }); }
         });
@@ -204,51 +187,29 @@ CREATE TABLE IF NOT EXISTS user_prefs(userId INTEGER PRIMARY KEY, accentColor TE
             if (string.IsNullOrEmpty(term)) return Results.Json(new { results = Array.Empty<object>() });
             try
             {
-                if (TenorKey.Length == 0) return Results.Json(new { results = Array.Empty<object>(), notConfigured = true });
-                var uri = $"https://tenor.googleapis.com/v2/search?key={TenorKey}&client_key=tenor_web&q={Uri.EscapeDataString(term)}&limit=24&media_filter=tinygif,gif";
+                if (KlipyKey.Length == 0) return Results.Json(new { results = Array.Empty<object>(), notConfigured = true });
+                var uri = $"https://api.klipy.com/api/v1/{KlipyKey}/gifs/search?q={Uri.EscapeDataString(term)}&page=1&per_page=24";
                 var resp = await Http.GetAsync(uri);
-                if (!resp.IsSuccessStatusCode) return Results.Json(new { results = Array.Empty<object>() });
-                using var doc = await JsonDocument.ParseAsync(await resp.Content.ReadAsStreamAsync());
-                var list = new List<object>();
-                if (doc.RootElement.TryGetProperty("results", out var items))
+                if (!resp.IsSuccessStatusCode)
                 {
-                    foreach (var item in items.EnumerateArray())
-                    {
-                        var id = item.GetProperty("id").GetString() ?? "";
-                        var title = item.TryGetProperty("content_description", out var cd) ? cd.GetString() ?? "" : "";
-                        var formats = item.GetProperty("media_formats");
-                        string? tinyUrl = null, fullUrl = null;
-                        int w = 200, h = 150;
-                        if (formats.TryGetProperty("tinygif", out var tg))
-                        {
-                            tinyUrl = tg.GetProperty("url").GetString();
-                            if (tg.TryGetProperty("dims", out var dm) && dm.GetArrayLength() == 2)
-                            { w = dm[0].GetInt32(); h = dm[1].GetInt32(); }
-                        }
-                        if (formats.TryGetProperty("gif", out var gf)) fullUrl = gf.GetProperty("url").GetString();
-                        if (!string.IsNullOrEmpty(fullUrl))
-                        {
-                            list.Add(new {
-                                id, title,
-                                preview = "/api/media/proxy?url=" + WebUtility.UrlEncode(tinyUrl ?? fullUrl),
-                                url = "/api/media/proxy?url=" + WebUtility.UrlEncode(fullUrl),
-                                width = w, height = h
-                            });
-                        }
-                    }
+                    // Fallback to Tenor if key was a Tenor key
+                    uri = $"https://tenor.googleapis.com/v2/search?key={KlipyKey}&client_key=tenor_web&q={Uri.EscapeDataString(term)}&limit=24&media_filter=tinygif,gif";
+                    resp = await Http.GetAsync(uri);
+                    if (!resp.IsSuccessStatusCode) return Results.Json(new { results = Array.Empty<object>() });
                 }
-                return Results.Json(new { results = list });
+                using var doc = await JsonDocument.ParseAsync(await resp.Content.ReadAsStreamAsync());
+                return Results.Json(new { results = ParseGifItems(doc.RootElement) });
             }
             catch { return Results.Json(new { results = Array.Empty<object>() }); }
         });
 
-        // Signed-in users only, exact Tenor media hosts only, no redirects, and only image responses are passed on.
+        // Signed-in users only, allowed GIF media hosts only, no redirects, and only image responses are passed on.
         api.MapGet("media/proxy", async (HttpContext c, string? url) =>
         {
             if (CurrentUser(c) is null) return Err("Not signed in.", 401);
-            if (string.IsNullOrEmpty(url) || url.Length > 600 || !Uri.TryCreate(url, UriKind.Absolute, out var u)
+            if (string.IsNullOrEmpty(url) || url.Length > 800 || !Uri.TryCreate(url, UriKind.Absolute, out var u)
                 || u.Scheme != "https" || !string.IsNullOrEmpty(u.UserInfo) || !u.IsDefaultPort
-                || (u.Host != "media.tenor.com" && u.Host != "media1.tenor.com" && u.Host != "c.tenor.com"))
+                || (!u.Host.EndsWith("tenor.com") && u.Host != "klipy.com" && !u.Host.EndsWith(".klipy.com") && !u.Host.EndsWith("giphy.com")))
                 return Results.NotFound();
             try
             {
@@ -431,11 +392,60 @@ CREATE TABLE IF NOT EXISTS user_prefs(userId INTEGER PRIMARY KEY, accentColor TE
             return Results.Json(new { ok = true, name = Enc(name) });
         }));
     }
+
+    static List<object> ParseGifItems(JsonElement root)
+    {
+        var list = new List<object>();
+        JsonElement items;
+        if (root.TryGetProperty("data", out var dObj) && dObj.ValueKind == JsonValueKind.Object && dObj.TryGetProperty("data", out var dArr) && dArr.ValueKind == JsonValueKind.Array)
+            items = dArr;
+        else if (root.TryGetProperty("data", out var arr) && arr.ValueKind == JsonValueKind.Array)
+            items = arr;
+        else if (root.TryGetProperty("results", out var res) && res.ValueKind == JsonValueKind.Array)
+            items = res;
+        else
+            return list;
+
+        foreach (var item in items.EnumerateArray())
+        {
+            var id = item.TryGetProperty("id", out var idEl) ? idEl.ToString() : "";
+            var title = item.TryGetProperty("title", out var tEl) ? tEl.GetString() ?? "" : (item.TryGetProperty("content_description", out var cd) ? cd.GetString() ?? "" : "");
+            string? tinyUrl = null, fullUrl = null;
+            int w = 200, h = 150;
+            if (item.TryGetProperty("files", out var files))
+            {
+                if (files.TryGetProperty("gif", out var gf) && gf.TryGetProperty("url", out var gu))
+                {
+                    fullUrl = gu.GetString();
+                    if (gf.TryGetProperty("width", out var gw)) w = gw.GetInt32();
+                    if (gf.TryGetProperty("height", out var gh)) h = gh.GetInt32();
+                }
+                if (files.TryGetProperty("tinygif", out var tg) && tg.TryGetProperty("url", out var tgu)) tinyUrl = tgu.GetString();
+                else if (files.TryGetProperty("mediumgif", out var mg) && mg.TryGetProperty("url", out var mgu)) tinyUrl = mgu.GetString();
+                else if (files.TryGetProperty("preview", out var pv) && pv.TryGetProperty("url", out var pgu)) tinyUrl = pgu.GetString();
+            }
+            else if (item.TryGetProperty("media_formats", out var mf))
+            {
+                if (mf.TryGetProperty("gif", out var gf) && gf.TryGetProperty("url", out var gu)) fullUrl = gu.GetString();
+                if (mf.TryGetProperty("tinygif", out var tg) && tg.TryGetProperty("url", out var tgu)) tinyUrl = tgu.GetString();
+            }
+            if (!string.IsNullOrEmpty(fullUrl))
+            {
+                list.Add(new {
+                    id, title,
+                    preview = "/api/media/proxy?url=" + WebUtility.UrlEncode(tinyUrl ?? fullUrl),
+                    url = "/api/media/proxy?url=" + WebUtility.UrlEncode(fullUrl),
+                    width = w, height = h
+                });
+            }
+        }
+        return list;
+    }
 }
 
 public record PasswordIn(string? Current, string? Password);
 public record AdminPasswordIn(string? Password);
 public record GroupRenameIn(string? Name);
-public record PrefsIn(string? AccentColor, double? FontScale, string? Language, bool? NsfwFilter, bool? ProfanityFilter, string[]? FavGifs, Dictionary<string, string>? GamerTags);
+public record PrefsIn(string? AccentColor, double? FontScale, string? Language, bool? NsfwFilter, bool? ProfanityFilter, string[]? FavGifs, Dictionary<string, string>? GamerTags, bool? DisablePfpAnimation = null);
 public record ReportIn(long? ReportedUserId, long? MessageId, long? GroupId, string? Reason, string? Details, string? MessageKind = null);
 public record TranslateIn(string? Text, string? ToLang);

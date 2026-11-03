@@ -5,7 +5,7 @@
 #   .\deploy\sync.ps1 -DryRun      build the package and show what would run, without connecting
 # Settings come from deploy\sync.config.json (see sync.config.example.json); parameters override them.
 #   Add -TenorKey <key> (or set $env:TW_TENOR_KEY on your PC) to turn on the GIF picker; it is stored on the server and later syncs keep it.
-param([switch]$Watch, [switch]$SetupKey, [switch]$DryRun, [string]$Server, [string]$User, [int]$Port, [string]$Domain, [string]$TenorKey)
+param([switch]$Watch, [switch]$SetupKey, [switch]$DryRun, [string]$Server, [string]$User, [int]$Port, [string]$Domain, [string]$TenorKey, [string]$KlipyKey)
 $ErrorActionPreference = "Stop"
 $root = Split-Path $PSScriptRoot -Parent
 
@@ -53,7 +53,7 @@ function Deploy {
     Write-Host "[$stamp] Building package ..."
     & (Join-Path $PSScriptRoot "publish.ps1") | Out-Null
     $zip = Join-Path $root "dist\ThirdWheel-server.zip"
-    $installArgs = "-Port $($cfg.port)" + $(if ($cfg.domain) { " -Domain $($cfg.domain)" } else { "" }) + $(if ($TenorKey) { " -TenorKey $TenorKey" } else { "" })
+    $installArgs = "-Port $($cfg.port)" + $(if ($cfg.domain) { " -Domain $($cfg.domain)" } else { "" }) + $(if ($KlipyKey) { " -KlipyKey $KlipyKey -TenorKey $KlipyKey" } else { "" })
     $remote = @"
 `$ErrorActionPreference='Stop'; `$d='C:\ThirdWheel\incoming'
 Remove-Item "`$d\pkg" -Recurse -Force -ErrorAction SilentlyContinue

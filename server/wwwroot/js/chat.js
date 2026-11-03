@@ -40,13 +40,32 @@ async function refreshMe() {
 const rcktBadge = () => h('span', { class: 'rckt-badge', title: 'RCKT subscriber', text: 'RCKT' });
 const iconBtn = (name, label, onclick, cls = '') => h('button', { class: 'act-btn ' + cls, type: 'button', 'aria-label': label, title: label, onclick }, ico(name, 16));
 
-/* ---------- Tenor GIFs ---------- */
-/* A GIF message's text is exactly "[gif:<tenor url>]". It is only ever shown through /api/media/proxy (the page's CSP allows no other host),
-   and only when the URL is a Tenor media URL. The server enforces the same rules and that the sender has RCKT. */
-const TENOR = /^https:\/\/(media|media1|c)\.tenor\.com\/[A-Za-z0-9_\-./~%]{1,240}$/;
-const GIF_TOKEN = /^\[gif:(https:\/\/[^\]\s]{1,260})\]$/;
+/* ---------- Klipy / Giphy / Tenor GIFs ---------- */
+const GIF_URL = /^https:\/\/[A-Za-z0-9_\-.]+(klipy\.com|tenor\.com|giphy\.com)\/[A-Za-z0-9_\-./~%?=&#+]{1,500}$/i;
+const GIF_TOKEN = /^\[gif:(https:\/\/[^\]\s]{1,500})\]$/;
 const proxied = (raw) => '/api/media/proxy?url=' + encodeURIComponent(raw);
-const gifOf = (text) => { const m = GIF_TOKEN.exec(T(text || '')); return m && TENOR.test(m[1]) ? m[1] : null; };
+const gifOf = (text) => { const m = GIF_TOKEN.exec(T(text || '')); return m && GIF_URL.test(m[1]) ? m[1] : null; };
+
+/* ---------- Profanity filter ---------- */
+const PROFANITIES = [
+  'fuck', 'fucking', 'fucked', 'fucker', 'fucks', 'motherfucker',
+  'shit', 'shitty', 'bullshit', 'bitch', 'bitches', 'bitching',
+  'asshole', 'assholes', 'bastard', 'bastards', 'cunt', 'cunts',
+  'dick', 'dicks', 'dickhead', 'cock', 'cocks', 'pussy', 'pussies',
+  'whore', 'whores', 'slut', 'sluts', 'nigger', 'niggers', 'nigga', 'niggas',
+  'faggot', 'faggots', 'retard', 'retarded',
+  'fan', 'jÃ¤vlar', 'jÃ¤vla', 'jÃ¤vel', 'helvete', 'helvetes',
+  'fitta', 'fittor', 'fittig', 'kuk', 'kukar', 'skit', 'skitig',
+  'hora', 'horor', 'bÃ¶g', 'bÃ¶gar', 'mongo'
+];
+const PROFANITY_REGEX = new RegExp('\\b(' + PROFANITIES.join('|') + ')\\b', 'gi');
+function maskProfanity(str) {
+  if (!str || typeof str !== 'string') return str;
+  return str.replace(PROFANITY_REGEX, (m) => m[0] + '*'.repeat(Math.max(1, m.length - 1)));
+}
+function shouldMask() {
+  return typeof TWPrefs !== 'undefined' && TWPrefs.get().profanityFilter !== false;
+}
 const rawFromProxy = (p) => { try { return new URL(p, location.origin).searchParams.get('url'); } catch { return null; } };
 
 /* preferences are read once and cached (favourite GIFs + the language used for translation) */
@@ -64,8 +83,8 @@ function parseFavs(list) {
   for (const s of list || []) {
     try {
       const o = String(s).trim().startsWith('{') ? JSON.parse(s) : { u: String(s) };
-      if (!TENOR.test(o.u || '')) continue;
-      out.push({ i: String(o.i || ''), t: String(o.t || '').slice(0, 80), p: TENOR.test(o.p || '') ? o.p : o.u, u: o.u, w: +o.w || 200, h: +o.h || 150 });
+      if (!GIF_URL.test(o.u || '')) continue;
+      out.push({ i: String(o.i || ''), t: String(o.t || '').slice(0, 80), p: GIF_URL.test(o.p || '') ? o.p : o.u, u: o.u, w: +o.w || 200, h: +o.h || 150 });
     } catch { /* skip an unreadable entry */ }
   }
   return out;
@@ -98,8 +117,8 @@ async function toggleFav(it, heart, onChange) {
 /** The API returns /api/media/proxy paths; turn a result into the raw-url form we store and send. */
 function normGif(r) {
   const u = rawFromProxy(r.url), p = rawFromProxy(r.preview) || u;
-  if (!u || !TENOR.test(u)) return null;
-  return { i: String(r.id || ''), t: String(r.title || '').slice(0, 80), p: TENOR.test(p || '') ? p : u, u, w: (r.width | 0) || 200, h: (r.height | 0) || 150 };
+  if (!u || !GIF_URL.test(u)) return null;
+  return { i: String(r.id || ''), t: String(r.title || '').slice(0, 80), p: GIF_URL.test(p || '') ? p : u, u, w: (r.width | 0) || 200, h: (r.height | 0) || 150 };
 }
 
 let trendingCache = null, gifClose = null;
@@ -142,7 +161,7 @@ function openGifPicker({ anchor, onPick }) {
     if (r && r.notConfigured) return { notConfigured: true, items: [] };
     return { items: (r.results || []).map(normGif).filter(Boolean) };
   }
-  const NOT_SET = 'GIF search isn’t set up on this server yet. Ask whoever runs it to add a Tenor key. Your saved favorites still work.';
+  const NOT_SET = 'GIF search isn’t set up on this server yet. Ask whoever runs it to add a Klipy key. Your saved favorites still work.';
   async function load(quiet) {
     const my = ++seq;
     try {
@@ -271,7 +290,7 @@ function make(cfg) {
   const els = new Map(), data = new Map();
   let lastId = 0, since = '', initial = true, replying = null, pending = null, editingId = null, lastTyping = 0;
   const trState = new Map();   // message id -> { src, text, from, to, shown, unchanged }  (translations are kept while you stay in this chat)
-  const preview = (m) => gifOf(m.text) ? 'GIF' : (T(m.text) || 'Attachment');
+  const preview = (m) => gifOf(m.text) ? 'GIF' : ((shouldMask() ? maskProfanity(T(m.text)) : T(m.text)) || 'Attachment');
 
   /* ----- rendering ----- */
   const canDelete = (m) => m.userId === TW.me.id || TW.me.isAdmin || (typeof cfg.canModerate === 'function' && cfg.canModerate());
@@ -288,8 +307,12 @@ function make(cfg) {
     const body = h('div', { class: 'body' }, head);
     if (m.replyTo) {
       const r = m.replyTo;
-      body.append(h('button', { class: 'quote', type: 'button', 'aria-label': 'Jump to the message from ' + T(r.name), onclick: () => jumpTo(r.id) },
-        h('b', { text: T(r.name) }), h('span', { text: r.deleted ? 'Message deleted' : (gifOf(r.text) || /^\[gif:/.test(T(r.text)) ? 'GIF' : (T(r.text) || 'Attachment')) })));
+      body.append((() => {
+        let qt = r.deleted ? 'Message deleted' : (gifOf(r.text) || /^\[gif:/.test(T(r.text)) ? 'GIF' : (T(r.text) || 'Attachment'));
+        if (!r.deleted && shouldMask()) qt = maskProfanity(qt);
+        return h('button', { class: 'quote', type: 'button', 'aria-label': 'Jump to the message from ' + T(r.name), onclick: () => jumpTo(r.id) },
+          h('b', { text: T(r.name) }), h('span', { text: qt }));
+      })());
     }
     if (m.deleted) body.append(h('p', { class: 'gone', text: 'Message deleted' }));
     else {
@@ -299,7 +322,9 @@ function make(cfg) {
         body.append(h('button', { class: 'gif-card', type: 'button', 'aria-label': 'Open GIF', onclick: () => lightbox({ url: proxied(gifUrl), name: 'animated.gif' }) },
           h('img', { src: proxied(gifUrl), alt: 'GIF', loading: 'lazy', decoding: 'async' }), h('span', { class: 'gif-tag', 'aria-hidden': 'true', text: 'GIF' })));
       } else if (m.text) {
-        body.append(h('p', { class: 'txt' + (showTr ? ' translated' : ''), text: showTr ? tr.text : T(m.text) }));
+        let displayTxt = showTr ? tr.text : T(m.text);
+        if (shouldMask()) displayTxt = maskProfanity(displayTxt);
+        body.append(h('p', { class: 'txt' + (showTr ? ' translated' : ''), text: displayTxt }));
         if (showTr) body.append(h('div', { class: 'tr-note' }, h('span', { text: tr.from && tr.from !== tr.to ? `Translated from ${langName(tr.from)} to ${langName(tr.to)}` : `Translated to ${langName(tr.to)}` }),
           h('button', { class: 'linklike', type: 'button', onclick: () => translate(m, null) }, 'Show original')));
       }

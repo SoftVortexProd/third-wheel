@@ -7,7 +7,7 @@ const DEFAULT_ACCENT = '#7c8cff';     // what the server stores by default; it m
 const LANGS = ['en', 'sv'];
 const root = document.documentElement;
 
-const prefs = { accentColor: DEFAULT_ACCENT, fontScale: 1, language: 'en', nsfwFilter: true, profanityFilter: true, favGifs: [], gamerTags: {} };
+const prefs = { accentColor: DEFAULT_ACCENT, fontScale: 1, language: 'en', nsfwFilter: true, profanityFilter: true, disablePfpAnimation: false, favGifs: [], gamerTags: {} };
 try { Object.assign(prefs, JSON.parse(localStorage.getItem(KEY) || '{}')); } catch { /* storage unavailable */ }
 const persist = () => { try { localStorage.setItem(KEY, JSON.stringify(prefs)); } catch { /* storage unavailable */ } };
 
@@ -61,6 +61,18 @@ const SV = {
   /* settings: profile */
   'Choose a profile picture': 'Välj en profilbild', 'Upload picture': 'Ladda upp bild', 'Remove': 'Ta bort', 'Picture removed': 'Bilden togs bort',
   'Profile picture updated': 'Profilbilden uppdaterades', 'Profile picture': 'Profilbild',
+  'Disable animated profile pictures': 'Inaktivera animerade profilbilder',
+  'Freeze animated GIFs to save CPU and battery on lower-end devices.': 'Frys animerade GIF-bilder fÃ¶r att spara processor och batteri pÃ¥ enklare enheter.',
+  'Profile banner': 'Profilbanner',
+  'Shown behind your nameplate and profile header. PNG, JPG, WebP or GIF up to 5 MB.': 'Visas bakom din namnbricka och profilrubrik. PNG, JPG, WebP eller GIF upp till 5 MB.',
+  'Upload banner': 'Ladda upp banner',
+  'Banner removed': 'Bannern togs bort',
+  'Profile banner updated': 'Profilbannern uppdaterades',
+  'Choose a profile banner': 'VÃ¤lj en profilbanner',
+  'Group icon': 'Gruppikon',
+  'Upload group picture': 'Ladda upp gruppbild',
+  'Group icon updated': 'Gruppikonen uppdaterades',
+  'Group icon removed': 'Gruppikonen togs bort',
   'PNG, JPG, WebP or GIF up to 5 MB. GIFs stay animated.': 'PNG, JPG, WebP eller GIF upp till 5 MB. GIF-bilder förblir animerade.',
   'Your current password': 'Ditt nuvarande lösenord', 'Display name': 'Visningsnamn',
   'Shown to friends and in chats. Leave empty to use your username.': 'Visas för vänner och i chattar. Lämna tomt för att använda ditt användarnamn.',
@@ -134,7 +146,7 @@ async function load() {
     const d = await request('GET');
     const lang = LANGS.includes(d.language) ? d.language : 'en';
     Object.assign(prefs, { accentColor: String(d.accentColor || DEFAULT_ACCENT), fontScale: Number(d.fontScale) || 1, language: lang,
-      nsfwFilter: d.nsfwFilter !== false, profanityFilter: d.profanityFilter !== false, favGifs: d.favGifs || [], gamerTags: d.gamerTags || {} });
+      nsfwFilter: d.nsfwFilter !== false, profanityFilter: d.profanityFilter !== false, disablePfpAnimation: d.disablePfpAnimation === true, favGifs: d.favGifs || [], gamerTags: d.gamerTags || {} });
     persist(); applyAll();
   } catch { /* offline or logged out: keep the cached values */ }
   return get();

@@ -82,10 +82,13 @@ public static class Core
             favoriteGames = JsonSerializer.Deserialize<string[]>((string)u["games"]!) ?? Array.Empty<string>(),
             onboarded = Convert.ToInt32(u["onboarded"]) == 1, status = (string)u["status"]!,
             playing = u["playing"] as string,
-            playingWith = PlayingPartyCount((long)u["id"]!, u["playing"] as string)
+            playingWith = PlayingPartyCount((long)u["id"]!, u["playing"] as string),
+            banner = BannerUrl((long)u["id"]!, Col(u, "bannerVer"))
         };
     }
     public static string? AvatarUrl(long id, object? ver) => ver != null && Convert.ToInt64(ver) > 0 ? $"/api/avatars/{id}?v={Convert.ToInt64(ver)}" : null;
+    public static string? BannerUrl(long id, object? ver) => ver != null && Convert.ToInt64(ver) > 0 ? $"/api/banners/{id}?v={Convert.ToInt64(ver)}" : null;
+    public static string? GroupIconUrl(long id, object? ver) => ver != null && Convert.ToInt64(ver) > 0 ? $"/api/group-icons/{id}?v={Convert.ToInt64(ver)}" : null;
     public static string AgeRange(int a) => a <= 0 ? "" : a < 18 ? "13-17" : a < 25 ? "18-24" : a < 35 ? "25-34" : a < 45 ? "35-44" : "45+";
 
     public static int PlayingPartyCount(long userId, string? playing)
@@ -116,10 +119,12 @@ public static class Core
         avatarColor = (string)r["color"]!, rckt = IsRckt(Col(r, "rcktUntil")),
         status = (string)r["status"]!, playing = r["playing"] as string,
         playingWith = PlayingPartyCount((long)r["id"]!, r["playing"] as string),
+        banner = BannerUrl((long)r["id"]!, Col(r, "bannerVer")),
         region = (string)r["region"]!, isFriend
     };
 
     public const string GroupSel = @"SELECT g.id,g.name,g.game,g.mode,g.region,g.ageMin,g.ageMax,g.description,g.color,
+ COALESCE(g.iconVer,0) iconVer,
  COALESCE(g.joinCode,'') joinCode, COALESCE(g.maxMembers,0) maxMembers, COALESCE(g.slowmode,0) slowmode,
  (SELECT COUNT(*) FROM members m WHERE m.groupId=g.id) memberCount,
  (SELECT COUNT(*) FROM members m WHERE m.groupId=g.id AND m.userId=@me) isMember FROM grps g";
@@ -129,6 +134,7 @@ public static class Core
         region = (string)r["region"]!, ageMin = Convert.ToInt32(r["ageMin"]), ageMax = Convert.ToInt32(r["ageMax"]),
         description = (string)r["description"]!, memberCount = Convert.ToInt32(r["memberCount"]),
         isMember = Convert.ToInt32(r["isMember"]) > 0, color = (string)r["color"]!,
+        icon = GroupIconUrl((long)r["id"]!, r.TryGetValue("iconVer", out var iv) ? iv : null),
         joinCode = r.TryGetValue("joinCode", out var jc) ? (jc as string ?? "") : "",
         maxMembers = r.TryGetValue("maxMembers", out var mm) ? Convert.ToInt32(mm ?? 0) : 0,
         slowmode = r.TryGetValue("slowmode", out var sm) ? Convert.ToInt32(sm ?? 0) : 0

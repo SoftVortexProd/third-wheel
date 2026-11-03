@@ -2,7 +2,7 @@
 #   .\install-server.ps1                      -> plain HTTP on port 1732 (no encryption!)  [-Port N to change]
 #   .\install-server.ps1 -Domain play.example.com  -> server listens on localhost, Caddy provides HTTPS
 #   Add -TenorKey <key> once to enable the GIF picker (stored as a service setting; later updates keep it).
-param([string]$Domain = "", [int]$Port = 1732, [string]$TenorKey = "")
+param([string]$Domain = "", [int]$Port = 1732, [string]$TenorKey = "", [string]$KlipyKey = "")
 $ErrorActionPreference = "Stop"
 
 $src = Join-Path $PSScriptRoot "app"

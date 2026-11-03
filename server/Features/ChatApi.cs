@@ -260,13 +260,20 @@ CREATE TABLE IF NOT EXISTS files(id INTEGER PRIMARY KEY, ownerId INTEGER, name T
         return s.Length == 0 ? "file" : s;
     }
 
-    /// <summary>Decides the file kind from the first bytes, never from the client's Content-Type.</summary>
-    static (string kind, string mime) Sniff(byte[] d, int n)
+    /// <summary>Decides the file kind from the first bytes and filename extension.</summary>
+    static (string kind, string mime) Sniff(byte[] d, int n, string name = "")
     {
         if (n >= 8 && d[0] == 0x89 && d[1] == 0x50 && d[2] == 0x4E && d[3] == 0x47) return ("image", "image/png");
         if (n >= 3 && d[0] == 0xFF && d[1] == 0xD8 && d[2] == 0xFF) return ("image", "image/jpeg");
         if (n >= 6 && d[0] == 'G' && d[1] == 'I' && d[2] == 'F' && d[3] == '8' && (d[4] == '7' || d[4] == '9') && d[5] == 'a') return ("gif", "image/gif");
         if (n >= 12 && d[0] == 'R' && d[1] == 'I' && d[2] == 'F' && d[3] == 'F' && d[8] == 'W' && d[9] == 'E' && d[10] == 'B' && d[11] == 'P') return ("image", "image/webp");
+        if (n >= 8 && d[4] == 'f' && d[5] == 't' && d[6] == 'y' && d[7] == 'p') return ("video", "video/mp4");
+        if (n >= 4 && d[0] == 0x1A && d[1] == 0x45 && d[2] == 0xDF && d[3] == 0xA3) return ("video", "video/webm");
+        if (n >= 4 && d[0] == 'O' && d[1] == 'g' && d[2] == 'g' && d[3] == 'S') return ("video", "video/ogg");
+        if (name.EndsWith(".mp4", StringComparison.OrdinalIgnoreCase)) return ("video", "video/mp4");
+        if (name.EndsWith(".webm", StringComparison.OrdinalIgnoreCase)) return ("video", "video/webm");
+        if (name.EndsWith(".mov", StringComparison.OrdinalIgnoreCase)) return ("video", "video/quicktime");
+        if (name.EndsWith(".ogg", StringComparison.OrdinalIgnoreCase)) return ("video", "video/ogg");
         return ("file", "application/octet-stream");
     }
 
@@ -314,7 +321,7 @@ CREATE TABLE IF NOT EXISTS files(id INTEGER PRIMARY KEY, ownerId INTEGER, name T
             catch { try { File.Delete(path); } catch { } return Err("The upload was interrupted.", 400); }
             if (size == 0) { File.Delete(path); return Err("That file is empty."); }
 
-            var (fkind, mime) = Sniff(head, headLen);
+            var (fkind, mime) = Sniff(head, headLen, name);
             if (fkind == "gif" && !rckt) { File.Delete(path); return Err("GIFs need RCKT. Ask an admin for RCKT.", 403); }
             var fid = Db.Insert("INSERT INTO files(ownerId,name,mime,size,kind,path,convKind,convKey,createdAt) VALUES(@o,@n,@m,@s,@k,@p,@ck,@cy,@c)",
                 ("@o", uid.Value), ("@n", name), ("@m", mime), ("@s", size), ("@k", fkind), ("@p", path), ("@ck", cv.K), ("@cy", cv.Key), ("@c", Now()));
@@ -335,7 +342,7 @@ CREATE TABLE IF NOT EXISTS files(id INTEGER PRIMARY KEY, ownerId INTEGER, name T
             c.Response.Headers["Content-Security-Policy"] = "default-src 'none'; sandbox";
             c.Response.Headers["Cache-Control"] = "private, max-age=31536000, immutable";
             var kind = (string)f["kind"]!;
-            if (kind is "image" or "gif") return Results.File((string)f["path"]!, (string)f["mime"]!, enableRangeProcessing: true);
+            if (kind is "image" or "gif" or "video") return Results.File((string)f["path"]!, (string)f["mime"]!, enableRangeProcessing: true);
             return Results.File((string)f["path"]!, "application/octet-stream", fileDownloadName: (string)f["name"]!, enableRangeProcessing: true);   // attachment: never rendered by the browser
         }));
     }
@@ -400,15 +407,25 @@ CREATE TABLE IF NOT EXISTS files(id INTEGER PRIMARY KEY, ownerId INTEGER, name T
 public static class GifRules
 {
     public static readonly System.Text.RegularExpressions.Regex TenorUrl = new(@"^https://(media|media1|c)\.tenor\.com/[A-Za-z0-9_\-./~%]{1,240}$", System.Text.RegularExpressions.RegexOptions.Compiled);
-    static readonly System.Text.RegularExpressions.Regex Token = new(@"^\[gif:(https://[^\]\s]{1,260})\]$", System.Text.RegularExpressions.RegexOptions.Compiled);
-    public static bool IsTenor(string? u) => u != null && u.Length <= 300 && TenorUrl.IsMatch(u);
+    static readonly System.Text.RegularExpressions.Regex Token = new(@"^\[gif:(https://[^\]\s]{1,500})\]$", System.Text.RegularExpressions.RegexOptions.Compiled);
+    public static bool IsGifUrl(string? u)
+    {
+        if (string.IsNullOrWhiteSpace(u) || u.Length > 500) return false;
+        if (!Uri.TryCreate(u, UriKind.Absolute, out var uri)) return false;
+        if (uri.Scheme != "https" || !string.IsNullOrEmpty(uri.UserInfo) || !uri.IsDefaultPort) return false;
+        var host = uri.Host.ToLowerInvariant();
+        return host == "klipy.com" || host.EndsWith(".klipy.com")
+            || host == "tenor.com" || host.EndsWith(".tenor.com")
+            || host == "giphy.com" || host.EndsWith(".giphy.com");
+    }
+    public static bool IsTenor(string? u) => IsGifUrl(u);
 
     /// <summary>Null when the text may be sent; otherwise the HTTP code and a friendly message.</summary>
     public static (int code, string msg)? Check(string text, bool rckt, bool hasFile)
     {
         if (!text.Contains("[gif:", StringComparison.OrdinalIgnoreCase)) return null;
         var m = Token.Match(text);
-        if (!m.Success || !IsTenor(m.Groups[1].Value)) return (400, "That GIF link isn't valid.");
+        if (!m.Success || !IsGifUrl(m.Groups[1].Value)) return (400, "That GIF link isn't valid.");
         if (hasFile) return (400, "Send a GIF on its own, without a file.");
         return rckt ? null : (403, "GIFs need RCKT. Ask an admin for RCKT.");
     }

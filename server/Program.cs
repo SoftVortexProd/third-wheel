@@ -41,7 +41,7 @@ if (args.Length >= 2 && args[0] == "--create-admin")
         }
         Console.WriteLine(); pw = sb.ToString();
     }
-    pw = pw.TrimStart('﻿').TrimEnd('\r', '\n');   // piped input from PowerShell can start with a byte-order mark
+    pw = pw.TrimStart('\uFEFF').TrimEnd('\r', '\n');   // piped input from PowerShell can start with a byte-order mark
     if (pw.Length < 8 || pw.Length > 72) { Console.Error.WriteLine("Password must be 8-72 characters."); return 1; }
     var nid = Db.CreateUser(an, pw, "NA-East", 0, Array.Empty<string>(), "offline", null, true);
     Db.Exec("UPDATE users SET isAdmin=1 WHERE id=@i", ("@i", nid));
@@ -72,7 +72,7 @@ app.Use(async (ctx, next) =>
 {
     var h = ctx.Response.Headers;
     if (ctx.Request.IsHttps) h["Strict-Transport-Security"] = "max-age=31536000";
-    h["Content-Security-Policy"] = "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'";
+    h["Content-Security-Policy"] = "default-src 'self'; img-src 'self' data:; media-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'";
     h["X-Content-Type-Options"] = "nosniff";
     h["Referrer-Policy"] = "no-referrer";
     h["X-Frame-Options"] = "DENY";
@@ -91,7 +91,7 @@ app.Use(async (ctx, next) =>
         var path = ctx.Request.Path.Value ?? "";
         var page = Site.PageOf(path);
         bool exempt = path is "/api/site" or "/api/me" or "/api/meta" or "/api/auth/login" or "/api/auth/logout"
-            || path.StartsWith("/api/admin") || path.StartsWith("/api/avatars") || path.StartsWith("/api/games");
+            || path.StartsWith("/api/admin") || path.StartsWith("/api/avatars") || path.StartsWith("/api/banners") || path.StartsWith("/api/group-icons") || path.StartsWith("/api/games");
         if (!exempt && (Site.Maintenance || (page != null && Site.Closed.ContainsKey(page))))
         {
             var who = CurrentUser(ctx);
@@ -248,6 +248,84 @@ api.MapGet("avatars/{id:long}", (HttpContext c, long id) => WithUser(c, _ =>
     var r = Db.Row("SELECT mime,data FROM avatars WHERE userId=@u", ("@u", id));
     if (r == null) return Err("No picture.", 404);
     // Served as an inert image: no sniffing, no scripts, no framing, even if the bytes were hostile.
+    c.Response.Headers["Content-Security-Policy"] = "default-src 'none'; sandbox";
+    c.Response.Headers["Cache-Control"] = "private, max-age=31536000, immutable";
+    return Results.Bytes((byte[])r["data"]!, (string)r["mime"]!);
+}));
+
+// ---------- user profile banners ----------
+api.MapPost("me/banner", async Task<IResult> (HttpContext c) =>
+{
+    var uid = CurrentUser(c);
+    if (uid is null) return Err("Not signed in.", 401);
+    if (Limited($"bn:{uid}", 12, TimeSpan.FromHours(1), true)) return Err("Too many uploads. Try again later.", 429);
+    if (c.Request.ContentLength > MaxAvatar) return Err("Image must be 5 MB or smaller.", 413);
+    using var ms = new MemoryStream();
+    var buf = new byte[81920]; int n;
+    while ((n = await c.Request.Body.ReadAsync(buf)) > 0)
+    {
+        ms.Write(buf, 0, n);
+        if (ms.Length > MaxAvatar) return Err("Image must be 5 MB or smaller.", 413);
+    }
+    var data = ms.ToArray();
+    var mime = SniffImage(data);
+    if (mime == null) return Err("Use a PNG, JPG, GIF or WebP image.");
+    Db.Exec("INSERT OR REPLACE INTO banners(userId,mime,data) VALUES(@u,@m,@d)", ("@u", uid.Value), ("@m", mime), ("@d", data));
+    Db.Exec("UPDATE users SET bannerVer=@v WHERE id=@i", ("@v", DateTime.UtcNow.Ticks), ("@i", uid.Value));
+    return Results.Json(UserDto(uid.Value));
+});
+
+api.MapDelete("me/banner", (HttpContext c) => WithUser(c, uid =>
+{
+    Db.Exec("DELETE FROM banners WHERE userId=@u", ("@u", uid));
+    Db.Exec("UPDATE users SET bannerVer=0 WHERE id=@i", ("@i", uid));
+    return Results.Json(UserDto(uid));
+}));
+
+api.MapGet("banners/{id:long}", (HttpContext c, long id) => WithUser(c, _ =>
+{
+    var r = Db.Row("SELECT mime,data FROM banners WHERE userId=@u", ("@u", id));
+    if (r == null) return Err("No banner.", 404);
+    c.Response.Headers["Content-Security-Policy"] = "default-src 'none'; sandbox";
+    c.Response.Headers["Cache-Control"] = "private, max-age=31536000, immutable";
+    return Results.Bytes((byte[])r["data"]!, (string)r["mime"]!);
+}));
+
+// ---------- group icon pictures ----------
+api.MapPost("groups/{id:long}/icon", async Task<IResult> (HttpContext c, long id) =>
+{
+    var uid = CurrentUser(c);
+    if (uid is null) return Err("Not signed in.", 401);
+    if (!CanModerateGroup(id, uid.Value)) return Err("Only group moderators can change the group picture.", 403);
+    if (c.Request.ContentLength > MaxAvatar) return Err("Image must be 5 MB or smaller.", 413);
+    using var ms = new MemoryStream();
+    var buf = new byte[81920]; int n;
+    while ((n = await c.Request.Body.ReadAsync(buf)) > 0)
+    {
+        ms.Write(buf, 0, n);
+        if (ms.Length > MaxAvatar) return Err("Image must be 5 MB or smaller.", 413);
+    }
+    var data = ms.ToArray();
+    var mime = SniffImage(data);
+    if (mime == null) return Err("Use a PNG, JPG, GIF or WebP image.");
+    Db.Exec("INSERT OR REPLACE INTO group_icons(groupId,mime,data) VALUES(@g,@m,@d)", ("@g", id), ("@m", mime), ("@d", data));
+    var ver = DateTime.UtcNow.Ticks;
+    Db.Exec("UPDATE grps SET iconVer=@v WHERE id=@i", ("@v", ver), ("@i", id));
+    return Results.Json(new { ok = true, icon = GroupIconUrl(id, ver) });
+});
+
+api.MapDelete("groups/{id:long}/icon", (HttpContext c, long id) => WithUser(c, uid =>
+{
+    if (!CanModerateGroup(id, uid)) return Err("Only group moderators can change the group picture.", 403);
+    Db.Exec("DELETE FROM group_icons WHERE groupId=@g", ("@g", id));
+    Db.Exec("UPDATE grps SET iconVer=0 WHERE id=@i", ("@i", id));
+    return Results.Json(new { ok = true });
+}));
+
+api.MapGet("group-icons/{id:long}", (HttpContext c, long id) => WithUser(c, _ =>
+{
+    var r = Db.Row("SELECT mime,data FROM group_icons WHERE groupId=@g", ("@g", id));
+    if (r == null) return Err("No group icon.", 404);
     c.Response.Headers["Content-Security-Policy"] = "default-src 'none'; sandbox";
     c.Response.Headers["Cache-Control"] = "private, max-age=31536000, immutable";
     return Results.Bytes((byte[])r["data"]!, (string)r["mime"]!);
@@ -433,6 +511,7 @@ api.MapGet("users/{id:long}", (HttpContext c, long id) => WithUser(c, uid =>
         id, username = (string)u["username"]!, displayName = u["display"] as string, avatar = AvatarUrl(id, u["avatarVer"]),
         avatarColor = (string)u["color"]!, status = (string)u["status"]!, playing = u["playing"] as string,
         playingWith = PlayingPartyCount(id, u["playing"] as string),
+        banner = BannerUrl(id, u["bannerVer"]),
         region = (string)u["region"]!, ageRange = AgeRange(Convert.ToInt32(u["age"])), favoriteGames = games,
         isFriend = friend, isMe = id == uid, joined = (string)u["created"]!, rckt = IsRckt(u["rcktUntil"])
     });
@@ -677,17 +756,21 @@ CREATE TABLE IF NOT EXISTS site(key TEXT PRIMARY KEY, value TEXT);
 CREATE TABLE IF NOT EXISTS audit(id INTEGER PRIMARY KEY, adminId INTEGER, action TEXT, target TEXT, at TEXT);
 CREATE TABLE IF NOT EXISTS dms(id INTEGER PRIMARY KEY, a INTEGER, b INTEGER, fromId INTEGER, text TEXT, createdAt TEXT);
 CREATE INDEX IF NOT EXISTS ix_dms ON dms(a,b,id);
-CREATE TABLE IF NOT EXISTS avatars(userId INTEGER PRIMARY KEY, mime TEXT NOT NULL, data BLOB NOT NULL);");
+CREATE TABLE IF NOT EXISTS avatars(userId INTEGER PRIMARY KEY, mime TEXT NOT NULL, data BLOB NOT NULL);
+CREATE TABLE IF NOT EXISTS banners(userId INTEGER PRIMARY KEY, mime TEXT NOT NULL, data BLOB NOT NULL);
+CREATE TABLE IF NOT EXISTS group_icons(groupId INTEGER PRIMARY KEY, mime TEXT NOT NULL, data BLOB NOT NULL);");
         // Upgrade databases created before profiles existed.
         var cols = Rows("PRAGMA table_info(users)").Select(r => (string)r["name"]!).ToHashSet(StringComparer.OrdinalIgnoreCase);
         if (!cols.Contains("display")) Exec("ALTER TABLE users ADD COLUMN display TEXT");
         if (!cols.Contains("avatarVer")) Exec("ALTER TABLE users ADD COLUMN avatarVer INTEGER DEFAULT 0");
+        if (!cols.Contains("bannerVer")) Exec("ALTER TABLE users ADD COLUMN bannerVer INTEGER DEFAULT 0");
         if (!cols.Contains("isAdmin")) Exec("ALTER TABLE users ADD COLUMN isAdmin INTEGER DEFAULT 0");
         if (!cols.Contains("banned")) Exec("ALTER TABLE users ADD COLUMN banned INTEGER DEFAULT 0");
         if (!cols.Contains("banReason")) Exec("ALTER TABLE users ADD COLUMN banReason TEXT");
         // Shared by several features: a group is 'public' (listed, anyone can join) or 'private' (hidden from feed/search/recommendations; invite or approval only).
         var gcols = Rows("PRAGMA table_info(grps)").Select(r => (string)r["name"]!).ToHashSet(StringComparer.OrdinalIgnoreCase);
         if (!gcols.Contains("privacy")) Exec("ALTER TABLE grps ADD COLUMN privacy TEXT DEFAULT 'public'");   // 'public' | 'request' (listed, needs approval) | 'private' (unlisted, invite only)
+        if (!gcols.Contains("iconVer")) Exec("ALTER TABLE grps ADD COLUMN iconVer INTEGER DEFAULT 0");
         var mcols = Rows("PRAGMA table_info(members)").Select(r => (string)r["name"]!).ToHashSet(StringComparer.OrdinalIgnoreCase);
         if (!mcols.Contains("role"))
         {

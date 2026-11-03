@@ -1,4 +1,4 @@
-﻿using System.Net;
+using System.Net;
 using System.Text.Json;
 using static Core;
 
@@ -27,11 +27,31 @@ public static class GamesApi
         );
         CREATE INDEX IF NOT EXISTS ix_games_name ON games(name COLLATE NOCASE);");
 
-        // Seed popular fallback games from Db.Games if table is new
+        var knownSteam = new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["Counter-Strike 2"] = 730,
+            ["Apex Legends"] = 1172470,
+            ["Dota 2"] = 570,
+            ["Overwatch 2"] = 2357570,
+            ["Rainbow Six Siege"] = 359550,
+            ["Elden Ring"] = 1245620,
+            ["Stardew Valley"] = 413150,
+            ["Helldivers 2"] = 553850,
+            ["Destiny 2"] = 1085660,
+            ["Marvel Rivals"] = 2767030,
+            ["Palworld"] = 1623730,
+            ["Terraria"] = 105600,
+            ["Among Us"] = 945360,
+            ["Rocket League"] = 252950
+        };
+
         var now = DateTime.UtcNow.ToString("o");
         foreach (var g in Db.Games)
         {
-            Db.Exec("INSERT OR IGNORE INTO games(name, created) VALUES(@n, @t)", ("@n", g), ("@t", now));
+            var aid = knownSteam.TryGetValue(g, out var sid) ? (object)sid : DBNull.Value;
+            Db.Exec(@"INSERT INTO games(name, steamAppId, created) VALUES(@n, @aid, @t)
+                      ON CONFLICT(name) DO UPDATE SET steamAppId=COALESCE(games.steamAppId, @aid)",
+                      ("@n", g), ("@aid", aid), ("@t", now));
         }
     }
 
@@ -198,8 +218,7 @@ public static class GamesApi
         var id = (long)r["id"]!;
         var name = (string)r["name"]!;
         var steamId = r["steamAppId"] is long s ? (long?)s : null;
-        var hasCover = Convert.ToInt32(r["hasCover"] ?? 0) == 1;
-        var coverUrl = (hasCover || steamId.HasValue) ? $"/api/games/cover/{id}" : null;
+        var coverUrl = $"/api/games/cover/{id}";
         return new GameResult(id, name, steamId, coverUrl);
     }
 

@@ -1,4 +1,4 @@
-﻿/* Groups feature module: roles, moderation (kick / ban / mute), rules, join requests, bans and group settings.
+/* Groups feature module: roles, moderation (kick / ban / mute), rules, join requests, bans and group settings.
    Loaded after app.js; app.js's groupView calls window.TWG. Everything is built with createElement/textContent (no innerHTML). */
 (() => {
 'use strict';
@@ -256,8 +256,67 @@ function openRules(g, reload, editNow) {
   close = openSheet('Rules · ' + T(g.name), h('div', { class: 'stack' }, ...parts));
 }
 
+function groupTile(g, sz = '') {
+  const cls = 'gtile' + (sz ? ' ' + sz : '');
+  if (g.icon) {
+    return h('span', { class: cls, 'aria-hidden': 'true' },
+      h('img', { src: g.icon, alt: '', style: 'width:100%;height:100%;object-fit:cover;border-radius:inherit;display:block;' }));
+  }
+  const tile = h('span', { class: cls, 'aria-hidden': 'true', text: (T(g.name)[0] || '?').toUpperCase() });
+  tile.style.background = TW.safeColor(g.color);
+  tile.style.color = TW.ink(g.color);
+  return tile;
+}
+
 function openSettings(g, reload) {
   let close = () => {};
+
+  /* group icon */
+  const iconPrev = h('div', { class: 'group-icon-prev', style: 'width:64px;height:64px;border-radius:16px;overflow:hidden;flex:none;display:grid;place-items:center;background:var(--color-raised);border:1px solid var(--color-border);' });
+  const drawIconPrev = () => {
+    if (g.icon) {
+      iconPrev.replaceChildren(h('img', { src: g.icon, alt: '', style: 'width:100%;height:100%;object-fit:cover;display:block;' }));
+    } else {
+      iconPrev.replaceChildren(h('span', { class: 'gtile big', style: 'background:' + TW.safeColor(g.color) + ';color:' + TW.ink(g.color) + ';width:100%;height:100%;display:grid;place-items:center;font-size:24px;font-weight:700;', text: (T(g.name)[0] || '?').toUpperCase() }));
+    }
+  };
+  drawIconPrev();
+  const iconFile = h('input', { type: 'file', accept: 'image/png,image/jpeg,image/gif,image/webp', class: 'sr-only', tabindex: '-1', 'aria-label': 'Choose a group picture' });
+  const upIconBtn = btn('Upload icon', { cls: 'small', icon: 'plus', onclick: () => iconFile.click() });
+  const rmIconBtn = btn('Remove', { cls: 'small ghost', onclick: () => busy(rmIconBtn, async () => {
+    await api('DELETE', '/api/groups/' + enc(g.id) + '/icon');
+    g.icon = null;
+    drawIconPrev();
+    rmIconBtn.hidden = true;
+    await TW.refreshMine();
+    toast('Group icon removed');
+    reload();
+  }) });
+  rmIconBtn.hidden = !g.icon;
+  iconFile.addEventListener('change', () => {
+    const f = iconFile.files && iconFile.files[0]; iconFile.value = ''; if (!f) return;
+    if (f.size > 5 * 1024 * 1024) { toast('Image must be 5 MB or smaller.', 'error'); return; }
+    busy(upIconBtn, async () => {
+      const resp = await fetch('/api/groups/' + enc(g.id) + '/icon', { method: 'POST', body: f, headers: { 'Content-Type': f.type } });
+      if (!resp.ok) { const j = await resp.json().catch(() => ({})); throw new Error(j.error || 'Upload failed'); }
+      const res = await resp.json();
+      g.icon = res.icon;
+      drawIconPrev();
+      rmIconBtn.hidden = false;
+      await TW.refreshMine();
+      toast('Group icon updated');
+      reload();
+    });
+  });
+  const iconSection = h('div', { class: 'field', style: 'display:flex;align-items:center;gap:16px;' },
+    iconPrev,
+    h('div', { class: 'stack', style: 'gap:6px;' },
+      h('span', { class: 'label', style: 'margin:0;', text: 'Group picture' }),
+      h('div', { class: 'row', style: 'gap:8px;flex:none;flex-wrap:wrap;' }, upIconBtn, rmIconBtn),
+      iconFile
+    )
+  );
+
   const name = h('input', { class: 'input', type: 'text', maxlength: 40 }); name.value = T(g.name);
   const desc = h('textarea', { class: 'textarea', maxlength: 300 }); desc.value = T(g.description || '');
   const privacy = selectEl([['public', 'Public: anyone can join'], ['request', 'Request to join: moderators approve people'], ['private', 'Private: invite only, not listed anywhere']], g.privacy || 'public');
@@ -272,7 +331,7 @@ function openSettings(g, reload) {
       await api('PUT', base(g) + '/settings', { name: name.value.trim(), description: desc.value.trim(), privacy: privacy.value, rules: rules.value.trim(), ...lim.values() });
       await TW.refreshMine(); toast('Group updated'); close(); reload();
     });
-  } }, fn, fd, fp, lim.el, fr, save);
+  } }, iconSection, fn, fd, fp, lim.el, fr, save);
   close = openSheet('Group settings', form);
 }
 
@@ -351,7 +410,7 @@ async function joinView(code, tok) {
       } catch (e) { err.textContent = joinProblem(e).join(' '); }
     });
   });
-  const chips = [h('span', { class: 'chip accent', text: T(g.game) }), h('span', { class: 'chip', text: g.mode === 'competitive' ? 'Competitive' : 'Casual' }),
+  const chips = [h('span', { class: 'chip accent', style: 'display:inline-flex;align-items:center;gap:4px;' }, (TW.gameThumb ? TW.gameThumb(g.game) : null), h('span', { text: T(g.game) })), h('span', { class: 'chip', text: g.mode === 'competitive' ? 'Competitive' : 'Casual' }),
     g.region ? h('span', { class: 'chip', text: T(g.region) }) : null, h('span', { class: 'chip', text: AUDIENCE(g) }),
     h('span', { class: 'chip', text: `${g.memberCount || 0} member${g.memberCount === 1 ? '' : 's'}` }),
     g.privacy === 'private' ? h('span', { class: 'chip', text: 'Private' }) : g.privacy === 'request' ? h('span', { class: 'chip', text: 'Usually needs approval' }) : null,
@@ -361,7 +420,7 @@ async function joinView(code, tok) {
     : g.privacy === 'request' ? 'This group normally approves new members, but this invite link lets you in right away.'
     : 'You’re invited. Join to see the chat and the other members.';
   const card = h('div', { class: 'card join-card' },
-    h('div', { class: 'join-head' }, h('span', { class: 'gtile big', 'aria-hidden': 'true', text: (T(g.name)[0] || '?').toUpperCase(), style: `background:${TW.safeColor(g.color)};color:${TW.ink(g.color)}` }),
+    h('div', { class: 'join-head' }, groupTile(g, 'big'),
       h('div', { class: 'join-title' }, h('h1', { text: T(g.name) }), h('p', { class: 'muted small', text: 'Invite code ' + upper }))),
     h('div', { class: 'chips' }, chips),
     g.description ? h('p', { class: 'join-desc', text: T(g.description) }) : null,
@@ -371,5 +430,5 @@ async function joinView(code, tok) {
   TW.show(page(card));
 }
 
-window.TWG = { members, headerButtons, joinControls, openRules, openSettings, openRequests, openBans, showMenu, profileMenu, openReport, inviteRow, extraChips, limitFields, joinView, copyInvite, isFull };
+window.TWG = { groupTile, members, headerButtons, joinControls, openRules, openSettings, openRequests, openBans, showMenu, profileMenu, openReport, inviteRow, extraChips, limitFields, joinView, copyInvite, isFull };
 })();

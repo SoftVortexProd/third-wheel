@@ -86,6 +86,42 @@ function profileTab(panel, ctx) {
       h('p', { class: 'muted small', text: t('PNG, JPG, WebP or GIF up to 5 MB. GIFs stay animated.') }),
       h('div', { class: 'row', style: 'gap:8px;flex:none;flex-wrap:wrap' }, upBtn, rmBtn), file));
 
+  /* banner */
+  const bannerPrev = h('div', { class: 'banner-preview' });
+  const drawBannerPrev = () => {
+    bannerPrev.style.backgroundImage = TW.me.banner ? url('') : 'none';
+    bannerPrev.style.backgroundColor = TW.me.banner ? 'transparent' : 'var(--color-raised)';
+  };
+  drawBannerPrev();
+  const bannerFile = h('input', { type: 'file', accept: 'image/png,image/jpeg,image/gif,image/webp', class: 'sr-only', tabindex: '-1', 'aria-label': t('Choose a profile banner') });
+  const upBannerBtn = btn(t('Upload banner'), { icon: 'plus', onclick: () => bannerFile.click() });
+  const rmBannerBtn = btn(t('Remove'), { cls: 'ghost', onclick: () => busy(rmBannerBtn, async () => {
+    TW.me = await api('DELETE', '/api/me/banner');
+    applyBanner();
+    toast(t('Banner removed'));
+  }) });
+  const applyBanner = () => {
+    drawBannerPrev();
+    TW.renderUserPanel();
+    rmBannerBtn.hidden = !TW.me.banner;
+  };
+  bannerFile.addEventListener('change', () => {
+    const f = bannerFile.files && bannerFile.files[0]; bannerFile.value = ''; if (!f) return;
+    if (f.size > 5 * 1024 * 1024) { toast(t('Image must be 5 MB or smaller.'), 'error'); return; }
+    busy(upBannerBtn, async () => {
+      const resp = await fetch('/api/me/banner', { method: 'POST', body: f, headers: { 'Content-Type': f.type } });
+      if (!resp.ok) { const j = await resp.json().catch(() => ({})); throw new Error(j.error || 'Upload failed'); }
+      TW.me = await api('GET', '/api/me');
+      applyBanner();
+      toast(t('Profile banner updated'));
+    });
+  });
+  rmBannerBtn.hidden = !me.banner;
+  const bannerCard = h('div', { class: 'card banner-card' }, bannerPrev,
+    h('div', { class: 'pic-meta' }, h('h3', { text: t('Profile banner') }),
+      h('p', { class: 'muted small', text: t('Shown behind your nameplate and profile header. PNG, JPG, WebP or GIF up to 5 MB.') }),
+      h('div', { class: 'row', style: 'gap:8px;flex:none;flex-wrap:wrap' }, upBannerBtn, rmBannerBtn), bannerFile));
+
   /* name + username (needs the password) */
   const dn = h('input', { class: 'input', type: 'text', maxlength: 32, value: T(me.displayName || ''), placeholder: T(me.username), autocomplete: 'nickname' });
   const un = h('input', { class: 'input', type: 'text', maxlength: 20, value: T(me.username), autocapitalize: 'none', spellcheck: 'false', autocomplete: 'off' });
@@ -141,7 +177,7 @@ function profileTab(panel, ctx) {
   const extras = h('div', { class: 'stack', style: 'gap:16px' });
   if (window.TWProfile) TWProfile.settings(extras);
 
-  panel.append(pic, idCard, general, extras, gamerTagsCard());
+  panel.append(pic, bannerCard, idCard, general, extras, gamerTagsCard());
 }
 
 /* gamer tags: platform -> handle, saved with the preferences */
