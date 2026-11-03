@@ -19,13 +19,34 @@ public static class GamesApi
     {
         Db.Exec(@"CREATE TABLE IF NOT EXISTS games(
             id INTEGER PRIMARY KEY,
-            steamAppId INTEGER UNIQUE,
+            steamAppId INTEGER,
             name TEXT NOT NULL UNIQUE COLLATE NOCASE,
             cover BLOB,
             coverMime TEXT,
             created TEXT
         );
-        CREATE INDEX IF NOT EXISTS ix_games_name ON games(name COLLATE NOCASE);");
+        CREATE INDEX IF NOT EXISTS ix_games_name ON games(name COLLATE NOCASE);
+        CREATE INDEX IF NOT EXISTS ix_games_steamAppId ON games(steamAppId);");
+
+        var tableSql = (string?)Db.Row("SELECT sql FROM sqlite_master WHERE type='table' AND name='games'")?["sql"];
+        if (tableSql != null && tableSql.Contains("steamAppId INTEGER UNIQUE", StringComparison.OrdinalIgnoreCase))
+        {
+            Db.Exec(@"
+                CREATE TABLE games_new(
+                    id INTEGER PRIMARY KEY,
+                    steamAppId INTEGER,
+                    name TEXT NOT NULL UNIQUE COLLATE NOCASE,
+                    cover BLOB,
+                    coverMime TEXT,
+                    created TEXT
+                );
+                INSERT INTO games_new SELECT id, steamAppId, name, cover, coverMime, created FROM games;
+                DROP TABLE games;
+                ALTER TABLE games_new RENAME TO games;
+                CREATE INDEX IF NOT EXISTS ix_games_name ON games(name COLLATE NOCASE);
+                CREATE INDEX IF NOT EXISTS ix_games_steamAppId ON games(steamAppId);
+            ");
+        }
 
         var knownSteam = new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase)
         {

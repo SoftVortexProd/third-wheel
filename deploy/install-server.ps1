@@ -12,6 +12,7 @@ New-Item -ItemType Directory -Force $app, $data | Out-Null
 
 $svc = Get-Service ThirdWheel -ErrorAction SilentlyContinue
 if ($svc) { Stop-Service ThirdWheel -Force; Start-Sleep 2 }
+Get-Process -Name Server -ErrorAction SilentlyContinue | Stop-Process -Force
 Copy-Item "$src\*" $app -Recurse -Force
 
 # Listen address: public when there is no reverse proxy, localhost-only when Caddy fronts it.
