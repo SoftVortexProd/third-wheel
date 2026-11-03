@@ -1,4 +1,5 @@
-﻿using System.Collections.Concurrent;
+using static Core;
+using System.Collections.Concurrent;
 using System.Net;
 using System.Security.Cryptography;
 using System.Text;
@@ -111,92 +112,12 @@ app.UseStaticFiles();
 
 var api = app.MapGroup("/api");
 
-// ---------- helpers ----------
-static IResult Err(string msg, int code = 400) => Results.Json(new { error = msg }, statusCode: code);
-static string Enc(string? s) => WebUtility.HtmlEncode((s ?? "").Trim());
-static string Clean(string? s, int max) { s = (s ?? "").Trim(); return s.Length > max ? s[..max] : s; }
-var userRx = new Regex("^[A-Za-z0-9_]{3,20}$", RegexOptions.Compiled);
-var rate = new ConcurrentDictionary<string, List<DateTime>>();
-bool Limited(string key, int max, TimeSpan win, bool record)
-{
-    var list = rate.GetOrAdd(key, _ => new List<DateTime>());
-    lock (list)
-    {
-        list.RemoveAll(t => DateTime.UtcNow - t > win);
-        if (list.Count >= max) return true;
-        if (record) list.Add(DateTime.UtcNow);
-        return false;
-    }
-}
+// Feature modules (each lives in Features/*.cs and registers its own routes). Migrations run from Db.Init.
+ChatApi.Map(api);
+GroupsApi.Map(api);
+ProfileApi.Map(api);
+NotifyApi.Map(api);
 
-long? CurrentUser(HttpContext c)
-{
-    if (!c.Request.Cookies.TryGetValue("tw_session", out var tok) || string.IsNullOrEmpty(tok) || tok.Length > 100) return null;
-    var r = Db.Scalar("SELECT userId FROM sessions WHERE tokenHash=@t", ("@t", Sha(tok)));
-    return r is long l ? l : null;
-}
-static string Sha(string s) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(s)));
-void StartSession(HttpContext c, long uid)
-{
-    var tok = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32)).Replace('+', '-').Replace('/', '_').TrimEnd('=');
-    Db.Exec("INSERT INTO sessions(tokenHash,userId,created) VALUES(@t,@u,@c)", ("@t", Sha(tok)), ("@u", uid), ("@c", Now()));
-    c.Response.Cookies.Append("tw_session", tok, new CookieOptions { HttpOnly = true, Secure = c.Request.IsHttps, SameSite = SameSiteMode.Strict, Path = "/", MaxAge = TimeSpan.FromDays(30), IsEssential = true });
-}
-static string Now() => DateTime.UtcNow.ToString("o");
-
-// Wraps handlers needing a signed-in user.
-IResult WithUser(HttpContext c, Func<long, IResult> f)
-{
-    var uid = CurrentUser(c);
-    return uid is null ? Err("Not signed in.", 401) : f(uid.Value);
-}
-
-object? UserDto(long id)
-{
-    var u = Db.Row("SELECT * FROM users WHERE id=@i", ("@i", id));
-    return u is null ? null : UserObj(u);
-}
-static object UserObj(Dictionary<string, object?> u)
-{
-    var age = Convert.ToInt32(u["age"]);
-    return new
-    {
-        id = (long)u["id"]!, username = (string)u["username"]!, displayName = u["display"] as string, avatar = AvatarUrl((long)u["id"]!, u["avatarVer"]),
-        avatarColor = (string)u["color"]!, isAdmin = Convert.ToInt32(u["isAdmin"]) == 1,
-        region = (string)u["region"]!, age, ageRange = AgeRange(age),
-        favoriteGames = JsonSerializer.Deserialize<string[]>((string)u["games"]!) ?? Array.Empty<string>(),
-        onboarded = Convert.ToInt32(u["onboarded"]) == 1, status = (string)u["status"]!,
-        playing = u["playing"] as string
-    };
-}
-static string? AvatarUrl(long id, object? ver) => ver != null && Convert.ToInt64(ver) > 0 ? $"/api/avatars/{id}?v={Convert.ToInt64(ver)}" : null;
-static string AgeRange(int a) => a <= 0 ? "" : a < 18 ? "13-17" : a < 25 ? "18-24" : a < 35 ? "25-34" : a < 45 ? "35-44" : "45+";
-
-object PersonObj(Dictionary<string, object?> r, bool isFriend) => new
-{
-    id = (long)r["id"]!, username = (string)r["username"]!, displayName = r["display"] as string, avatar = AvatarUrl((long)r["id"]!, r["avatarVer"]),
-    avatarColor = (string)r["color"]!,
-    status = (string)r["status"]!, playing = r["playing"] as string, region = (string)r["region"]!, isFriend
-};
-
-const string GroupSel = @"SELECT g.id,g.name,g.game,g.mode,g.region,g.ageMin,g.ageMax,g.description,g.color,
- (SELECT COUNT(*) FROM members m WHERE m.groupId=g.id) memberCount,
- (SELECT COUNT(*) FROM members m WHERE m.groupId=g.id AND m.userId=@me) isMember FROM grps g";
-static object GroupObj(Dictionary<string, object?> r) => new
-{
-    id = (long)r["id"]!, name = (string)r["name"]!, game = (string)r["game"]!, mode = (string)r["mode"]!,
-    region = (string)r["region"]!, ageMin = Convert.ToInt32(r["ageMin"]), ageMax = Convert.ToInt32(r["ageMax"]),
-    description = (string)r["description"]!, memberCount = Convert.ToInt32(r["memberCount"]),
-    isMember = Convert.ToInt32(r["isMember"]) > 0, color = (string)r["color"]!
-};
-const string MsgSel = "SELECT m.id,m.userId,u.username,u.display,u.avatarVer,u.color avatarColor,m.text,m.createdAt FROM messages m JOIN users u ON u.id=m.userId";
-static object MsgObj(Dictionary<string, object?> r) => new
-{
-    id = (long)r["id"]!, userId = (long)r["userId"]!, username = (string)r["username"]!, displayName = r["display"] as string,
-    avatar = AvatarUrl((long)r["userId"]!, r["avatarVer"]), avatarColor = (string)r["avatarColor"]!, text = (string)r["text"]!, createdAt = (string)r["createdAt"]!
-};
-bool AreFriends(long a, long b) => Db.Scalar("SELECT 1 FROM friends WHERE a=@a AND b=@b", ("@a", Math.Min(a, b)), ("@b", Math.Max(a, b))) != null;
-bool IsMember(long g, long u) => Db.Scalar("SELECT 1 FROM members WHERE groupId=@g AND userId=@u", ("@g", g), ("@u", u)) != null;
 
 // ---------- auth ----------
 api.MapPost("auth/signup", (HttpContext c, Creds b) =>
@@ -346,11 +267,6 @@ static string? SniffImage(byte[] d)
 // ---------- site status (public) + admin ----------
 api.MapGet("site", () => Results.Json(Site.Snapshot()));
 
-IResult WithAdmin(HttpContext c, Func<long, IResult> f) => WithUser(c, uid =>
-    Convert.ToInt32(Db.Scalar("SELECT isAdmin FROM users WHERE id=@i", ("@i", uid))) == 1 ? f(uid) : Err("Admins only.", 403));
-void Audit(long admin, string action, string target) =>
-    Db.Exec("INSERT INTO audit(adminId,action,target,at) VALUES(@a,@x,@t,@n)", ("@a", admin), ("@x", action), ("@t", target), ("@n", Now()));
-long Count(string sql) => Convert.ToInt64(Db.Scalar(sql));
 
 api.MapGet("admin/stats", (HttpContext c) => WithAdmin(c, _ => Results.Json(new
 {
@@ -441,7 +357,7 @@ api.MapPut("admin/site", (HttpContext c, SiteIn b) => WithAdmin(c, me =>
         closed[page] = string.IsNullOrWhiteSpace(msg) ? "This part of Third Wheel is temporarily closed." : Enc(Clean(msg, 200));
     }
     var m = b.Maintenance;
-    Site.Set(m?.On ?? false, string.IsNullOrWhiteSpace(m?.Message) ? "Third Wheel is down for maintenance. Please check back soon." : Enc(Clean(m!.Message, 200)), closed);
+    Site.Set(m?.On ?? false, string.IsNullOrWhiteSpace(m?.Message) ? "Third Wheel is down for maintenance. Please check back soon." : Enc(Clean(m!.Message, 200)), closed, b.AgeSeparation);
     Audit(me, "updated site controls", (m?.On ?? false ? "maintenance ON" : "maintenance off") + $", {closed.Count} page(s) closed");
     return Results.Json(Site.Snapshot());
 }));
@@ -527,15 +443,6 @@ api.MapPost("groups/{id:long}/join", (HttpContext c, long id) => WithUser(c, uid
     return Results.Json(GroupObj(Db.Row(GroupSel + " WHERE g.id=@g", ("@g", id), ("@me", uid))!));
 }));
 
-// Removes a group and everything attached to it.
-void DeleteGroup(long id)
-{
-    Db.Exec("DELETE FROM messages WHERE groupId=@g", ("@g", id));
-    Db.Exec("DELETE FROM invites WHERE groupId=@g", ("@g", id));
-    Db.Exec("DELETE FROM members WHERE groupId=@g", ("@g", id));
-    Db.Exec("DELETE FROM grps WHERE id=@g", ("@g", id));
-}
-
 api.MapPost("groups/{id:long}/leave", (HttpContext c, long id) => WithUser(c, uid =>
 {
     if (!IsMember(id, uid)) return Err("You are not in this group.", 404);
@@ -564,6 +471,7 @@ api.MapPost("groups/{id:long}/messages", (HttpContext c, long id, MessageIn b) =
     if (Limited($"msg:{uid}", 30, TimeSpan.FromMinutes(1), true)) return Err("Slow down a little.", 429);
     var mid = Db.Insert("INSERT INTO messages(groupId,userId,text,createdAt) VALUES(@g,@u,@t,@c)", ("@g", id), ("@u", uid), ("@t", Enc(text)), ("@c", Now()));
     var r = Db.Row(MsgSel + " WHERE m.id=@i", ("@i", mid))!;
+    Hooks.GroupMessage(id, mid, uid, Enc(text));
     return Results.Json(MsgObj(r));
 }));
 
@@ -603,6 +511,7 @@ api.MapPost("dms/{id:long}", (HttpContext c, long id, MessageIn b) => WithUser(c
     var mid = Db.Insert("INSERT INTO dms(a,b,fromId,text,createdAt) VALUES(@a,@b,@f,@t,@c)",
         ("@a", Math.Min(uid, id)), ("@b", Math.Max(uid, id)), ("@f", uid), ("@t", Enc(text)), ("@c", Now()));
     var r = Db.Row(DmSel + " AND d.id=@i", ("@a", Math.Min(uid, id)), ("@b", Math.Max(uid, id)), ("@i", mid))!;
+    Hooks.DirectMessage(id, mid, uid, Enc(text));
     return Results.Json(MsgObj(r));
 }));
 
@@ -713,7 +622,7 @@ record PlayingIn(string? Playing);
 record BanIn(bool Banned, string? Reason);
 record RoleIn(bool IsAdmin);
 record MaintIn(bool On, string? Message);
-record SiteIn(MaintIn? Maintenance, Dictionary<string, string>? Closed);
+record SiteIn(MaintIn? Maintenance, Dictionary<string, string>? Closed, bool? AgeSeparation = null);
 
 // Site-wide switches: maintenance mode and per-page closures (persisted, cached in memory).
 static class Site
@@ -721,6 +630,8 @@ static class Site
     public static readonly string[] Pages = { "feed", "search", "friends", "dms", "groups", "signup" };
     static readonly object L = new();
     public static bool Maintenance;
+    /// <summary>Under-18s and adults can't see each other's groups or profiles. Admins can switch it off.</summary>
+    public static bool AgeSeparation = true;
     public static string MaintenanceMessage = "Third Wheel is down for maintenance. Please check back soon.";
     public static Dictionary<string, string> Closed = new();
 
@@ -739,17 +650,18 @@ static class Site
             lock (L)
             {
                 Maintenance = r.GetProperty("on").GetBoolean(); MaintenanceMessage = r.GetProperty("message").GetString() ?? MaintenanceMessage;
+                AgeSeparation = !r.TryGetProperty("ageSeparation", out var ag) || ag.GetBoolean();
                 Closed = r.GetProperty("closed").EnumerateObject().Where(p => Pages.Contains(p.Name)).ToDictionary(p => p.Name, p => p.Value.GetString() ?? "");
             }
         }
         catch { /* ignore a corrupt row, keep defaults */ }
     }
-    public static void Set(bool on, string message, Dictionary<string, string> closed)
+    public static void Set(bool on, string message, Dictionary<string, string> closed, bool? ageSeparation = null)
     {
-        lock (L) { Maintenance = on; MaintenanceMessage = message; Closed = closed; }
-        Db.Exec("INSERT OR REPLACE INTO site(key,value) VALUES('state',@v)", ("@v", JsonSerializer.Serialize(new { on, message, closed })));
+        lock (L) { Maintenance = on; MaintenanceMessage = message; Closed = closed; if (ageSeparation != null) AgeSeparation = ageSeparation.Value; }
+        Db.Exec("INSERT OR REPLACE INTO site(key,value) VALUES('state',@v)", ("@v", JsonSerializer.Serialize(new { on, message, closed, ageSeparation = AgeSeparation })));
     }
-    public static object Snapshot() { lock (L) return new { maintenance = new { on = Maintenance, message = MaintenanceMessage }, closed = new Dictionary<string, string>(Closed), pages = Pages }; }
+    public static object Snapshot() { lock (L) return new { maintenance = new { on = Maintenance, message = MaintenanceMessage }, closed = new Dictionary<string, string>(Closed), pages = Pages, ageSeparation = AgeSeparation }; }
 }
 record ProfileIn(string? DisplayName, string? Username, string? Password);
 record SettingsIn(string? Region, int? Age, string[]? FavoriteGames, string? Playing, string? Status, bool? Onboarded);
@@ -841,5 +753,7 @@ CREATE TABLE IF NOT EXISTS avatars(userId INTEGER PRIMARY KEY, mime TEXT NOT NUL
         if (!cols.Contains("isAdmin")) Exec("ALTER TABLE users ADD COLUMN isAdmin INTEGER DEFAULT 0");
         if (!cols.Contains("banned")) Exec("ALTER TABLE users ADD COLUMN banned INTEGER DEFAULT 0");
         if (!cols.Contains("banReason")) Exec("ALTER TABLE users ADD COLUMN banReason TEXT");
+        // Feature modules add their own tables/columns here (each must be safe to run on every start).
+        ChatApi.Migrate(); GroupsApi.Migrate(); ProfileApi.Migrate(); NotifyApi.Migrate();
     }
 }

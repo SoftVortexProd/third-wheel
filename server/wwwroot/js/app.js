@@ -682,50 +682,18 @@ async function groupView(id, tok) {
     page.replaceChildren(head, h('div', { class: 'locked' }, emptyState('Join to chat', 'Members can chat in this group’s private chat room.')));
     showPage(); return;
   }
-  const log = h('div', { class: 'chat-log', role: 'log', 'aria-live': 'polite', 'aria-label': 'Group chat', tabindex: '0' });
-  const input = h('input', { class: 'input', type: 'text', maxlength: 500, placeholder: 'Message ' + T(g.name), 'aria-label': 'Message', autocomplete: 'off' });
-  const send = h('button', { class: 'btn', type: 'submit', 'aria-label': 'Send message' }, icon('send', 18));
-  const composer = h('form', { class: 'composer', onsubmit: async (e) => {
-    e.preventDefault(); const text = input.value.trim(); if (!text) return;
-    send.disabled = true;
-    const rect = input.getBoundingClientRect();
-    try {
-      const m = await api('POST', `/api/groups/${enc(g.id)}/messages`, { text }); input.value = '';
-      send.classList.add('sent'); setTimeout(() => send.classList.remove('sent'), 600);
-      if (m && m.id) append([m], true, rect); else poll();
-    }
-    catch (ex) { toast(ex.message, 'error'); } finally { send.disabled = false; input.focus(); }
-  } }, input, send);
-  page.replaceChildren(head, log, composer);
-  const seen = new Set(); let lastId = 0, initial = true;
-  function append(msgs, force, fromRect) {
-    const fresh = msgs.filter(m => !seen.has(m.id)); if (!fresh.length) return;
-    const near = force || log.scrollHeight - log.scrollTop - log.clientHeight < 120;
-    const made = [];
-    for (const m of fresh) {
-      seen.add(m.id); if (typeof m.id === 'number' && m.id > lastId) lastId = m.id;
-      const when = new Date(m.createdAt);
-      const el = h('div', { class: 'msg' + (m.userId === S.me.id ? ' own' : '') }, avatar(m, 'md'),
-        h('div', { class: 'body' }, h('div', { class: 'head' }, h('b', { text: nm(m) }), h('time', { text: isNaN(when) ? '' : when.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }), datetime: isNaN(when) ? null : when.toISOString() })),
-          h('p', { text: T(m.text) })));
-      if (initial) el.style.animationDelay = (300 + Math.min(made.length, 12) * 40) + 'ms';
-      log.append(el); made.push(el);
-    }
-    if (near) log.scrollTo({ top: log.scrollHeight, behavior: fromRect || initial ? 'instant' : 'smooth' });
-    if (fromRect && made.length) TWM.flyFrom(made[made.length - 1], fromRect);
-  }
-  async function poll() {
-    try { const m = await api('GET', `/api/groups/${enc(g.id)}/messages` + qs({ after: lastId || '' })); if (!stale(tok)) append(m || []); } catch { /* retry next tick */ }
-  }
-  if (!first.length) log.append(h('div', { class: 'empty', 'data-empty': '' }, h('b', { text: 'Say hi 👋' }), h('p', { text: 'Be the first to message the group.' })));
-  append(first, true);
+  const chat = makeChat({
+    placeholder: 'Message ' + T(g.name), label: 'Group chat', tok,
+    list: (after) => api('GET', `/api/groups/${enc(g.id)}/messages` + qs({ after })),
+    post: (text) => api('POST', `/api/groups/${enc(g.id)}/messages`, { text })
+  });
+  chat.fill(first, 'Say hi 👋', 'Be the first to message the group.');
+  page.replaceChildren(head, chat.log, chat.composer);
   showPage();
-  log.scrollTo({ top: log.scrollHeight, behavior: 'instant' });
-  setTimeout(() => { initial = false; }, 0);
-  const obs = new MutationObserver(() => { const e = log.querySelector('[data-empty]'); if (e && log.querySelector('.msg')) e.remove(); });
-  obs.observe(log, { childList: true });
-  S.chatTimer = setInterval(() => { if (!document.hidden) poll(); }, 2500);
-  if (matchMedia('(min-width:900px)').matches) input.focus();
+  chat.log.scrollTo({ top: chat.log.scrollHeight, behavior: 'instant' });
+  chat.done();
+  S.chatTimer = setInterval(() => { if (!document.hidden) chat.poll(); }, 2500);
+  if (matchMedia('(min-width:900px)').matches) chat.input.focus();
 }
 function leaveGroup(g, b) {
   const alone = (g.memberCount ?? 2) <= 1;
@@ -1240,6 +1208,16 @@ async function start() {
 document.addEventListener('click', (e) => { const c = e.target.closest && e.target.closest('.gcard'); if (c) S.morphFrom = c; }, true);
 window.addEventListener('hashchange', route);
 document.addEventListener('visibilitychange', () => { if (!document.hidden) poll(); });
+/* Shared helpers for the feature modules (js/chat.js, groups.js, profile.js, notify.js), which load after this file.
+   Read S/me through the getters; they change after login. */
+window.TW = {
+  $, h, icon, api, qs, enc, toast, T, nm, avatar, safeColor, ink, STATUS, statusKey,
+  openSheet, confirmSheet, btn, busy, field, tabs, selectEl, suggestInput, switchEl, emptyState, stagger, when,
+  personRow, groupCard, makeChat, openProfile, go, show, route, stale,
+  loadSocial, refreshMine, renderFriends, renderBadge, renderUserPanel, applyAutoGame,
+  get S() { return S; }, get me() { return S.me; }
+};
+
 (async function boot() {
   try { S.me = await api('GET', '/api/me'); await start(); }
   catch (e) { renderAuth(); if (e.status === 0) toast(e.message, 'error'); }

@@ -1,0 +1,138 @@
+using System.Collections.Concurrent;
+using System.Net;
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.Json;
+using System.Text.RegularExpressions;
+
+/// <summary>Helpers shared by Program.cs and every feature file under Features/ (imported there with `using static Core;`).</summary>
+public static class Core
+{
+    public static IResult Err(string msg, int code = 400) => Results.Json(new { error = msg }, statusCode: code);
+    /// <summary>HTML-encode user text before it is stored. The UI decodes it to plain text and only ever uses textContent.</summary>
+    public static string Enc(string? s) => WebUtility.HtmlEncode((s ?? "").Trim());
+    public static string Clean(string? s, int max) { s = (s ?? "").Trim(); return s.Length > max ? s[..max] : s; }
+    public static readonly Regex userRx = new("^[A-Za-z0-9_]{3,20}$", RegexOptions.Compiled);
+    public static readonly ConcurrentDictionary<string, List<DateTime>> rate = new();
+
+    /// <summary>Sliding-window rate limit. Returns true when `key` is over `max` hits in `win`; `record` counts this call.</summary>
+    public static bool Limited(string key, int max, TimeSpan win, bool record)
+    {
+        var list = rate.GetOrAdd(key, _ => new List<DateTime>());
+        lock (list)
+        {
+            list.RemoveAll(t => DateTime.UtcNow - t > win);
+            if (list.Count >= max) return true;
+            if (record) list.Add(DateTime.UtcNow);
+            return false;
+        }
+    }
+
+    public static long? CurrentUser(HttpContext c)
+    {
+        if (!c.Request.Cookies.TryGetValue("tw_session", out var tok) || string.IsNullOrEmpty(tok) || tok.Length > 100) return null;
+        var r = Db.Scalar("SELECT userId FROM sessions WHERE tokenHash=@t", ("@t", Sha(tok)));
+        return r is long l ? l : null;
+    }
+    public static string Sha(string s) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(s)));
+    public static void StartSession(HttpContext c, long uid)
+    {
+        var tok = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32)).Replace('+', '-').Replace('/', '_').TrimEnd('=');
+        Db.Exec("INSERT INTO sessions(tokenHash,userId,created) VALUES(@t,@u,@c)", ("@t", Sha(tok)), ("@u", uid), ("@c", Now()));
+        c.Response.Cookies.Append("tw_session", tok, new CookieOptions { HttpOnly = true, Secure = c.Request.IsHttps, SameSite = SameSiteMode.Strict, Path = "/", MaxAge = TimeSpan.FromDays(30), IsEssential = true });
+    }
+    public static string Now() => DateTime.UtcNow.ToString("o");
+
+    /// <summary>Wraps handlers that need a signed-in user.</summary>
+    public static IResult WithUser(HttpContext c, Func<long, IResult> f)
+    {
+        var uid = CurrentUser(c);
+        return uid is null ? Err("Not signed in.", 401) : f(uid.Value);
+    }
+    public static bool IsAdmin(long uid) => Convert.ToInt32(Db.Scalar("SELECT isAdmin FROM users WHERE id=@i", ("@i", uid))) == 1;
+    public static IResult WithAdmin(HttpContext c, Func<long, IResult> f) => WithUser(c, uid => IsAdmin(uid) ? f(uid) : Err("Admins only.", 403));
+    public static void Audit(long admin, string action, string target) =>
+        Db.Exec("INSERT INTO audit(adminId,action,target,at) VALUES(@a,@x,@t,@n)", ("@a", admin), ("@x", action), ("@t", target), ("@n", Now()));
+    public static long Count(string sql) => Convert.ToInt64(Db.Scalar(sql));
+
+    public static object? UserDto(long id)
+    {
+        var u = Db.Row("SELECT * FROM users WHERE id=@i", ("@i", id));
+        return u is null ? null : UserObj(u);
+    }
+    public static object UserObj(Dictionary<string, object?> u)
+    {
+        var age = Convert.ToInt32(u["age"]);
+        return new
+        {
+            id = (long)u["id"]!, username = (string)u["username"]!, displayName = u["display"] as string, avatar = AvatarUrl((long)u["id"]!, u["avatarVer"]),
+            avatarColor = (string)u["color"]!, isAdmin = Convert.ToInt32(u["isAdmin"]) == 1,
+            region = (string)u["region"]!, age, ageRange = AgeRange(age),
+            favoriteGames = JsonSerializer.Deserialize<string[]>((string)u["games"]!) ?? Array.Empty<string>(),
+            onboarded = Convert.ToInt32(u["onboarded"]) == 1, status = (string)u["status"]!,
+            playing = u["playing"] as string
+        };
+    }
+    public static string? AvatarUrl(long id, object? ver) => ver != null && Convert.ToInt64(ver) > 0 ? $"/api/avatars/{id}?v={Convert.ToInt64(ver)}" : null;
+    public static string AgeRange(int a) => a <= 0 ? "" : a < 18 ? "13-17" : a < 25 ? "18-24" : a < 35 ? "25-34" : a < 45 ? "35-44" : "45+";
+
+    public static object PersonObj(Dictionary<string, object?> r, bool isFriend) => new
+    {
+        id = (long)r["id"]!, username = (string)r["username"]!, displayName = r["display"] as string, avatar = AvatarUrl((long)r["id"]!, r["avatarVer"]),
+        avatarColor = (string)r["color"]!,
+        status = (string)r["status"]!, playing = r["playing"] as string, region = (string)r["region"]!, isFriend
+    };
+
+    public const string GroupSel = @"SELECT g.id,g.name,g.game,g.mode,g.region,g.ageMin,g.ageMax,g.description,g.color,
+ (SELECT COUNT(*) FROM members m WHERE m.groupId=g.id) memberCount,
+ (SELECT COUNT(*) FROM members m WHERE m.groupId=g.id AND m.userId=@me) isMember FROM grps g";
+    public static object GroupObj(Dictionary<string, object?> r) => new
+    {
+        id = (long)r["id"]!, name = (string)r["name"]!, game = (string)r["game"]!, mode = (string)r["mode"]!,
+        region = (string)r["region"]!, ageMin = Convert.ToInt32(r["ageMin"]), ageMax = Convert.ToInt32(r["ageMax"]),
+        description = (string)r["description"]!, memberCount = Convert.ToInt32(r["memberCount"]),
+        isMember = Convert.ToInt32(r["isMember"]) > 0, color = (string)r["color"]!
+    };
+    public const string MsgSel = "SELECT m.id,m.userId,u.username,u.display,u.avatarVer,u.color avatarColor,m.text,m.createdAt FROM messages m JOIN users u ON u.id=m.userId";
+    public static object MsgObj(Dictionary<string, object?> r) => new
+    {
+        id = (long)r["id"]!, userId = (long)r["userId"]!, username = (string)r["username"]!, displayName = r["display"] as string,
+        avatar = AvatarUrl((long)r["userId"]!, r["avatarVer"]), avatarColor = (string)r["avatarColor"]!, text = (string)r["text"]!, createdAt = (string)r["createdAt"]!
+    };
+    public static bool AreFriends(long a, long b) => Db.Scalar("SELECT 1 FROM friends WHERE a=@a AND b=@b", ("@a", Math.Min(a, b)), ("@b", Math.Max(a, b))) != null;
+    public static bool IsMember(long g, long u) => Db.Scalar("SELECT 1 FROM members WHERE groupId=@g AND userId=@u", ("@g", g), ("@u", u)) != null;
+
+    /// <summary>Removes a group and everything attached to it.</summary>
+    public static void DeleteGroup(long id)
+    {
+        Db.Exec("DELETE FROM messages WHERE groupId=@g", ("@g", id));
+        Db.Exec("DELETE FROM invites WHERE groupId=@g", ("@g", id));
+        Db.Exec("DELETE FROM members WHERE groupId=@g", ("@g", id));
+        Db.Exec("DELETE FROM grps WHERE id=@g", ("@g", id));
+    }
+}
+
+/// <summary>Lets features react to messages without editing each other's endpoints. Call these from the message POST handlers.</summary>
+public static class Hooks
+{
+    /// <summary>(groupId, messageId, fromUserId, encodedText)</summary>
+    public static event Action<long, long, long, string>? OnGroupMessage;
+    /// <summary>(toUserId, messageId, fromUserId, encodedText)</summary>
+    public static event Action<long, long, long, string>? OnDirectMessage;
+    public static void GroupMessage(long groupId, long messageId, long from, string text) { try { OnGroupMessage?.Invoke(groupId, messageId, from, text); } catch { /* never break chat */ } }
+    public static void DirectMessage(long to, long messageId, long from, string text) { try { OnDirectMessage?.Invoke(to, messageId, from, text); } catch { /* never break chat */ } }
+}
+
+/// <summary>
+/// Age separation (admin can switch it off in the admin panel). Ages are self-declared at sign-up.
+/// A group is a "minor" group when ageMax &lt;= 17 and an "adult" group when ageMax &gt;= 18. Under-18s only see minor groups and minor people; 18+ only see adult ones.
+/// Use these in every query that lists or opens groups or people.
+/// </summary>
+public static class Age
+{
+    public static bool On => Site.AgeSeparation;
+    public static bool IsMinor(int age) => age is > 0 and < 18;
+    public static bool GroupVisible(int viewerAge, int groupAgeMin, int groupAgeMax) => !On || (IsMinor(viewerAge) ? groupAgeMax <= 17 : groupAgeMax >= 18);
+    public static bool UserVisible(int viewerAge, int otherAge) => !On || IsMinor(viewerAge) == IsMinor(otherAge);
+    public static int Of(long userId) => Convert.ToInt32(Db.Scalar("SELECT age FROM users WHERE id=@i", ("@i", userId)));
+}
