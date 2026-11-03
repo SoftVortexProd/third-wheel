@@ -168,13 +168,7 @@ CREATE TABLE IF NOT EXISTS user_prefs(userId INTEGER PRIMARY KEY, accentColor TE
                 if (KlipyKey.Length == 0) return Results.Json(new { results = Array.Empty<object>(), notConfigured = true });
                 var uri = $"https://api.klipy.com/api/v1/{KlipyKey}/gifs/trending?page=1&per_page=24";
                 var resp = await Http.GetAsync(uri);
-                if (!resp.IsSuccessStatusCode)
-                {
-                    // Fallback to Tenor if key was a Tenor key
-                    uri = $"https://tenor.googleapis.com/v2/featured?key={KlipyKey}&client_key=tenor_web&limit=24&media_filter=tinygif,gif";
-                    resp = await Http.GetAsync(uri);
-                    if (!resp.IsSuccessStatusCode) return Results.Json(new { results = Array.Empty<object>() });
-                }
+                if (!resp.IsSuccessStatusCode) return Results.Json(new { results = Array.Empty<object>(), error = "The GIF service didn't answer. Try again in a moment." });
                 using var doc = await JsonDocument.ParseAsync(await resp.Content.ReadAsStreamAsync());
                 return Results.Json(new { results = ParseGifItems(doc.RootElement) });
             }
@@ -190,13 +184,7 @@ CREATE TABLE IF NOT EXISTS user_prefs(userId INTEGER PRIMARY KEY, accentColor TE
                 if (KlipyKey.Length == 0) return Results.Json(new { results = Array.Empty<object>(), notConfigured = true });
                 var uri = $"https://api.klipy.com/api/v1/{KlipyKey}/gifs/search?q={Uri.EscapeDataString(term)}&page=1&per_page=24";
                 var resp = await Http.GetAsync(uri);
-                if (!resp.IsSuccessStatusCode)
-                {
-                    // Fallback to Tenor if key was a Tenor key
-                    uri = $"https://tenor.googleapis.com/v2/search?key={KlipyKey}&client_key=tenor_web&q={Uri.EscapeDataString(term)}&limit=24&media_filter=tinygif,gif";
-                    resp = await Http.GetAsync(uri);
-                    if (!resp.IsSuccessStatusCode) return Results.Json(new { results = Array.Empty<object>() });
-                }
+                if (!resp.IsSuccessStatusCode) return Results.Json(new { results = Array.Empty<object>(), error = "The GIF service didn't answer. Try again in a moment." });
                 using var doc = await JsonDocument.ParseAsync(await resp.Content.ReadAsStreamAsync());
                 return Results.Json(new { results = ParseGifItems(doc.RootElement) });
             }
@@ -412,7 +400,27 @@ CREATE TABLE IF NOT EXISTS user_prefs(userId INTEGER PRIMARY KEY, accentColor TE
             var title = item.TryGetProperty("title", out var tEl) ? tEl.GetString() ?? "" : (item.TryGetProperty("content_description", out var cd) ? cd.GetString() ?? "" : "");
             string? tinyUrl = null, fullUrl = null;
             int w = 200, h = 150;
-            if (item.TryGetProperty("files", out var files))
+            if (item.TryGetProperty("file", out var kf) && kf.ValueKind == JsonValueKind.Object)
+            {
+                // KLIPY: file.{hd,md,sm,xs}.{gif,webp,mp4,...}.url. Medium GIF goes into chat, small GIF fills the picker grid.
+                string? Pick(params string[] sizes)
+                {
+                    foreach (var sz in sizes)
+                        if (kf.TryGetProperty(sz, out var s) && s.ValueKind == JsonValueKind.Object && s.TryGetProperty("gif", out var g)
+                            && g.TryGetProperty("url", out var u) && u.ValueKind == JsonValueKind.String) return u.GetString();
+                    return null;
+                }
+                fullUrl = Pick("md", "hd", "sm", "xs");
+                tinyUrl = Pick("sm", "xs", "md");
+                foreach (var sz in new[] { "md", "hd", "sm", "xs" })
+                    if (kf.TryGetProperty(sz, out var s2) && s2.TryGetProperty("gif", out var g2) && g2.TryGetProperty("url", out var u2) && u2.GetString() == fullUrl)
+                    {
+                        if (g2.TryGetProperty("width", out var kw) && kw.TryGetInt32(out var kwi)) w = kwi;
+                        if (g2.TryGetProperty("height", out var kh) && kh.TryGetInt32(out var khi)) h = khi;
+                        break;
+                    }
+            }
+            else if (item.TryGetProperty("files", out var files))
             {
                 if (files.TryGetProperty("gif", out var gf) && gf.TryGetProperty("url", out var gu))
                 {
