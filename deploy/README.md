@@ -5,7 +5,7 @@
 3. **On the server**, in an elevated PowerShell:
    ```powershell
    cd C:\tw-package
-   .\install-server.ps1                       # plain HTTP on port 80
+   .\install-server.ps1                       # plain HTTP on port 1732 (-Port N to change)
    .\install-server.ps1 -Domain play.example.com   # HTTPS via Caddy (recommended)
    ```
    This installs a `ThirdWheel` Windows service (auto-start, auto-restart), keeps data in `C:\ThirdWheel\data`, and opens only the needed firewall ports.

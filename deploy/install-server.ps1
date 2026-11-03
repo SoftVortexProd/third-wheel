@@ -1,7 +1,7 @@
 # Run ON the Windows server, in an elevated PowerShell, from the extracted package folder.
-#   .\install-server.ps1                      -> plain HTTP on port 80 (no encryption!)
+#   .\install-server.ps1                      -> plain HTTP on port 1732 (no encryption!)  [-Port N to change]
 #   .\install-server.ps1 -Domain play.example.com  -> server listens on localhost, Caddy provides HTTPS
-param([string]$Domain = "", [int]$Port = 80)
+param([string]$Domain = "", [int]$Port = 1732)
 $ErrorActionPreference = "Stop"
 
 $src = Join-Path $PSScriptRoot "app"
