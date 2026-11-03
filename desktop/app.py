@@ -10,9 +10,19 @@ from pathlib import Path
 
 from PySide6.QtCore import QSettings, QTimer, QUrl, Qt
 from PySide6.QtGui import QColor, QDesktopServices, QIcon, QPalette
+import re
+
 from PySide6.QtWebEngineCore import QWebEnginePage, QWebEngineProfile, QWebEngineScript, QWebEngineSettings
 from PySide6.QtWebEngineWidgets import QWebEngineView
-from PySide6.QtWidgets import QApplication, QLabel, QMainWindow, QStackedWidget
+from PySide6.QtWidgets import QApplication, QLabel, QMainWindow, QStackedWidget, QSystemTrayIcon
+
+try:  # Qt 6.8+
+    from PySide6.QtWebEngineCore import QWebEnginePermission
+except ImportError:  # pragma: no cover
+    QWebEnginePermission = None
+
+# Notification clicks may only open chats; anything else the page sends is ignored.
+ROUTE_RE = re.compile(r"^#/(dm|group)/\d{1,12}$")
 
 LOCAL_URL = "http://127.0.0.1:5173"
 BG = "#0f1115"
@@ -246,6 +256,10 @@ class Main(QMainWindow):
         self.profile.scripts().insert(motion)
         self.page = Page(self.profile, self)
         self.page.setBackgroundColor(QColor(BG))
+        # Web Notifications (only offered on secure origins): allow them for the app's own origin and show them via the tray.
+        self.profile.setNotificationPresenter(self.present_web_notification)
+        if QWebEnginePermission is not None and hasattr(self.page, "permissionRequested"):
+            self.page.permissionRequested.connect(self.on_permission)
         self.view = QWebEngineView()
         self.view.setPage(self.page)
         s = self.page.settings()
@@ -270,6 +284,18 @@ class Main(QMainWindow):
         self.game_timer = QTimer(self)
         self.game_timer.timeout.connect(self.scan_game)
         self.game_timer.start(6000)
+
+        # Notifications: the page queues alerts (window.TWApp._q) when it's in the background; we turn them into
+        # Windows notifications from the tray icon. This works on plain-http servers too, where the browser API is unavailable.
+        self.tray_route = None
+        self.tray = QSystemTrayIcon(self.windowIcon(), self)
+        self.tray.setToolTip("Third Wheel")
+        self.tray.messageClicked.connect(self.focus_window)
+        self.tray.activated.connect(lambda reason: self.focus_window(False) if reason == QSystemTrayIcon.ActivationReason.Trigger else None)
+        self.tray.show()
+        self.notify_timer = QTimer(self)
+        self.notify_timer.timeout.connect(self.drain_notifications)
+        self.notify_timer.start(1500)
 
     def setIcon(self):
         for p in (resource("app.ico"), base_dir() / "app.ico"):
@@ -318,6 +344,47 @@ class Main(QMainWindow):
     def push_game(self):
         self.page.runJavaScript(f"window.TWApp&&window.TWApp.game({json.dumps(self.game)})")
 
+    # ---- notifications ----
+    def drain_notifications(self):
+        if self.stack.currentWidget() is self.view:
+            self.page.runJavaScript(
+                "window.TWApp&&window.TWApp.drain?JSON.stringify(window.TWApp.drain()):'[]'", self.show_notifications)
+
+    def show_notifications(self, raw):
+        try:
+            items = json.loads(raw) if isinstance(raw, str) else []
+        except ValueError:
+            return
+        if not isinstance(items, list):
+            return
+        for it in items[:4]:
+            if not isinstance(it, dict):
+                continue
+            route = it.get("route")
+            self.tray_route = route if isinstance(route, str) and ROUTE_RE.match(route) else None
+            self.tray.showMessage(str(it.get("title", "Third Wheel"))[:80], str(it.get("body", ""))[:220], self.windowIcon(), 8000)
+            QApplication.alert(self, 0)   # flash the taskbar button until the window is focused
+
+    def present_web_notification(self, note):
+        note.show()
+        self.tray_route = None
+        self.tray.showMessage(note.title()[:80], note.message()[:220], self.windowIcon(), 8000)
+        QApplication.alert(self, 0)
+
+    def on_permission(self, perm):
+        if perm.permissionType() == QWebEnginePermission.PermissionType.Notifications and same_origin(perm.origin()):
+            perm.grant()
+
+    def focus_window(self, open_chat=True):
+        if self.isMinimized():
+            self.showNormal()
+        self.show()
+        self.raise_()
+        self.activateWindow()
+        if open_chat and self.tray_route:
+            self.page.runJavaScript(f"location.hash={json.dumps(self.tray_route)}")
+        self.tray_route = None
+
     def stop_server(self):
         if self.proc and self.proc.poll() is None:
             self.proc.terminate()
@@ -328,6 +395,7 @@ class Main(QMainWindow):
 
     def closeEvent(self, e):
         self.settings.setValue("geometry", self.saveGeometry())
+        self.tray.hide()   # no ghost icon left in the notification area
         self.stop_server()
         super().closeEvent(e)
 
