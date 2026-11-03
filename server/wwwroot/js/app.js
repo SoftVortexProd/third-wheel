@@ -891,6 +891,7 @@ async function adminView(_, tok) {
       TWM.flip(t.list, '.arow', () => t.list.replaceChildren(...(rows.length ? rows.map(u => {
         const self = u.id === S.me.id;
         const acts = [];
+        if (!self && !u.isAdmin && window.TWAdmin) acts.push(act('Edit', 'ghost', () => TWAdmin.editUser(u, () => t.refresh())));
         if (!self && !u.isAdmin) acts.push(u.banned
           ? act('Unsuspend', 'ghost', async () => { await api('POST', `/api/admin/users/${u.id}/ban`, { banned: false }); toast('Unsuspended ' + u.username); t.refresh(); })
           : act('Suspend', 'ghost', () => {
@@ -924,7 +925,8 @@ async function adminView(_, tok) {
           async () => { await api('DELETE', `/api/admin/groups/${g.id}`); S.feedCache = null; refreshMine(); toast('Deleted ' + T(g.name)); t.refresh(); }));
         return h('div', { class: 'arow', 'data-key': 'g' + g.id },
           h('div', { class: 'meta' }, h('b', { text: T(g.name) }), h('span', { class: 'muted small', text: `${T(g.game)} · ${g.mode} · ${T(g.region)} · ${g.memberCount} member${g.memberCount === 1 ? '' : 's'} · ${when(g.created)}` })),
-          h('div', { class: 'act' }, h('a', { class: 'btn small ghost', href: '#/group/' + g.id }, 'Open'), del));
+          h('div', { class: 'act' }, h('a', { class: 'btn small ghost', href: '#/group/' + g.id }, 'Open'),
+            window.TWAdmin ? btn('Rename', { cls: 'small ghost', onclick: () => TWAdmin.renameGroup(g, () => t.refresh()) }) : null, del));
       }) : [emptyState('No groups found', 'Try a different name or game.')])));
     });
     body.replaceChildren(t.q, t.list); t.refresh();
@@ -1128,7 +1130,7 @@ async function settingsView() {
     h('div', { class: 'field' }, h('span', { class: 'label', text: 'Favorite games' }), gw), h('div', {}, save));
   const out = btn('Log out', { cls: 'danger', onclick: async (e) => { try { await api('POST', '/api/auth/logout'); } catch { /* ignore */ } loggedOut(); } });
   show(h('div', { class: 'page', style: 'max-width:720px' }, h('div', { class: 'page-head' }, h('div', {}, h('h1', { text: 'Settings' }), who)),
-    picCard, idCard,
+    picCard, idCard, window.TWAccount ? TWAccount.card() : null,
     h('div', { class: 'card', style: 'padding:24px' }, form), h('div', { class: 'card', style: 'padding:20px;display:flex;justify-content:space-between;align-items:center;gap:12px' }, h('div', {}, h('h3', { text: 'Log out' }), h('p', { class: 'muted small', text: 'You’ll need your password to come back.' })), out)));
 }
 

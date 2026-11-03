@@ -11,3 +11,6 @@ build/
 # real hosted-server address stays out of the public repo; see desktop/config.example.json
 desktop/config.json
 deploy/sync.config.json
+
+# agent worktrees
+.claude/

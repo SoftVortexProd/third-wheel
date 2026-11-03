@@ -117,6 +117,7 @@ ChatApi.Map(api);
 GroupsApi.Map(api);
 ProfileApi.Map(api);
 NotifyApi.Map(api);
+AccountApi.Map(api);
 
 
 // ---------- auth ----------
