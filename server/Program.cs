@@ -320,6 +320,9 @@ api.MapDelete("admin/users/{id:long}", (HttpContext c, long id) => WithAdmin(c, 
     if (id == me) return Err("You can't delete yourself.");
     if (Convert.ToInt32(u["isAdmin"]) == 1) return Err("Remove their admin role first.");
     var ps = new (string, object?)[] { ("@i", id) };
+    // leave their groups properly first (hands ownership on, deletes groups that empty out), then clear moderation rows
+    foreach (var gm in Db.Rows("SELECT groupId FROM members WHERE userId=@i", ps)) GroupsApi.RemoveMember((long)gm["groupId"]!, id);
+    Db.Exec("DELETE FROM group_bans WHERE userId=@i", ps); Db.Exec("DELETE FROM group_mutes WHERE userId=@i", ps); Db.Exec("DELETE FROM join_requests WHERE userId=@i", ps);
     foreach (var sql in new[] {
         "DELETE FROM sessions WHERE userId=@i", "DELETE FROM messages WHERE userId=@i", "DELETE FROM dms WHERE a=@i OR b=@i",
         "DELETE FROM friends WHERE a=@i OR b=@i", "DELETE FROM frequests WHERE fromId=@i OR toId=@i", "DELETE FROM invites WHERE fromId=@i OR toId=@i",
@@ -369,8 +372,9 @@ api.MapGet("search", (HttpContext c, string? q, string? game, string? mode, stri
 {
     q = Clean(q, 60);
     var like = "%" + q.Replace("\\", "\\\\").Replace("%", "\\%").Replace("_", "\\_") + "%";
-    // groups
-    var sb = new StringBuilder(GroupSel + " WHERE 1=1");
+    // groups (private groups, banned groups and the other side of the age split are never listed)
+    var myAge = Age.Of(uid);
+    var sb = new StringBuilder(GroupSel + " WHERE " + GroupsApi.ListableSql + GroupsApi.AgeSql(myAge));
     var ps = new List<(string, object?)> { ("@me", uid) };
     if (q.Length > 0) { sb.Append(" AND (g.name LIKE @q ESCAPE '\\' OR g.description LIKE @q ESCAPE '\\' OR g.game LIKE @q ESCAPE '\\')"); ps.Add(("@q", like)); }
     if (!string.IsNullOrEmpty(game)) { sb.Append(" AND g.game=@game"); ps.Add(("@game", game)); }
@@ -384,6 +388,8 @@ api.MapGet("search", (HttpContext c, string? q, string? game, string? mode, stri
     // people
     var pb = new StringBuilder("SELECT u.*, (SELECT COUNT(*) FROM friends f WHERE (f.a=@me AND f.b=u.id) OR (f.b=@me AND f.a=u.id)) isFriend FROM users u WHERE u.id<>@me");
     var pp = new List<(string, object?)> { ("@me", uid) };
+    // age separation: people on the other side of 18 are hidden (existing friends stay visible)
+    if (Age.On) pb.Append(Age.IsMinor(myAge) ? " AND ((u.age>0 AND u.age<18) OR isFriend>0)" : " AND ((u.age<=0 OR u.age>=18) OR isFriend>0)");
     if (q.Length > 0) { pb.Append(" AND u.username LIKE @q ESCAPE '\\'"); pp.Add(("@q", like)); }
     if (!string.IsNullOrEmpty(game)) { pb.Append(" AND u.games LIKE @gm"); pp.Add(("@gm", "%" + JsonSerializer.Serialize(game).Replace("%", "") + "%")); }
     if (!string.IsNullOrEmpty(region)) { pb.Append(" AND u.region=@region"); pp.Add(("@region", region)); }
@@ -398,60 +404,14 @@ api.MapGet("feed", (HttpContext c) => WithUser(c, uid =>
 {
     var me = Db.Row("SELECT * FROM users WHERE id=@i", ("@i", uid))!;
     var favs = JsonSerializer.Deserialize<string[]>((string)me["games"]!) ?? Array.Empty<string>();
-    var rows = Db.Rows(GroupSel + " WHERE g.id NOT IN (SELECT groupId FROM members WHERE userId=@me)", ("@me", uid));
+    var rows = Db.Rows(GroupSel + " WHERE g.id NOT IN (SELECT groupId FROM members WHERE userId=@me) AND " + GroupsApi.ListableSql + GroupsApi.AgeSql(Convert.ToInt32(me["age"])), ("@me", uid));
     var list = rows.OrderByDescending(r => (favs.Contains((string)r["game"]!) ? 2 : 0) + ((string)r["region"]! == (string)me["region"]! ? 1 : 0))
                    .ThenByDescending(r => Convert.ToInt32(r["memberCount"])).Take(30).Select(GroupObj);
     return Results.Json(list);
 }));
 
 // ---------- groups ----------
-api.MapPost("groups", (HttpContext c, GroupIn b) => WithUser(c, uid =>
-{
-    var name = Clean(b.Name, 40);
-    if (name.Length < 3) return Err("Group name must be at least 3 characters.");
-    if (!Db.Games.Contains(b.Game ?? "")) return Err("Pick a game from the list.");
-    if (b.Mode is not ("casual" or "competitive")) return Err("Mode must be casual or competitive.");
-    if (!Db.Regions.Contains(b.Region ?? "")) return Err("Unknown region.");
-    int lo = b.AgeMin ?? 13, hi = b.AgeMax ?? 99;
-    if (lo < 13 || hi > 99 || lo > hi) return Err("Invalid age range.");
-    var color = Db.Palette[Random.Shared.Next(Db.Palette.Length)];
-    var gid = Db.Insert("INSERT INTO grps(name,game,mode,region,ageMin,ageMax,description,color,ownerId,created) VALUES(@n,@g,@m,@r,@lo,@hi,@d,@c,@o,@t)",
-        ("@n", Enc(name)), ("@g", b.Game), ("@m", b.Mode), ("@r", b.Region), ("@lo", lo), ("@hi", hi), ("@d", Enc(Clean(b.Description, 300))), ("@c", color), ("@o", uid), ("@t", Now()));
-    Db.Exec("INSERT INTO members(groupId,userId) VALUES(@g,@u)", ("@g", gid), ("@u", uid));
-    return Results.Json(GroupObj(Db.Row(GroupSel + " WHERE g.id=@g", ("@g", gid), ("@me", uid))!));
-}));
-
-api.MapGet("groups/mine", (HttpContext c) => WithUser(c, uid =>
-    Results.Json(Db.Rows(GroupSel + " WHERE g.id IN (SELECT groupId FROM members WHERE userId=@me) ORDER BY g.name COLLATE NOCASE", ("@me", uid)).Select(GroupObj))));
-
-api.MapGet("groups/{id:long}", (HttpContext c, long id) => WithUser(c, uid =>
-{
-    var g = Db.Row(GroupSel + " WHERE g.id=@g", ("@g", id), ("@me", uid));
-    if (g == null) return Err("Group not found.", 404);
-    var members = Db.Rows("SELECT u.* FROM members m JOIN users u ON u.id=m.userId WHERE m.groupId=@g ORDER BY u.username COLLATE NOCASE", ("@g", id))
-        .Select(r => PersonObj(r, AreFriends(uid, (long)r["id"]!))).ToList();
-    var o = JsonSerializer.SerializeToElement(GroupObj(g));
-    var dict = JsonSerializer.Deserialize<Dictionary<string, object?>>(o.GetRawText())!;
-    dict["members"] = members;
-    return Results.Json(dict);
-}));
-
-api.MapPost("groups/{id:long}/join", (HttpContext c, long id) => WithUser(c, uid =>
-{
-    if (Db.Scalar("SELECT 1 FROM grps WHERE id=@g", ("@g", id)) == null) return Err("Group not found.", 404);
-    Db.Exec("INSERT OR IGNORE INTO members(groupId,userId) VALUES(@g,@u)", ("@g", id), ("@u", uid));
-    return Results.Json(GroupObj(Db.Row(GroupSel + " WHERE g.id=@g", ("@g", id), ("@me", uid))!));
-}));
-
-api.MapPost("groups/{id:long}/leave", (HttpContext c, long id) => WithUser(c, uid =>
-{
-    if (!IsMember(id, uid)) return Err("You are not in this group.", 404);
-    Db.Exec("DELETE FROM members WHERE groupId=@g AND userId=@u", ("@g", id), ("@u", uid));
-    // Last one out turns off the lights: an empty group is deleted.
-    var deleted = Convert.ToInt64(Db.Scalar("SELECT COUNT(*) FROM members WHERE groupId=@g", ("@g", id))) == 0;
-    if (deleted) DeleteGroup(id);
-    return Results.Json(new { ok = true, deleted });
-}));
+// Group create / detail / join / leave / roles / moderation / requests live in Features/GroupsApi.cs.
 
 api.MapGet("groups/{id:long}/messages", (HttpContext c, long id, long? after) => WithUser(c, uid =>
 {
@@ -482,6 +442,8 @@ api.MapGet("users/{id:long}", (HttpContext c, long id) => WithUser(c, uid =>
     var u = Db.Row("SELECT * FROM users WHERE id=@i", ("@i", id));
     if (u == null) return Err("User not found.", 404);
     var friend = id == uid || AreFriends(uid, id);
+    // age separation: profiles on the other side of 18 don't exist for you (friends from before the rule stay visible)
+    if (!friend && !IsAdmin(uid) && !Age.UserVisible(Age.Of(uid), Convert.ToInt32(u["age"]))) return Err("User not found.", 404);
     var games = JsonSerializer.Deserialize<string[]>((string)u["games"]!) ?? Array.Empty<string>();
     return Results.Json(new
     {
@@ -539,6 +501,8 @@ api.MapPost("friends/request", (HttpContext c, FriendIn b) => WithUser(c, uid =>
     var tid = (long)t["id"]!;
     if (tid == uid) return Err("You can't add yourself.");
     if (AreFriends(uid, tid)) return Err("Already friends.", 409);
+    // age separation: no new friendships across the 18 line (answer exactly like an unknown name)
+    if (!IsAdmin(uid) && !Age.UserVisible(Age.Of(uid), Age.Of(tid))) return Err("No user with that name.", 404);
     var reverse = Db.Row("SELECT id FROM frequests WHERE fromId=@t AND toId=@u", ("@t", tid), ("@u", uid));
     if (reverse != null) { AcceptRequest((long)reverse["id"]!, uid); return Results.Json(new { ok = true, accepted = true }); }
     if (Limited($"fr:{uid}", 20, TimeSpan.FromHours(1), true)) return Err("Too many requests.", 429);
@@ -577,6 +541,11 @@ api.MapPost("groups/{id:long}/invites", (HttpContext c, long id, InviteIn b) => 
     if (!IsMember(id, uid)) return Err("Only members can invite.", 403);
     if (!AreFriends(uid, b.UserId)) return Err("You can only invite friends.", 403);
     if (IsMember(id, b.UserId)) return Err("They are already in this group.", 409);
+    var gg = Db.Row("SELECT ageMin, ageMax FROM grps WHERE id=@g", ("@g", id));
+    if (gg == null) return Err("Group not found.", 404);
+    if (Db.Scalar("SELECT 1 FROM group_bans WHERE groupId=@g AND userId=@u", ("@g", id), ("@u", b.UserId)) != null) return Err("They are banned from this group.", 409);
+    // age separation: you can only invite people who are allowed to see the group
+    if (!Age.GroupVisible(Age.Of(b.UserId), Convert.ToInt32(gg["ageMin"]), Convert.ToInt32(gg["ageMax"]))) return Err("They can't join this group (age restriction).", 403);
     Db.Exec("INSERT OR IGNORE INTO invites(groupId,fromId,toId) VALUES(@g,@f,@t)", ("@g", id), ("@f", uid), ("@t", b.UserId));
     return Results.Json(new { ok = true });
 }));
@@ -597,7 +566,9 @@ api.MapPost("invites/{id:long}/accept", (HttpContext c, long id) => WithUser(c, 
 {
     var i = Db.Row("SELECT * FROM invites WHERE id=@i AND toId=@u", ("@i", id), ("@u", uid));
     if (i == null) return Err("Invite not found.", 404);
-    Db.Exec("INSERT OR IGNORE INTO members(groupId,userId) VALUES(@g,@u)", ("@g", i["groupId"]), ("@u", uid));
+    if (Db.Scalar("SELECT 1 FROM group_bans WHERE groupId=@g AND userId=@u", ("@g", i["groupId"]), ("@u", uid)) != null) { Db.Exec("DELETE FROM invites WHERE id=@i", ("@i", id)); return Err("You are banned from this group.", 403); }
+    Db.Exec("INSERT OR IGNORE INTO members(groupId,userId,role) VALUES(@g,@u,'member')", ("@g", i["groupId"]), ("@u", uid));
+    Db.Exec("DELETE FROM join_requests WHERE groupId=@g AND userId=@u", ("@g", i["groupId"]), ("@u", uid));
     Db.Exec("DELETE FROM invites WHERE id=@i", ("@i", id));
     return Results.Json(GroupObj(Db.Row(GroupSel + " WHERE g.id=@g", ("@g", i["groupId"]), ("@me", uid))!));
 }));

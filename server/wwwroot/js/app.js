@@ -660,26 +660,30 @@ async function groupView(id, tok) {
   const first = isMember ? await api('GET', `/api/groups/${enc(g.id)}/messages`) : [];
   if (stale(tok)) return;
   const ages = g.ageMin || g.ageMax ? `Ages ${g.ageMin || '13'}–${g.ageMax || '99'}` : 'All ages';
-  const actions = h('div', { class: 'row', style: 'flex:none;gap:8px' });
+  const G = window.TWG;   // roles / moderation / requests UI from js/groups.js
+  const actions = h('div', { class: 'row group-actions', style: 'flex:none;gap:8px;flex-wrap:wrap' });
   if (isMember) {
     actions.append(btn('Invite friend', { cls: 'small', icon: 'plus', onclick: () => openInvite(g, members) }),
+      ...(G ? G.headerButtons(g, route) : []),
       btn('Leave', { cls: 'small ghost', onclick: (e) => leaveGroup(g, e.currentTarget) }));
-  } else {
-    const jb = btn('Join group', { cls: 'small' });
-    jb.addEventListener('click', () => busy(jb, async () => { await api('POST', `/api/groups/${enc(g.id)}/join`); await refreshMine(); toast('You joined ' + T(g.name)); route(); }));
-    actions.append(jb);
+  } else if (G) {
+    actions.append(...G.joinControls(g, route));
   }
   const head = h('div', { class: 'ghead' },
     h('div', { class: 'top' }, h('a', { class: 'icon-btn mobile-only', href: '#/feed', 'aria-label': 'Back to feed' }, icon('back')), h('h1', { text: T(g.name) }), actions),
     h('div', { class: 'chips stagger-pop' }, h('span', { class: 'chip accent', text: T(g.game) }), h('span', { class: 'chip', text: g.mode === 'competitive' ? 'Competitive' : 'Casual' }),
-      g.region ? h('span', { class: 'chip', text: T(g.region) }) : null, h('span', { class: 'chip', text: ages }), h('span', { class: 'chip', text: `${g.memberCount ?? members.length} members` })),
+      g.region ? h('span', { class: 'chip', text: T(g.region) }) : null, h('span', { class: 'chip', text: ages }), h('span', { class: 'chip', text: `${g.memberCount ?? members.length} members` }),
+      g.privacy === 'private' ? h('span', { class: 'chip', text: 'Private' }) : g.privacy === 'request' ? h('span', { class: 'chip', text: 'Approval needed' }) : null),
     g.description ? h('p', { class: 'desc', text: T(g.description) }) : null,
-    members.length ? h('div', { class: 'members stagger-pop', 'aria-label': 'Members' }, members.map(m => h('button', { class: 'member', type: 'button', 'aria-label': 'View ' + nm(m) + '’s profile', onclick: () => openProfile(m.id) }, avatar(m, 'sm'), nm(m)))) : null);
+    members.length ? (G ? G.members(g, route) : h('div', { class: 'members stagger-pop', 'aria-label': 'Members' }, members.map(m => h('button', { class: 'member', type: 'button', 'aria-label': 'View ' + nm(m) + '’s profile', onclick: () => openProfile(m.id) }, avatar(m, 'sm'), nm(m))))) : null);
   head.querySelectorAll('.btn.small').forEach(b => b.style.minHeight = '32px');
   head.querySelectorAll('.stagger-pop').forEach(stagger);
   const showPage = () => show(page, morph ? { from: morph, to: () => head } : {});
   if (!isMember) {
-    page.replaceChildren(head, h('div', { class: 'locked' }, emptyState('Join to chat', 'Members can chat in this group’s private chat room.')));
+    page.replaceChildren(head, h('div', { class: 'locked' }, emptyState(g.requested ? 'Request sent' : g.privacy === 'request' ? 'Ask to join' : 'Join to chat',
+      g.requested ? 'A moderator will review your request. You’ll see the chat once you’re approved.'
+        : g.privacy === 'request' ? 'This group approves new members. Send a request and a moderator will review it.'
+        : 'Members can chat in this group’s private chat room.')));
     showPage(); return;
   }
   const chat = makeChat({
@@ -699,6 +703,7 @@ function leaveGroup(g, b) {
   const alone = (g.memberCount ?? 2) <= 1;
   const close = openSheet(alone ? 'Delete group?' : 'Leave group?', h('div', { class: 'stack' }, h('p', { class: 'muted', text: alone
     ? `You’re the only member of ${T(g.name)}. Leaving will delete the group and its chat for good.`
+    : g.myRole === 'owner' ? `You’re the owner of ${T(g.name)}. If you leave, ownership passes to the longest-serving moderator (or the oldest member).`
     : `You’ll stop seeing ${T(g.name)} and its chat.` }),
     h('div', { class: 'row' }, btn('Stay', { cls: 'ghost', onclick: () => close() }), (() => {
       const d = btn(alone ? 'Delete group' : 'Leave group', { cls: 'danger' });
@@ -854,11 +859,12 @@ async function adminView(_, tok) {
       const msg = h('input', { class: 'input', type: 'text', maxlength: 200, value: site.closed[p] ? T(site.closed[p]) : '', placeholder: 'Message shown to users', 'aria-label': 'Message for ' + PAGE_LABELS[p] });
       return { p, on, msg, el: h('div', { class: 'ctl-row' }, on, h('span', { class: 'ctl-name', text: PAGE_LABELS[p] }), msg) };
     });
+    const ageOn = switchEl(site.ageSeparation !== false, () => {}, 'Age separation');
     const save = btn('Save site controls', { icon: 'check' });
     save.addEventListener('click', () => busy(save, async () => {
       const closed = {}; rows.forEach(r => { if (r.on.getAttribute('aria-checked') === 'true') closed[r.p] = r.msg.value.trim(); });
       const on = maintOn.getAttribute('aria-checked') === 'true';
-      S.site = await api('PUT', '/api/admin/site', { maintenance: { on, message: maintMsg.value.trim() }, closed });
+      S.site = await api('PUT', '/api/admin/site', { maintenance: { on, message: maintMsg.value.trim() }, closed, ageSeparation: ageOn.getAttribute('aria-checked') === 'true' });
       toast(on ? 'Maintenance mode is ON for everyone except admins' : 'Site controls saved');
     }));
     body.replaceChildren(
@@ -867,7 +873,11 @@ async function adminView(_, tok) {
         h('h3', { text: 'Maintenance mode' }),
         h('div', { class: 'ctl-row' }, maintOn, h('span', { class: 'ctl-name', text: 'Close the whole site' }), maintMsg),
         h('p', { class: 'muted small', text: 'Everyone except admins sees the message and can’t use the app. Admins keep full access.' }),
-        h('h3', { text: 'Close individual pages', style: 'margin-top:8px' }), ...rows.map(r => r.el), h('div', {}, save)),
+        h('h3', { text: 'Close individual pages', style: 'margin-top:8px' }), ...rows.map(r => r.el),
+        h('h3', { text: 'Age separation', style: 'margin-top:8px' }),
+        h('div', { class: 'ctl-row' }, ageOn, h('span', { class: 'ctl-name', text: 'Keep under-18s and adults apart' })),
+        h('p', { class: 'muted small', text: 'On: under-18s only see groups and people under 18, adults only see 18+. Ages are self-declared.' }),
+        h('div', {}, save)),
       h('div', { class: 'section' }, h('div', { class: 'section-title', text: 'Recent admin activity' }),
         st.recent.length ? h('div', { class: 'stack', style: 'gap:6px' }, st.recent.map(r => h('div', { class: 'arow small-row' },
           h('span', {}, h('b', { text: T(r.admin || 'admin') }), ' ' + r.action + ' ', h('span', { class: 'muted', text: T(r.target) })), h('span', { class: 'muted small', text: when(r.at) }))))
@@ -961,24 +971,31 @@ function openCreate() {
   const game = selectEl(S.meta.games, '', 'Choose a game');
   const mode = selectEl([['casual', 'Casual'], ['competitive', 'Competitive']], 'casual');
   const region = selectEl(S.meta.regions, S.me.region || '', 'Choose a region');
-  const amin = h('input', { class: 'input', type: 'number', min: 13, max: 99, placeholder: '13', 'aria-label': 'Minimum age' });
-  const amax = h('input', { class: 'input', type: 'number', min: 13, max: 99, placeholder: '99', 'aria-label': 'Maximum age' });
+  // Age separation: under-18s create groups for 13-17, adults for 18-99 (unless an admin switched the separation off).
+  const sep = S.site.ageSeparation !== false, minor = S.me.age > 0 && S.me.age < 18;
+  const lo = !sep || minor ? 13 : 18, hi = !sep ? 99 : minor ? 17 : 99;
+  const amin = h('input', { class: 'input', type: 'number', min: lo, max: hi, placeholder: String(lo), 'aria-label': 'Minimum age' });
+  const amax = h('input', { class: 'input', type: 'number', min: lo, max: hi, placeholder: String(hi), 'aria-label': 'Maximum age' });
+  const clamp = (el) => el.addEventListener('change', () => { const v = parseInt(el.value, 10); if (!isNaN(v)) el.value = Math.min(hi, Math.max(lo, v)); });
+  clamp(amin); clamp(amax);
+  const privacy = selectEl([['public', 'Public: anyone can join'], ['request', 'Request to join: you approve people'], ['private', 'Private: invite only, not listed']], 'public');
   const desc = h('textarea', { class: 'textarea', maxlength: 300, placeholder: 'What’s the vibe? When do you play?' });
-  const fn = field('Group name', name), fg = field('Game', game), fm = field('Play style', mode), fr = field('Region', region), fd = field('Description', desc);
+  const fn = field('Group name', name), fg = field('Game', game), fm = field('Play style', mode), fr = field('Region', region), fd = field('Description', desc), fpr = field('Who can join', privacy);
+  const audience = h('p', { class: 'muted small audience-note', text: !sep ? 'Open to ages 13–99.' : minor ? 'This group will be for ages 13–17 only. Adults can’t see it.' : 'This group will be for ages 18+ only. Under-18s can’t see it.' });
   const err = h('div', { class: 'form-error', role: 'alert' });
   const submit = h('button', { class: 'btn block', type: 'submit' }, 'Create group');
   const form = h('form', { class: 'stack', style: 'gap:12px', novalidate: true, onsubmit: async (e) => {
     e.preventDefault(); err.textContent = '';
-    const a = parseInt(amin.value, 10) || 13, b = parseInt(amax.value, 10) || 99;
+    const a = parseInt(amin.value, 10) || lo, b = parseInt(amax.value, 10) || hi;
     const ok = [fn.setError(name.value.trim().length >= 3 ? '' : 'Give it a name (3+ characters)'), fg.setError(game.value ? '' : 'Choose a game'), fr.setError(region.value ? '' : 'Choose a region')].every(Boolean);
-    if (a < 13 || b > 99 || a > b) { err.textContent = 'Age range must be between 13 and 99, with min below max.'; return; }
+    if (a < lo || b > hi || a > b) { err.textContent = `Age range must be between ${lo} and ${hi}, with min below max.`; return; }
     if (!ok) return;
     submit.disabled = true; submit.classList.add('loading');
     try {
-      const r = await api('POST', '/api/groups', { name: name.value.trim(), game: game.value, mode: mode.value, region: region.value, ageMin: a, ageMax: b, description: desc.value.trim() });
+      const r = await api('POST', '/api/groups', { name: name.value.trim(), game: game.value, mode: mode.value, region: region.value, ageMin: a, ageMax: b, description: desc.value.trim(), privacy: privacy.value });
       await refreshMine(); close(); go('#/group/' + enc(r.id || (r.group && r.group.id))); toast('Group created');
     } catch (ex) { err.textContent = T(ex.message); } finally { submit.disabled = false; submit.classList.remove('loading'); }
-  } }, fn, fg, h('div', { class: 'row' }, fm, fr), h('div', { class: 'field' }, h('span', { class: 'label', text: 'Age range' }), h('div', { class: 'row' }, amin, amax)), fd, err, submit);
+  } }, fn, fg, h('div', { class: 'row' }, fm, fr), h('div', { class: 'field' }, h('span', { class: 'label', text: 'Age range' }), h('div', { class: 'row' }, amin, amax), audience), fpr, fd, err, submit);
   const close = openSheet('Create a group', form);
 }
 
