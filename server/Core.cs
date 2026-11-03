@@ -81,17 +81,42 @@ public static class Core
             region = (string)u["region"]!, age, ageRange = AgeRange(age),
             favoriteGames = JsonSerializer.Deserialize<string[]>((string)u["games"]!) ?? Array.Empty<string>(),
             onboarded = Convert.ToInt32(u["onboarded"]) == 1, status = (string)u["status"]!,
-            playing = u["playing"] as string
+            playing = u["playing"] as string,
+            playingWith = PlayingPartyCount((long)u["id"]!, u["playing"] as string)
         };
     }
     public static string? AvatarUrl(long id, object? ver) => ver != null && Convert.ToInt64(ver) > 0 ? $"/api/avatars/{id}?v={Convert.ToInt64(ver)}" : null;
     public static string AgeRange(int a) => a <= 0 ? "" : a < 18 ? "13-17" : a < 25 ? "18-24" : a < 35 ? "25-34" : a < 45 ? "35-44" : "45+";
 
+    public static int PlayingPartyCount(long userId, string? playing)
+    {
+        if (string.IsNullOrWhiteSpace(playing)) return 0;
+        try
+        {
+            var clean = Clean(playing, 40).Trim();
+            if (string.IsNullOrEmpty(clean)) return 0;
+            var count = Db.Scalar(@"
+                SELECT (SELECT COUNT(*) - 1 FROM members m WHERE m.groupId=g.id) 
+                FROM grps g 
+                JOIN members me ON me.groupId=g.id 
+                WHERE me.userId=@u AND (LOWER(g.game)=LOWER(@p) OR LOWER(@p) LIKE '%' || LOWER(g.game) || '%' OR LOWER(g.game) LIKE '%' || LOWER(@p) || '%')
+                ORDER BY (SELECT COUNT(*) FROM members m2 WHERE m2.groupId=g.id) DESC 
+                LIMIT 1",
+                ("@u", userId), ("@p", clean));
+            if (count == null || count == DBNull.Value) return 0;
+            var n = Convert.ToInt32(count);
+            return n > 0 ? n : 0;
+        }
+        catch { return 0; }
+    }
+
     public static object PersonObj(Dictionary<string, object?> r, bool isFriend) => new
     {
         id = (long)r["id"]!, username = (string)r["username"]!, displayName = r["display"] as string, avatar = AvatarUrl((long)r["id"]!, r["avatarVer"]),
         avatarColor = (string)r["color"]!, rckt = IsRckt(Col(r, "rcktUntil")),
-        status = (string)r["status"]!, playing = r["playing"] as string, region = (string)r["region"]!, isFriend
+        status = (string)r["status"]!, playing = r["playing"] as string,
+        playingWith = PlayingPartyCount((long)r["id"]!, r["playing"] as string),
+        region = (string)r["region"]!, isFriend
     };
 
     public const string GroupSel = @"SELECT g.id,g.name,g.game,g.mode,g.region,g.ageMin,g.ageMax,g.description,g.color,

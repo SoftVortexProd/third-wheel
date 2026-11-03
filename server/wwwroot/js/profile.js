@@ -1,4 +1,4 @@
-﻿/* Profile features: per-game rank/role, play style, availability, recommendations. Loaded after app.js; uses window.TW.
+/* Profile features: per-game rank/role, play style, availability, recommendations. Loaded after app.js; uses window.TW.
    Everything user-supplied is shown through textContent (T() decodes the server's HTML entities). */
 (() => {
 'use strict';
@@ -117,22 +117,55 @@ function declaredSummary(av) {
 let settingsSlot = null, gameHolder = null;
 function gameCard(m, d) {
   const favs = TW.me.favoriteGames || [];
-  const rows = favs.map(g => {
-    const info = m.games[g] || { ranks: [], roles: [] };
-    const cur = d.games.find(x => x.game === g) || { rank: '', role: '' };
-    const rank = h('input', { class: 'input', type: 'text', maxlength: 24, value: T(cur.rank), placeholder: 'Rank', 'aria-label': `${T(g)} rank`, autocomplete: 'off' });
-    const role = h('input', { class: 'input', type: 'text', maxlength: 24, value: T(cur.role), placeholder: 'Role', 'aria-label': `${T(g)} role`, autocomplete: 'off' });
-    suggestInput(rank, () => info.ranks.map(x => [x, x])); suggestInput(role, () => info.roles.map(x => [x, x]));
-    return { g, rank, role, el: h('div', { class: 'gd-row' }, h('b', { class: 'gd-name', text: T(g) }), rank, role) };
+  const metaGames = (m && m.games) || {};
+  // Only games that support competitive ranks or squad roles
+  const eligible = favs.filter(g => {
+    const info = metaGames[g];
+    return info && ((info.ranks && info.ranks.length) || (info.roles && info.roles.length));
   });
+
+  const rows = eligible.map(g => {
+    const info = metaGames[g] || { ranks: [], roles: [] };
+    const cur = (d.games || []).find(x => x.game === g) || { rank: '', role: '' };
+    const hasRanks = info.ranks && info.ranks.length > 0;
+    const hasRoles = info.roles && info.roles.length > 0;
+
+    let rank = null;
+    if (hasRanks) {
+      rank = h('input', { class: 'input', type: 'text', maxlength: 24, value: T(cur.rank), placeholder: 'Rank', 'aria-label': `${T(g)} rank`, autocomplete: 'off' });
+      suggestInput(rank, () => info.ranks.map(x => [x, x]));
+    }
+
+    let role = null;
+    if (hasRoles) {
+      role = h('input', { class: 'input', type: 'text', maxlength: 24, value: T(cur.role), placeholder: hasRanks ? 'Role' : 'Playstyle / Role', 'aria-label': `${T(g)} role`, autocomplete: 'off' });
+      suggestInput(role, () => info.roles.map(x => [x, x]));
+    }
+
+    const fields = [rank, role].filter(Boolean);
+    const el = h('div', { class: 'gd-row' + (fields.length === 1 ? ' gd-single' : '') }, h('b', { class: 'gd-name', text: T(g) }), ...fields);
+    return { g, rank, role, el };
+  });
+
   const save = btn('Save game details', { icon: 'check' });
   save.addEventListener('click', () => busy(save, async () => {
-    await api('PUT', '/api/me/game-details', { games: rows.map(r => ({ game: r.g, rank: r.rank.value.trim(), role: r.role.value.trim() })) });
+    await api('PUT', '/api/me/game-details', {
+      games: rows.map(r => ({
+        game: r.g,
+        rank: r.rank ? r.rank.value.trim() : '',
+        role: r.role ? r.role.value.trim() : ''
+      }))
+    });
     toast('Game details saved');
   }));
+
+  const note = favs.length && !rows.length
+    ? 'None of your selected favorite games use competitive ranks or squad roles (like Valorant, CS2, or Overwatch). You can add competitive games in Settings to set ranks and roles.'
+    : 'Pick your favorite games above and save, then add your rank and role for each here.';
+
   return h('div', { class: 'card', style: 'padding:24px;display:flex;flex-direction:column;gap:14px' },
-    h('div', {}, h('h3', { text: 'Rank & role per game' }), h('p', { class: 'muted small', text: 'Shown on your profile, like “Valorant · Diamond · Controller”.' })),
-    ...(rows.length ? rows.map(r => r.el) : [h('p', { class: 'muted', text: 'Pick your favorite games above and save, then add your rank and role for each here.' })]),
+    h('div', {}, h('h3', { text: 'Rank & role per game' }), h('p', { class: 'muted small', text: 'Shown on your profile for games with competitive ranks or squad roles (like “Valorant · Diamond · Controller”).' })),
+    ...(rows.length ? rows.map(r => r.el) : [h('p', { class: 'muted', text: note })]),
     rows.length ? h('div', {}, save) : null);
 }
 async function refreshGames() {

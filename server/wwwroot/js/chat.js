@@ -1,4 +1,4 @@
-﻿/* Chat module: the full-featured chat pane (replies, reactions, edit/delete, typing, attachments, lightbox)
+/* Chat module: the full-featured chat pane (replies, reactions, edit/delete, typing, attachments, lightbox)
    plus the RCKT pieces (Settings card, admin button, profile badge). Loaded after app.js; uses window.TW.
    app.js's makeChat() delegates here when it is given cfg.conv = { kind: 'g' | 'd', id }. */
 (() => {
@@ -7,7 +7,7 @@ const TW = window.TW;
 if (!TW) return;
 const { h, api, toast, T, nm, avatar, openSheet, confirmSheet, btn, field, selectEl } = TW;
 const MB = 1024 * 1024;
-const EMOJI = ['👍', '❤️', '😂', '😮', '😢', '🔥', '🎉', '👀'];
+const EMOJI = ['??', '??', '??', '??', '??', '??', '??', '??'];
 const FILE_URL = /^\/api\/files\/\d+$/;
 const reduce = () => window.TWM && TWM.reduce();
 
@@ -280,7 +280,9 @@ function make(cfg) {
     const own = m.userId === TW.me.id;
     const when = new Date(m.createdAt);
     const el = h('div', { class: 'msg' + (own ? ' own' : '') + (m.deleted ? ' deleted' : ''), 'data-mid': m.id });
-    const head = h('div', { class: 'head' }, h('b', { text: nm(m) }), m.rckt ? rcktBadge() : null,
+    const author = h('b', { class: 'msg-author', style: 'cursor:pointer', title: 'View profile', text: nm(m) });
+    author.addEventListener('click', (e) => { e.stopPropagation(); TW.openProfile(m.userId); });
+    const head = h('div', { class: 'head' }, author, m.rckt ? rcktBadge() : null,
       h('time', { text: isNaN(when) ? '' : when.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }), datetime: isNaN(when) ? null : when.toISOString() }),
       m.editedAt ? h('span', { class: 'edited', text: '(edited)', title: 'Edited ' + new Date(m.editedAt).toLocaleString() }) : null);
     const body = h('div', { class: 'body' }, head);
@@ -318,7 +320,11 @@ function make(cfg) {
         }, h('span', { class: 'e', text: r.emoji }), h('span', { class: 'n', text: String(r.count) })))));
       }
     }
-    el.append(avatar(m, 'md'), body);
+    const av = avatar(m, 'md');
+    av.style.cursor = 'pointer';
+    av.title = 'View profile';
+    av.addEventListener('click', (e) => { e.stopPropagation(); TW.openProfile(m.userId); });
+    el.append(av, body);
     if (!m.deleted) {
       const acts = h('div', { class: 'actions', role: 'toolbar', 'aria-label': 'Message actions' });
       const reactBtn = iconBtn('smile', 'Add a reaction', () => pickEmoji(reactBtn, (e) => react(m, e)));

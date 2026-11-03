@@ -47,7 +47,7 @@ const SV = {
   'Password must be at least 8 characters': 'Lösenordet måste vara minst 8 tecken', 'Find a group that plays the way you do.': 'Hitta en grupp som spelar som du.',
   'Search groups and people': 'Sök grupper och personer', 'Feed': 'Flöde', 'Find groups': 'Hitta grupper', 'Friends & invites': 'Vänner & inbjudningar',
   'My groups': 'Mina grupper', 'Create a group': 'Skapa en grupp', 'Admin panel': 'Adminpanel', 'Friend requests and invites': 'Vänförfrågningar och inbjudningar',
-  'Settings': 'Inställningar', 'Friends': 'Vänner', 'Search': 'Sök', 'Playing {game}': 'Spelar {game}',
+  'Settings': 'Inställningar', 'Friends': 'Vänner', 'Search': 'Sök', 'Playing {game}': 'Spelar {game}', 'Playing {game} with +{count}': 'Spelar {game} med +{count}', 'View profile': 'Visa profil',
   'No groups yet. Find one or create your own.': 'Inga grupper än. Hitta en eller skapa din egen.', 'Playing now': 'Spelar nu',
   'No friends yet': 'Inga vänner än', 'Search for people and send a request.': 'Sök efter personer och skicka en förfrågan.', '{n} online': '{n} online',
   'Your feed': 'Ditt flöde', 'Groups picked for your games, region and age.': 'Grupper utvalda för dina spel, din region och din ålder.',

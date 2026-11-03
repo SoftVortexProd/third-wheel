@@ -1,4 +1,4 @@
-﻿/* Third Wheel — flat, tokenized, no gradients */
+/* Third Wheel — flat, tokenized, no gradients */
 :root {
   --color-bg: #000000;
   --color-surface: #09090b;
@@ -223,7 +223,7 @@ input[type="password"]::-ms-reveal, input[type="password"]::-ms-clear { display:
 html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
 body { min-width: 300px; }
 h1, h2, h3, p, .muted, .field > label, .field > .label, .field-msg, .section-title, .empty { overflow-wrap: anywhere; }
-.btn { white-space: normal; text-align: center; overflow-wrap: anywhere; line-height: 18px; max-width: 100%; }
+.btn { text-align: center; line-height: 20px; white-space: nowrap; flex-shrink: 0; }
 .btn svg { flex: none; }
 .chip { max-width: 100%; white-space: normal; overflow-wrap: anywhere; text-align: left; }
 .tab { overflow-wrap: anywhere; line-height: 18px; }
@@ -281,6 +281,9 @@ h1, h2, h3, p, .muted, .field > label, .field > .label, .field-msg, .section-tit
 .frow:hover { background: var(--color-raised); }
 .frow .meta { flex: 1; min-width: 0; line-height: 18px; }
 .frow .meta b { display: block; font-size: var(--fs-md); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.person-name { cursor: pointer; transition: color var(--dur-fast); }
+.person-name:hover { text-decoration: underline; color: var(--color-accent-text); }
+.frow .avatar { cursor: pointer; }
 .frow .meta span { display: flex; align-items: center; gap: 5px; font-size: var(--fs-sm); color: var(--color-text-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .frow .meta span.playing { color: #7ddc9a; }
 .frow.off .avatar { opacity: .55; }

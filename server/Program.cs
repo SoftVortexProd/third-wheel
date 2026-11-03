@@ -1,4 +1,4 @@
-﻿using static Core;
+using static Core;
 using System.Collections.Concurrent;
 using System.Net;
 using System.Security.Cryptography;
@@ -432,6 +432,7 @@ api.MapGet("users/{id:long}", (HttpContext c, long id) => WithUser(c, uid =>
     {
         id, username = (string)u["username"]!, displayName = u["display"] as string, avatar = AvatarUrl(id, u["avatarVer"]),
         avatarColor = (string)u["color"]!, status = (string)u["status"]!, playing = u["playing"] as string,
+        playingWith = PlayingPartyCount(id, u["playing"] as string),
         region = (string)u["region"]!, ageRange = AgeRange(Convert.ToInt32(u["age"])), favoriteGames = games,
         isFriend = friend, isMe = id == uid, joined = (string)u["created"]!, rckt = IsRckt(u["rcktUntil"])
     });

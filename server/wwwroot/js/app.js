@@ -69,6 +69,25 @@ const nid = (p) => p + (++uid);
 const nm = (u) => T((u && (u.displayName || u.username)) || '?');
 const AV_RE = /^\/api\/avatars\/\d+\?v=\d+$/;
 
+function playingStatusText(p) {
+  if (!p || !p.playing) return '';
+  let extra = p.playingWith;
+  if ((extra == null || extra <= 0) && S && S.mine && S.mine.length) {
+    const pGame = String(p.playing).trim().toLowerCase();
+    const match = S.mine.find(g => {
+      const gGame = String(g.game || '').trim().toLowerCase();
+      return gGame && (gGame === pGame || pGame.includes(gGame) || gGame.includes(pGame));
+    });
+    if (match && match.memberCount > 1) {
+      extra = match.memberCount - 1;
+    }
+  }
+  if (extra && extra > 0) {
+    return tr('Playing {game} with +{count}', { game: T(p.playing), count: extra });
+  }
+  return tr('Playing {game}', { game: T(p.playing) });
+}
+
 function avatar(u, size = 'md', withStatus = false) {
   u = u || {};
   const el = h('span', { class: 'avatar ' + size, 'aria-hidden': 'true' }, (nm(u).trim()[0] || '?').toUpperCase());
@@ -576,12 +595,33 @@ function emptyState(title, text, action) {
 function stagger(list) { [...list.children].forEach((c, i) => c.style.setProperty('--i', Math.min(i, 12))); return list; }
 function personRow(p, o = {}) {
   const sk = statusKey(p.status);
-  const sub = p.playing ? h('span', { class: 'playing' }, icon('pad', 13), 'Playing ' + T(p.playing))
+  const sub = p.playing ? h('span', { class: 'playing' }, icon('pad', 13), playingStatusText(p))
     : h('span', {}, o.region && p.region ? T(p.region) : STATUS[sk]);
-  return h(o.href ? 'a' : 'div', { class: 'frow ' + (o.big ? 'big ' : '') + (sk === 'offline' ? 'off' : '') + (o.href ? ' link' : ''), href: o.href, 'data-key': p.id != null ? 'p' + p.id : null },
-    avatar(p, 'md', true),
-    h('div', { class: 'meta' }, h('b', { text: nm(p) }, p.displayName && p.displayName !== p.username ? h('small', { class: 'handle', text: ' @' + T(p.username) }) : null), sub),
-    o.action ? h('div', { class: 'act' }, o.action) : null);
+
+  const av = avatar(p, o.big ? 'lg' : 'md', true);
+  av.style.cursor = 'pointer';
+  av.title = tr('View profile');
+  av.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); openProfile(p.id); });
+
+  const nameEl = h('b', { class: 'person-name', style: 'cursor:pointer', title: tr('View profile'), text: nm(p) },
+    p.displayName && p.displayName !== p.username ? h('small', { class: 'handle', text: ' @' + T(p.username) }) : null
+  );
+  nameEl.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); openProfile(p.id); });
+
+  const meta = h('div', { class: 'meta' }, nameEl, sub);
+  const row = h(o.href ? 'a' : 'div', {
+    class: 'frow ' + (o.big ? 'big ' : '') + (sk === 'offline' ? 'off' : '') + (o.href ? ' link' : ''),
+    href: o.href,
+    'data-key': p.id != null ? 'p' + p.id : null
+  }, av, meta, o.action ? h('div', { class: 'act' }, o.action) : null);
+
+  if (!o.href) {
+    row.style.cursor = 'pointer';
+    row.addEventListener('click', (e) => {
+      if (!e.target.closest('button, a, input, select, textarea')) openProfile(p.id);
+    });
+  }
+  return row;
 }
 
 /* ================= auth ================= */
@@ -734,8 +774,16 @@ function buildShell() {
 }
 function renderUserPanel() {
   const me = S.me; if (!me || !S.el.user) return;
-  S.el.user.replaceChildren(avatar(me, 'sm', false),
-    h('div', { class: 'meta' }, h('b', { text: nm(me) }), h('span', { class: 'muted small', text: me.playing ? tr('Playing {game}', { game: T(me.playing) }) : STATUS[statusKey(me.status)] })),
+  const av = avatar(me, 'sm', false);
+  av.style.cursor = 'pointer';
+  av.title = tr('View profile');
+  av.addEventListener('click', () => openProfile(me.id));
+  const meta = h('div', { class: 'meta', style: 'cursor:pointer', title: tr('View profile') },
+    h('b', { text: nm(me) }),
+    h('span', { class: 'muted small', text: me.playing ? playingStatusText(me) : STATUS[statusKey(me.status)] })
+  );
+  meta.addEventListener('click', () => openProfile(me.id));
+  S.el.user.replaceChildren(av, meta,
     h('a', { class: 'icon-btn', href: '#/settings', 'aria-label': tr('Settings') }, icon('gear', 20)));
 }
 function renderRail() {
@@ -1031,7 +1079,7 @@ async function openProfile(id, opts) {
   const body = h('div', { class: 'profile' },
     h('div', { class: 'profile-top' + (more ? ' has-more' : '') }, avatar(p, 'xl', true),
       h('div', { class: 'profile-names' }, h('h2', { text: nm(p) }), h('p', { class: 'muted', text: '@' + T(p.username) }),
-        h('p', { class: 'status-line' + (p.playing ? ' playing' : ''), text: p.playing ? 'Playing ' + T(p.playing) : STATUS[sk] })), more),
+        h('p', { class: 'status-line' + (p.playing ? ' playing' : ''), text: p.playing ? playingStatusText(p) : STATUS[sk] })), more),
     h('div', { class: 'prows' }, row('Region', T(p.region)), row('Age', p.ageRange), row('Member since', isNaN(joined) ? '' : joined.toLocaleDateString(undefined, { month: 'long', year: 'numeric' }))),
     games.length ? h('div', { class: 'section' }, h('div', { class: 'section-title', text: 'Favorite games' }), h('div', { class: 'chips favgames' }, games.map(g => h('span', { class: 'chip', text: T(g) })))) : null,
     extra, actions);
@@ -1065,8 +1113,16 @@ function makeChat(cfg) {
     for (const m of fresh) {
       seen.add(m.id); if (typeof m.id === 'number' && m.id > lastId) lastId = m.id;
       const when = new Date(m.createdAt);
-      const el = h('div', { class: 'msg' + (m.userId === S.me.id ? ' own' : '') }, avatar(m, 'md'),
-        h('div', { class: 'body' }, h('div', { class: 'head' }, h('b', { text: nm(m) }), h('time', { text: isNaN(when) ? '' : when.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }), datetime: isNaN(when) ? null : when.toISOString() })),
+      const av = avatar(m, 'md');
+      av.style.cursor = 'pointer';
+      av.title = tr('View profile');
+      av.addEventListener('click', (e) => { e.stopPropagation(); openProfile(m.userId); });
+
+      const author = h('b', { class: 'msg-author', style: 'cursor:pointer', title: tr('View profile'), text: nm(m) });
+      author.addEventListener('click', (e) => { e.stopPropagation(); openProfile(m.userId); });
+
+      const el = h('div', { class: 'msg' + (m.userId === S.me.id ? ' own' : '') }, av,
+        h('div', { class: 'body' }, h('div', { class: 'head' }, author, h('time', { text: isNaN(when) ? '' : when.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }), datetime: isNaN(when) ? null : when.toISOString() })),
           h('p', { text: T(m.text) })));
       if (initial) el.style.animationDelay = (300 + Math.min(made.length, 12) * 40) + 'ms';
       log.append(el); made.push(el);
@@ -1089,7 +1145,7 @@ async function dmView(id, tok) {
   const [p, first] = await Promise.all([api('GET', '/api/users/' + enc(id)), api('GET', '/api/dms/' + enc(id))]);
   if (stale(tok)) return;
   const sub = h('span', { class: 'muted small' });
-  const paintSub = () => { const f = S.friends.find(x => x.id === p.id) || p; sub.textContent = f.playing ? 'Playing ' + T(f.playing) : STATUS[statusKey(f.status)]; };
+  const paintSub = () => { const f = S.friends.find(x => x.id === p.id) || p; sub.textContent = f.playing ? playingStatusText(f) : STATUS[statusKey(f.status)]; };
   paintSub();
   const who = h('button', { class: 'dm-who', type: 'button', 'aria-label': 'View ' + nm(p) + '’s profile', onclick: () => openProfile(p.id) },
     avatar(p, 'md', true), h('span', { class: 'dm-names' }, h('b', { text: nm(p) }), sub));
@@ -1456,7 +1512,7 @@ document.addEventListener('visibilitychange', () => { if (!document.hidden) poll
 window.TW = {
   $, h, icon, api, qs, enc, toast, T, nm, avatar, safeColor, ink, STATUS, statusKey,
   openSheet, confirmSheet, btn, busy, field, tabs, selectEl, suggestInput, gamePicker, switchEl, emptyState, stagger, when,
-  personRow, groupCard, makeChat, openProfile, go, show, route, stale,
+  personRow, groupCard, makeChat, openProfile, go, show, route, stale, playingStatusText,
   loadSocial, refreshMine, renderFriends, renderBadge, renderUserPanel, applyAutoGame,
   t: tr, loggedOut, prepAvatar, sendAvatar, autoOn,
   get S() { return S; }, get me() { return S.me; }, set me(u) { S.me = u; }

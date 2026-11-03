@@ -1,6 +1,7 @@
-﻿/* groups feature styles: roles, moderation menu, rules, requests. Flat colours only, no gradients, nothing pulses. */
+/* groups feature styles: roles, moderation menu, rules, requests. Flat colours only, no gradients, nothing pulses. */
 
-.group-actions { align-items: center; }
+.group-actions { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2); }
+.group-actions > .btn { flex: none; white-space: nowrap; min-width: max-content; }
 
 .role-badge { display: inline-block; margin-left: 6px; padding: 1px 7px; border-radius: 999px; font-size: 10px; line-height: 16px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; vertical-align: 1px; }
 .role-badge.owner { background: var(--color-accent-soft); color: var(--color-accent-text); border: 1px solid #2d3270; }
