@@ -93,18 +93,21 @@ static object UserObj(Dictionary<string, object?> u)
     var age = Convert.ToInt32(u["age"]);
     return new
     {
-        id = (long)u["id"]!, username = (string)u["username"]!, avatarColor = (string)u["color"]!,
+        id = (long)u["id"]!, username = (string)u["username"]!, displayName = u["display"] as string, avatar = AvatarUrl((long)u["id"]!, u["avatarVer"]),
+        avatarColor = (string)u["color"]!,
         region = (string)u["region"]!, age, ageRange = AgeRange(age),
         favoriteGames = JsonSerializer.Deserialize<string[]>((string)u["games"]!) ?? Array.Empty<string>(),
         onboarded = Convert.ToInt32(u["onboarded"]) == 1, status = (string)u["status"]!,
         playing = u["playing"] as string
     };
 }
+static string? AvatarUrl(long id, object? ver) => ver != null && Convert.ToInt64(ver) > 0 ? $"/api/avatars/{id}?v={Convert.ToInt64(ver)}" : null;
 static string AgeRange(int a) => a <= 0 ? "" : a < 18 ? "13-17" : a < 25 ? "18-24" : a < 35 ? "25-34" : a < 45 ? "35-44" : "45+";
 
 object PersonObj(Dictionary<string, object?> r, bool isFriend) => new
 {
-    id = (long)r["id"]!, username = (string)r["username"]!, avatarColor = (string)r["color"]!,
+    id = (long)r["id"]!, username = (string)r["username"]!, displayName = r["display"] as string, avatar = AvatarUrl((long)r["id"]!, r["avatarVer"]),
+    avatarColor = (string)r["color"]!,
     status = (string)r["status"]!, playing = r["playing"] as string, region = (string)r["region"]!, isFriend
 };
 
@@ -117,6 +120,12 @@ static object GroupObj(Dictionary<string, object?> r) => new
     region = (string)r["region"]!, ageMin = Convert.ToInt32(r["ageMin"]), ageMax = Convert.ToInt32(r["ageMax"]),
     description = (string)r["description"]!, memberCount = Convert.ToInt32(r["memberCount"]),
     isMember = Convert.ToInt32(r["isMember"]) > 0, color = (string)r["color"]!
+};
+const string MsgSel = "SELECT m.id,m.userId,u.username,u.display,u.avatarVer,u.color avatarColor,m.text,m.createdAt FROM messages m JOIN users u ON u.id=m.userId";
+static object MsgObj(Dictionary<string, object?> r) => new
+{
+    id = (long)r["id"]!, userId = (long)r["userId"]!, username = (string)r["username"]!, displayName = r["display"] as string,
+    avatar = AvatarUrl((long)r["userId"]!, r["avatarVer"]), avatarColor = (string)r["avatarColor"]!, text = (string)r["text"]!, createdAt = (string)r["createdAt"]!
 };
 bool AreFriends(long a, long b) => Db.Scalar("SELECT 1 FROM friends WHERE a=@a AND b=@b", ("@a", Math.Min(a, b)), ("@b", Math.Max(a, b))) != null;
 bool IsMember(long g, long u) => Db.Scalar("SELECT 1 FROM members WHERE groupId=@g AND userId=@u", ("@g", g), ("@u", u)) != null;
@@ -182,6 +191,84 @@ api.MapPut("me/settings", (HttpContext c, SettingsIn b) => WithUser(c, uid =>
         ("@o", b.Onboarded == null ? null : b.Onboarded.Value ? 1 : 0), ("@i", uid));
     return Results.Json(UserDto(uid));
 }));
+
+// ---------- profile: display name, username (password required) ----------
+var ctrlRx = new Regex(@"[\p{C}\p{Zl}\p{Zp}]", RegexOptions.Compiled);
+api.MapPut("me/profile", (HttpContext c, ProfileIn b) => WithUser(c, uid =>
+{
+    var key = $"pf:{uid}";
+    if (Limited(key, 5, TimeSpan.FromMinutes(5), false)) return Err("Too many attempts. Wait a few minutes.", 429);
+    var u = Db.Row("SELECT * FROM users WHERE id=@i", ("@i", uid))!;
+    if (!Db.Verify(b.Password ?? "", Convert.FromBase64String((string)u["salt"]!), Convert.FromBase64String((string)u["hash"]!)))
+    {
+        Limited(key, 5, TimeSpan.FromMinutes(5), true);
+        return Err("Your password is incorrect.", 403);
+    }
+    var name = (b.Username ?? (string)u["username"]!).Trim();
+    if (!userRx.IsMatch(name)) return Err("Username must be 3-20 letters, numbers or underscores.");
+    if (Db.Scalar("SELECT 1 FROM users WHERE username=@n COLLATE NOCASE AND id<>@i", ("@n", name), ("@i", uid)) != null) return Err("That username is taken.", 409);
+    var disp = ctrlRx.Replace(b.DisplayName ?? "", "").Trim();
+    if (disp.Length > 32) return Err("Display name can be at most 32 characters.");
+    Db.Exec("UPDATE users SET username=@n, display=@d WHERE id=@i", ("@n", name), ("@d", disp.Length == 0 ? null : Enc(disp)), ("@i", uid));
+    return Results.Json(UserDto(uid));
+}));
+
+// ---------- avatars (PNG / JPG / GIF / WebP; GIFs stay animated) ----------
+const int MaxAvatar = 5 * 1024 * 1024;
+api.MapPost("me/avatar", async Task<IResult> (HttpContext c) =>
+{
+    var uid = CurrentUser(c);
+    if (uid is null) return Err("Not signed in.", 401);
+    if (Limited($"av:{uid}", 12, TimeSpan.FromHours(1), true)) return Err("Too many uploads. Try again later.", 429);
+    if (c.Request.ContentLength > MaxAvatar) return Err("Image must be 5 MB or smaller.", 413);
+    using var ms = new MemoryStream();
+    var buf = new byte[81920]; int n;
+    while ((n = await c.Request.Body.ReadAsync(buf)) > 0)
+    {
+        ms.Write(buf, 0, n);
+        if (ms.Length > MaxAvatar) return Err("Image must be 5 MB or smaller.", 413);
+    }
+    var data = ms.ToArray();
+    var mime = SniffImage(data);
+    if (mime == null) return Err("Use a PNG, JPG, GIF or WebP image (max 4096 px).");
+    Db.Exec("INSERT OR REPLACE INTO avatars(userId,mime,data) VALUES(@u,@m,@d)", ("@u", uid.Value), ("@m", mime), ("@d", data));
+    Db.Exec("UPDATE users SET avatarVer=@v WHERE id=@i", ("@v", DateTime.UtcNow.Ticks), ("@i", uid.Value));
+    return Results.Json(UserDto(uid.Value));
+});
+
+api.MapDelete("me/avatar", (HttpContext c) => WithUser(c, uid =>
+{
+    Db.Exec("DELETE FROM avatars WHERE userId=@u", ("@u", uid));
+    Db.Exec("UPDATE users SET avatarVer=0 WHERE id=@i", ("@i", uid));
+    return Results.Json(UserDto(uid));
+}));
+
+api.MapGet("avatars/{id:long}", (HttpContext c, long id) => WithUser(c, _ =>
+{
+    var r = Db.Row("SELECT mime,data FROM avatars WHERE userId=@u", ("@u", id));
+    if (r == null) return Err("No picture.", 404);
+    // Served as an inert image: no sniffing, no scripts, no framing, even if the bytes were hostile.
+    c.Response.Headers["Content-Security-Policy"] = "default-src 'none'; sandbox";
+    c.Response.Headers["Cache-Control"] = "private, max-age=31536000, immutable";
+    return Results.Bytes((byte[])r["data"]!, (string)r["mime"]!);
+}));
+
+// Validate by magic bytes (never trust the client's content-type) and reject absurd dimensions.
+static string? SniffImage(byte[] d)
+{
+    if (d.Length < 32) return null;
+    static int Be32(byte[] b, int o) => (b[o] << 24) | (b[o + 1] << 16) | (b[o + 2] << 8) | b[o + 3];
+    if (d[0] == 0x89 && d[1] == 0x50 && d[2] == 0x4E && d[3] == 0x47 && d[4] == 0x0D && d[5] == 0x0A && d[6] == 0x1A && d[7] == 0x0A)
+        return Be32(d, 16) is > 0 and <= 4096 && Be32(d, 20) is > 0 and <= 4096 ? "image/png" : null;
+    if (d[0] == 0xFF && d[1] == 0xD8 && d[2] == 0xFF) return "image/jpeg";
+    if (d[0] == 'G' && d[1] == 'I' && d[2] == 'F' && d[3] == '8' && (d[4] == '7' || d[4] == '9') && d[5] == 'a')
+    {
+        int w = d[6] | (d[7] << 8), h = d[8] | (d[9] << 8);
+        return w is > 0 and <= 4096 && h is > 0 and <= 4096 ? "image/gif" : null;
+    }
+    if (d[0] == 'R' && d[1] == 'I' && d[2] == 'F' && d[3] == 'F' && d[8] == 'W' && d[9] == 'E' && d[10] == 'B' && d[11] == 'P') return "image/webp";
+    return null;
+}
 
 api.MapGet("meta", () => Results.Json(new { games = Db.Games, regions = Db.Regions }));
 
@@ -273,11 +360,11 @@ api.MapPost("groups/{id:long}/leave", (HttpContext c, long id) => WithUser(c, ui
 api.MapGet("groups/{id:long}/messages", (HttpContext c, long id, long? after) => WithUser(c, uid =>
 {
     if (!IsMember(id, uid)) return Err("Join the group to read its chat.", 403);
-    var sql = @"SELECT m.id,m.userId,u.username,u.color avatarColor,m.text,m.createdAt FROM messages m JOIN users u ON u.id=m.userId WHERE m.groupId=@g";
+    var sql = MsgSel + " WHERE m.groupId=@g";
     List<Dictionary<string, object?>> rows;
     if (after != null) rows = Db.Rows(sql + " AND m.id>@a ORDER BY m.id ASC LIMIT 200", ("@g", id), ("@a", after));
     else { rows = Db.Rows(sql + " ORDER BY m.id DESC LIMIT 100", ("@g", id)); rows.Reverse(); }
-    return Results.Json(rows.Select(r => new { id = (long)r["id"]!, userId = (long)r["userId"]!, username = (string)r["username"]!, avatarColor = (string)r["avatarColor"]!, text = (string)r["text"]!, createdAt = (string)r["createdAt"]! }));
+    return Results.Json(rows.Select(MsgObj));
 }));
 
 api.MapPost("groups/{id:long}/messages", (HttpContext c, long id, MessageIn b) => WithUser(c, uid =>
@@ -287,8 +374,8 @@ api.MapPost("groups/{id:long}/messages", (HttpContext c, long id, MessageIn b) =
     if (text.Length == 0) return Err("Message is empty.");
     if (Limited($"msg:{uid}", 30, TimeSpan.FromMinutes(1), true)) return Err("Slow down a little.", 429);
     var mid = Db.Insert("INSERT INTO messages(groupId,userId,text,createdAt) VALUES(@g,@u,@t,@c)", ("@g", id), ("@u", uid), ("@t", Enc(text)), ("@c", Now()));
-    var r = Db.Row("SELECT m.id,m.userId,u.username,u.color avatarColor,m.text,m.createdAt FROM messages m JOIN users u ON u.id=m.userId WHERE m.id=@i", ("@i", mid))!;
-    return Results.Json(new { id = (long)r["id"]!, userId = (long)r["userId"]!, username = (string)r["username"]!, avatarColor = (string)r["avatarColor"]!, text = (string)r["text"]!, createdAt = (string)r["createdAt"]! });
+    var r = Db.Row(MsgSel + " WHERE m.id=@i", ("@i", mid))!;
+    return Results.Json(MsgObj(r));
 }));
 
 // ---------- friends ----------
@@ -378,6 +465,7 @@ app.MapFallbackToFile("index.html");
 app.Run();
 
 record Creds(string? Username, string? Password);
+record ProfileIn(string? DisplayName, string? Username, string? Password);
 record SettingsIn(string? Region, int? Age, string[]? FavoriteGames, string? Playing, string? Status, bool? Onboarded);
 record GroupIn(string? Name, string? Game, string? Mode, string? Region, int? AgeMin, int? AgeMax, string? Description);
 record MessageIn(string? Text);
@@ -454,6 +542,11 @@ CREATE TABLE IF NOT EXISTS messages(id INTEGER PRIMARY KEY, groupId INTEGER, use
 CREATE INDEX IF NOT EXISTS ix_msg ON messages(groupId,id);
 CREATE TABLE IF NOT EXISTS friends(a INTEGER, b INTEGER, PRIMARY KEY(a,b));
 CREATE TABLE IF NOT EXISTS frequests(id INTEGER PRIMARY KEY, fromId INTEGER, toId INTEGER, UNIQUE(fromId,toId));
-CREATE TABLE IF NOT EXISTS invites(id INTEGER PRIMARY KEY, groupId INTEGER, fromId INTEGER, toId INTEGER, UNIQUE(groupId,toId));");
+CREATE TABLE IF NOT EXISTS invites(id INTEGER PRIMARY KEY, groupId INTEGER, fromId INTEGER, toId INTEGER, UNIQUE(groupId,toId));
+CREATE TABLE IF NOT EXISTS avatars(userId INTEGER PRIMARY KEY, mime TEXT NOT NULL, data BLOB NOT NULL);");
+        // Upgrade databases created before profiles existed.
+        var cols = Rows("PRAGMA table_info(users)").Select(r => (string)r["name"]!).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        if (!cols.Contains("display")) Exec("ALTER TABLE users ADD COLUMN display TEXT");
+        if (!cols.Contains("avatarVer")) Exec("ALTER TABLE users ADD COLUMN avatarVer INTEGER DEFAULT 0");
     }
 }

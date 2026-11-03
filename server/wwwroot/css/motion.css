@@ -22,9 +22,6 @@
 @keyframes fly { 0% { transform: none; opacity: 1; } 42% { transform: translate(22px, -22px) scale(.6); opacity: 0; } 43% { transform: translate(-22px, 22px) scale(.6); opacity: 0; } 100% { transform: none; opacity: 1; } }
 @keyframes toast-spring { from { opacity: 0; transform: translateX(40px) scale(.92); } to { opacity: 1; transform: none; } }
 @keyframes vt-in { from { opacity: 0; } to { opacity: 1; } }
-@keyframes drift-a { from { transform: translate(0, 0) rotate(0deg); } to { transform: translate(70px, 50px) rotate(40deg); } }
-@keyframes drift-b { from { transform: translate(0, 0) rotate(0deg); } to { transform: translate(-60px, -40px) rotate(-55deg); } }
-@keyframes drift-c { from { transform: translate(0, 0); } to { transform: translate(-40px, 70px); } }
 
 .stagger > * { animation-name: rise-spring; animation-duration: .6s; animation-timing-function: var(--ease-out); animation-delay: calc(var(--i, 0) * 45ms); }
 .stagger-pop > * { animation: pop-spring .6s var(--ease-out) backwards; animation-delay: calc(var(--i, 0) * 45ms); }
@@ -110,13 +107,6 @@ button.chip:active { transform: scale(.92); }
 .progress span::after { content: ""; position: absolute; inset: 0; background: var(--color-accent); transform: scaleX(0); transform-origin: left; transition: transform .6s var(--ease-out); }
 .progress span.on::after { transform: none; }
 
-/* ---------- Drifting rings (auth + onboarding) ---------- */
-.center-screen { position: relative; z-index: 1; }
-.orbits { position: fixed; inset: 0; overflow: hidden; pointer-events: none; z-index: 0; }
-.orbits i { position: absolute; border-radius: 50%; border: 2px solid var(--color-border); translate: calc(var(--px, 0) * var(--k, 20) * 1px) calc(var(--py, 0) * var(--k, 20) * 1px); transition: translate .9s var(--ease-out); }
-.orbits .o1 { --k: 26; width: 440px; height: 440px; left: -140px; top: -120px; animation: drift-a 28s ease-in-out infinite alternate; }
-.orbits .o2 { --k: -34; width: 320px; height: 320px; right: -80px; bottom: 6%; border-color: #2d3270; animation: drift-b 34s ease-in-out infinite alternate; }
-.orbits .o3 { --k: 48; width: 150px; height: 150px; right: 24%; top: 10%; border-color: var(--color-strong); background: var(--color-surface); animation: drift-c 24s ease-in-out infinite alternate; }
 
 /* ---------- Bottom bar (mobile) ---------- */
 @media (max-width: 899px) {

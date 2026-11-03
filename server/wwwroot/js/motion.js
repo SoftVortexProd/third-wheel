@@ -209,14 +209,6 @@ if (matchMedia('(hover: hover) and (pointer: fine)').matches) {
   document.addEventListener('pointerleave', () => { if (cur) clear(cur); cur = null; });
 }
 
-/* Background rings follow the pointer a little. */
-const parallax = rafThrottle((e) => {
-  const d = document.documentElement;
-  d.style.setProperty('--px', ((e.clientX / innerWidth - .5) * 2).toFixed(3));
-  d.style.setProperty('--py', ((e.clientY / innerHeight - .5) * 2).toFixed(3));
-});
-document.addEventListener('pointermove', (e) => { if (!reduce() && document.querySelector('.orbits')) parallax(e); }, { passive: true });
-
 addEventListener('resize', rafThrottle(nav));
 
 window.TWM = { motionPref, setMotionPref, reduce, transition, flip, morphHeight, flyFrom, slide, busyBtn, sheetIn, sheetOut, nav, prog, SPRING, EASE };

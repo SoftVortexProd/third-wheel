@@ -61,10 +61,19 @@ const reduceMotion = () => matchMedia('(prefers-reduced-motion: reduce)').matche
 let uid = 0;
 const nid = (p) => p + (++uid);
 
+/* What to call someone: their display name, falling back to their username. */
+const nm = (u) => T((u && (u.displayName || u.username)) || '?');
+const AV_RE = /^\/api\/avatars\/\d+\?v=\d+$/;
+
 function avatar(u, size = 'md', withStatus = false) {
   u = u || {};
-  const el = h('span', { class: 'avatar ' + size, 'aria-hidden': 'true' }, (T(u.username || '?').trim()[0] || '?').toUpperCase());
+  const el = h('span', { class: 'avatar ' + size, 'aria-hidden': 'true' }, (nm(u).trim()[0] || '?').toUpperCase());
   el.style.background = safeColor(u.avatarColor); el.style.color = ink(u.avatarColor);
+  if (typeof u.avatar === 'string' && AV_RE.test(u.avatar)) {
+    const img = h('img', { src: u.avatar, alt: '', decoding: 'async' });
+    img.addEventListener('error', () => img.remove());
+    el.append(img);
+  }
   if (!withStatus) return el;
   return h('span', { class: 'av-wrap' }, el, h('span', { class: 'dot ' + statusKey(u.status), 'aria-hidden': 'true' }));
 }
@@ -194,11 +203,9 @@ function personRow(p, o = {}) {
     : h('span', {}, o.region && p.region ? T(p.region) : STATUS[sk]);
   return h('div', { class: 'frow ' + (o.big ? 'big ' : '') + (sk === 'offline' ? 'off' : ''), 'data-key': p.id != null ? 'p' + p.id : null },
     avatar(p, 'md', true),
-    h('div', { class: 'meta' }, h('b', { text: T(p.username) }), sub),
+    h('div', { class: 'meta' }, h('b', { text: nm(p) }, p.displayName && p.displayName !== p.username ? h('small', { class: 'handle', text: ' @' + T(p.username) }) : null), sub),
     o.action ? h('div', { class: 'act' }, o.action) : null);
 }
-
-function orbits() { return h('div', { class: 'orbits', 'aria-hidden': 'true' }, h('i', { class: 'o1' }), h('i', { class: 'o2' }), h('i', { class: 'o3' })); }
 
 /* ================= auth ================= */
 const USER_RE = /^[A-Za-z0-9_.-]{3,20}$/;
@@ -234,7 +241,7 @@ function renderAuth() {
     h('div', { class: 'brand' }, h('img', { src: 'icon.svg', alt: '', width: 32, height: 32 }), 'Third Wheel'),
     h('p', { class: 'muted', style: 'margin-top:8px', text: 'Find a group that plays the way you do.' }),
     tb, form);
-  TWM.transition(() => $('#app').replaceChildren(orbits(), h('main', { class: 'center-screen' }, card)));
+  TWM.transition(() => $('#app').replaceChildren(h('main', { class: 'center-screen' }, card)));
   user.focus();
 }
 
@@ -247,7 +254,7 @@ function renderOnboarding() {
   const steps = ['Where do you play?', 'What do you play?', 'You’re set'];
   const brand = h('div', { class: 'brand' }, h('img', { src: 'icon.svg', alt: '', width: 32, height: 32 }), 'Welcome to Third Wheel');
   const progress = h('div', { class: 'progress', 'aria-hidden': 'true' }, steps.map(() => h('span')));
-  TWM.transition(() => $('#app').replaceChildren(orbits(), h('main', { class: 'center-screen' }, card)));
+  TWM.transition(() => $('#app').replaceChildren(h('main', { class: 'center-screen' }, card)));
   function draw() {
     const body = h('div');
     const err = h('div', { class: 'form-error', role: 'alert' });
@@ -346,7 +353,7 @@ function buildShell() {
 function renderUserPanel() {
   const me = S.me; if (!me || !S.el.user) return;
   S.el.user.replaceChildren(avatar(me, 'sm', false),
-    h('div', { class: 'meta' }, h('b', { text: T(me.username) }), h('span', { class: 'muted small', text: me.playing ? 'Playing ' + T(me.playing) : STATUS[statusKey(me.status)] })),
+    h('div', { class: 'meta' }, h('b', { text: nm(me) }), h('span', { class: 'muted small', text: me.playing ? 'Playing ' + T(me.playing) : STATUS[statusKey(me.status)] })),
     h('a', { class: 'icon-btn', href: '#/settings', 'aria-label': 'Settings' }, icon('gear', 20)));
 }
 function renderRail() {
@@ -550,7 +557,7 @@ async function groupView(id, tok) {
     h('div', { class: 'chips stagger-pop' }, h('span', { class: 'chip accent', text: T(g.game) }), h('span', { class: 'chip', text: g.mode === 'competitive' ? 'Competitive' : 'Casual' }),
       g.region ? h('span', { class: 'chip', text: T(g.region) }) : null, h('span', { class: 'chip', text: ages }), h('span', { class: 'chip', text: `${g.memberCount ?? members.length} members` })),
     g.description ? h('p', { class: 'desc', text: T(g.description) }) : null,
-    members.length ? h('div', { class: 'members stagger-pop', 'aria-label': 'Members' }, members.map(m => h('span', { class: 'member' }, avatar(m, 'sm'), T(m.username)))) : null);
+    members.length ? h('div', { class: 'members stagger-pop', 'aria-label': 'Members' }, members.map(m => h('span', { class: 'member' }, avatar(m, 'sm'), nm(m)))) : null);
   head.querySelectorAll('.btn.small').forEach(b => b.style.minHeight = '32px');
   head.querySelectorAll('.stagger-pop').forEach(stagger);
   const showPage = () => show(page, morph ? { from: morph, to: () => head } : {});
@@ -582,7 +589,7 @@ async function groupView(id, tok) {
       seen.add(m.id); if (typeof m.id === 'number' && m.id > lastId) lastId = m.id;
       const when = new Date(m.createdAt);
       const el = h('div', { class: 'msg' + (m.userId === S.me.id ? ' own' : '') }, avatar(m, 'md'),
-        h('div', { class: 'body' }, h('div', { class: 'head' }, h('b', { text: T(m.username) }), h('time', { text: isNaN(when) ? '' : when.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }), datetime: isNaN(when) ? null : when.toISOString() })),
+        h('div', { class: 'body' }, h('div', { class: 'head' }, h('b', { text: nm(m) }), h('time', { text: isNaN(when) ? '' : when.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }), datetime: isNaN(when) ? null : when.toISOString() })),
           h('p', { text: T(m.text) })));
       if (initial) el.style.animationDelay = (300 + Math.min(made.length, 12) * 40) + 'ms';
       log.append(el); made.push(el);
@@ -664,7 +671,7 @@ async function friendsView(_, tok) {
   addForm.style.flex = 'none';
   const invBox = h('div', { class: 'section' }), reqBox = h('div', { class: 'section' }), friendBox = h('div', { class: 'section mobile-only' }), groupBox = h('div', { class: 'section mobile-only' });
   const profile = h('div', { class: 'card profile-card mobile-only', style: 'display:flex' }, avatar(me, 'lg'),
-    h('div', { class: 'meta' }, h('b', { text: T(me.username) }), h('span', { class: 'muted', text: me.playing ? 'Playing ' + T(me.playing) : STATUS[statusKey(me.status)] })),
+    h('div', { class: 'meta' }, h('b', { text: nm(me) }), h('span', { class: 'muted', text: me.playing ? 'Playing ' + T(me.playing) : STATUS[statusKey(me.status)] })),
     h('a', { class: 'btn ghost small', href: '#/settings' }, icon('gear', 16), 'Settings'));
   function draw() {
     const stackOf = (arr) => stagger(h('div', { class: 'stack', style: 'gap:8px' }, arr));
@@ -673,7 +680,7 @@ async function friendsView(_, tok) {
       a.addEventListener('click', () => busy(a, async () => { await api('POST', `/api/invites/${enc(inv.id)}/accept`); toast('Joined ' + T(inv.group && inv.group.name)); await Promise.all([loadSocial(), refreshMine()]); }));
       d.addEventListener('click', () => busy(d, async () => { await api('POST', `/api/invites/${enc(inv.id)}/decline`); await loadSocial(); }));
       const gg = inv.group || {};
-      return h('div', { class: 'frow big' }, h('div', { class: 'meta' }, h('b', { text: T(gg.name) }), h('span', { text: `${T(gg.game || '')}${gg.game ? ' · ' : ''}invited by ${T(inv.from && inv.from.username || inv.from)}` })), h('div', { class: 'act' }, a, d));
+      return h('div', { class: 'frow big' }, h('div', { class: 'meta' }, h('b', { text: T(gg.name) }), h('span', { text: `${T(gg.game || '')}${gg.game ? ' · ' : ''}invited by ${inv.from && typeof inv.from === 'object' ? nm(inv.from) : T(inv.from)}` })), h('div', { class: 'act' }, a, d));
     }))] : []));
     const inc = S.reqs.incoming || [], out = S.reqs.outgoing || [];
     reqBox.replaceChildren(...(inc.length || out.length ? [h('div', { class: 'section-title', text: 'Friend requests' }), stackOf([
@@ -695,8 +702,78 @@ async function friendsView(_, tok) {
 }
 
 /* ================= settings ================= */
+const MAX_AVATAR = 5 * 1024 * 1024;
+/* GIFs are sent untouched so they stay animated; other images are centre-cropped and shrunk first. */
+async function prepAvatar(file) {
+  if (!/^image\/(png|jpeg|gif|webp)$/.test(file.type)) throw new Error('Use a PNG, JPG, GIF or WebP image.');
+  if (file.type === 'image/gif') {
+    if (file.size > MAX_AVATAR) throw new Error('GIFs must be 5 MB or smaller.');
+    return file;
+  }
+  let bmp;
+  try { bmp = await createImageBitmap(file); } catch { throw new Error('That image could not be read.'); }
+  const side = Math.min(bmp.width, bmp.height), size = Math.min(512, side);
+  const cv = document.createElement('canvas'); cv.width = cv.height = size;
+  cv.getContext('2d').drawImage(bmp, (bmp.width - side) / 2, (bmp.height - side) / 2, side, side, 0, 0, size, size);
+  bmp.close && bmp.close();
+  const blob = await new Promise(r => cv.toBlob(r, 'image/webp', .9)) || await new Promise(r => cv.toBlob(r, 'image/png'));
+  if (!blob || blob.size > MAX_AVATAR) throw new Error('Image must be 5 MB or smaller.');
+  return blob;
+}
+async function sendAvatar(blob) {
+  let r;
+  try { r = await fetch('/api/me/avatar', { method: 'POST', credentials: 'same-origin', headers: { 'X-TW': '1', 'Content-Type': blob.type || 'application/octet-stream' }, body: blob }); }
+  catch { throw new Error('Cannot reach the server. Check your connection.'); }
+  let data = null; try { data = await r.json(); } catch { /* empty */ }
+  if (!r.ok) throw new Error((data && data.error) || `Upload failed (${r.status}).`);
+  return data;
+}
+
 async function settingsView() {
   const me = S.me;
+  /* ----- profile picture ----- */
+  const prev = h('div', { class: 'avatar-preview' });
+  const drawPrev = () => prev.replaceChildren(avatar(S.me, 'xl'));
+  drawPrev();
+  const file = h('input', { type: 'file', accept: 'image/png,image/jpeg,image/gif,image/webp', class: 'sr-only', tabindex: '-1', 'aria-label': 'Choose a profile picture' });
+  const upBtn = btn('Upload picture', { icon: 'plus', onclick: () => file.click() });
+  const rmBtn = btn('Remove', { cls: 'ghost', onclick: () => busy(rmBtn, async () => { S.me = await api('DELETE', '/api/me/avatar'); drawPrev(); renderUserPanel(); toast('Picture removed'); }) });
+  const who = h('p', { class: 'muted', text: 'Signed in as @' + T(me.username) });
+  const applyUser = () => { drawPrev(); renderUserPanel(); rmBtn.hidden = !S.me.avatar; who.textContent = 'Signed in as @' + T(S.me.username); };
+  file.addEventListener('change', () => {
+    const f = file.files && file.files[0]; file.value = ''; if (!f) return;
+    busy(upBtn, async () => { S.me = await sendAvatar(await prepAvatar(f)); applyUser(); toast('Profile picture updated'); });
+  });
+  rmBtn.hidden = !me.avatar;
+  const picCard = h('div', { class: 'card pic-card' }, prev,
+    h('div', { class: 'pic-meta' }, h('h3', { text: 'Profile picture' }),
+      h('p', { class: 'muted small', text: 'PNG, JPG, WebP or GIF up to 5 MB. GIFs stay animated.' }),
+      h('div', { class: 'row', style: 'gap:8px;flex:none;flex-wrap:wrap' }, upBtn, rmBtn), file));
+
+  /* ----- display name + username (password required) ----- */
+  const dn = h('input', { class: 'input', type: 'text', maxlength: 32, value: T(me.displayName || ''), placeholder: T(me.username), autocomplete: 'nickname' });
+  const un = h('input', { class: 'input', type: 'text', maxlength: 20, value: T(me.username), autocapitalize: 'none', spellcheck: 'false', autocomplete: 'off' });
+  const pw = h('input', { class: 'input', type: 'password', maxlength: 128, placeholder: 'Your current password', autocomplete: 'current-password' });
+  const fdn = field('Display name', dn, 'Shown to friends and in chats. Leave empty to use your username.');
+  const fun = field('Username', un, '3–20 letters, numbers or underscores. Friends find you with this.');
+  const fpw = field('Current password', pw, 'Required to change your display name or username.');
+  const idSave = h('button', { class: 'btn', type: 'submit' }, 'Save name');
+  const idForm = h('form', { class: 'stack', novalidate: true, onsubmit: async (e) => {
+    e.preventDefault();
+    const okU = fun.setError(/^[A-Za-z0-9_]{3,20}$/.test(un.value.trim()) ? '' : 'Use 3–20 letters, numbers or underscores');
+    const okD = fdn.setError(dn.value.trim().length <= 32 ? '' : 'At most 32 characters');
+    const okP = fpw.setError(pw.value ? '' : 'Enter your password to confirm');
+    if (!(okU && okD && okP)) return;
+    idSave.disabled = true; const idle = TWM.busyBtn(idSave);
+    try {
+      S.me = await api('PUT', '/api/me/profile', { displayName: dn.value.trim(), username: un.value.trim(), password: pw.value });
+      pw.value = ''; applyUser(); loadSocial().catch(() => {}); toast('Name updated');
+    } catch (ex) {
+      if (/password/i.test(ex.message)) fpw.setError(ex.message); else if (/username/i.test(ex.message)) fun.setError(ex.message); else toast(ex.message, 'error');
+    } finally { idSave.disabled = false; idle(); }
+  } }, h('div', { class: 'row' }, fdn, fun), fpw, h('div', {}, idSave));
+  const idCard = h('div', { class: 'card', style: 'padding:24px' }, h('h3', { text: 'Name', style: 'margin-bottom:12px' }), idForm);
+
   const region = selectEl(S.meta.regions, me.region || '', 'Choose a region');
   const age = h('input', { class: 'input', type: 'number', min: 13, max: 99, value: me.age || '', inputmode: 'numeric' });
   const status = selectEl([['online', 'Online'], ['idle', 'Idle'], ['dnd', 'Do not disturb'], ['offline', 'Appear offline']], statusKey(me.status) || 'online');
@@ -722,7 +799,8 @@ async function settingsView() {
   } }, h('div', { class: 'row' }, fr, fa), h('div', { class: 'row' }, fs, fp), fm, dl,
     h('div', { class: 'field' }, h('span', { class: 'label', text: 'Favorite games' }), gw), h('div', {}, save));
   const out = btn('Log out', { cls: 'danger', onclick: async (e) => { try { await api('POST', '/api/auth/logout'); } catch { /* ignore */ } loggedOut(); } });
-  show(h('div', { class: 'page', style: 'max-width:720px' }, h('div', { class: 'page-head' }, h('div', {}, h('h1', { text: 'Settings' }), h('p', { class: 'muted', text: 'Signed in as ' + T(me.username) }))),
+  show(h('div', { class: 'page', style: 'max-width:720px' }, h('div', { class: 'page-head' }, h('div', {}, h('h1', { text: 'Settings' }), who)),
+    picCard, idCard,
     h('div', { class: 'card', style: 'padding:24px' }, form), h('div', { class: 'card', style: 'padding:20px;display:flex;justify-content:space-between;align-items:center;gap:12px' }, h('div', {}, h('h3', { text: 'Log out' }), h('p', { class: 'muted small', text: 'You’ll need your password to come back.' })), out)));
 }
 
