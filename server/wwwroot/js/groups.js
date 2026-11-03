@@ -93,22 +93,110 @@ function memberActions(g, m, reload) {
   return acts;
 }
 
+/* Clicking a member opens their mini-profile; moderation lives in that sheet's ⋯ menu (see profileMenu). */
 function members(g, reload) {
   const wrap = h('div', { class: 'members stagger-pop', 'aria-label': 'Members' });
   for (const m of g.members || []) {
-    const chip = h('button', { class: 'member', type: 'button', 'aria-label': 'View ' + nm(m) + '’s profile', onclick: () => openProfile(m.id) },
-      avatar(m, 'sm'), nm(m), roleBadge(m.role), m.mutedUntil ? h('span', { class: 'mute-flag', text: 'Muted', title: 'Muted by a moderator' }) : null);
-    const cell = h('span', { class: 'member-wrap' }, chip);
-    const acts = memberActions(g, m, reload);
-    if (acts.length) {
-      const more = h('button', { class: 'member-more', type: 'button', 'aria-haspopup': 'menu', 'aria-expanded': 'false', 'aria-label': 'Moderate ' + nm(m), text: '⋯' });
-      more.addEventListener('click', () => showMenu(more, acts));
-      cell.append(more);
-    }
-    wrap.append(cell);
+    wrap.append(h('button', { class: 'member', type: 'button', 'aria-label': 'View ' + nm(m) + '’s profile', onclick: () => openProfile(m.id, { group: g, member: m, reload }) },
+      avatar(m, 'sm'), nm(m), roleBadge(m.role), m.mutedUntil ? h('span', { class: 'mute-flag', text: 'Muted', title: 'Muted by a moderator' }) : null));
   }
   stagger(wrap);
   return wrap;
+}
+
+/* ---------- the ⋯ menu in the mini-profile: group moderation (when opened from a group), block, report ---------- */
+const REPORT_REASONS = [['Spam', 'Spam'], ['Harassment or hate', 'Harassment or hate'], ['Inappropriate content', 'Inappropriate or NSFW content'],
+  ['Cheating', 'Cheating'], ['Impersonation', 'Impersonation'], ['Other', 'Something else']];
+
+function openReport(p, g) {
+  let close = () => {};
+  const reason = selectEl(REPORT_REASONS, '', 'Choose a reason');
+  const note = h('textarea', { class: 'textarea', maxlength: 500, rows: 4, placeholder: 'Anything that helps the admins understand (optional)', 'aria-label': 'Details' });
+  const fr = field('Reason', reason), fn = field('Details', note);
+  const send = btn('Send report', { cls: 'danger' });
+  send.addEventListener('click', () => {
+    if (!fr.setError(reason.value ? '' : 'Choose a reason')) return;
+    busy(send, async () => {
+      await api('POST', '/api/reports', { reportedUserId: p.id, groupId: g ? g.id : null, reason: reason.value, details: note.value.trim() });
+      toast('Report sent. Thank you.'); close();
+    });
+  });
+  close = openSheet('Report ' + nm(p), h('div', { class: 'stack' },
+    h('p', { class: 'muted', text: 'Admins review every report. The person isn’t told who reported them.' }), fr, fn, send));
+}
+
+async function profileMenu(anchor, p, opts, closeProfile) {
+  opts = opts || {};
+  const g = opts.group, m = opts.member, entries = [];
+  if (g && m && g.isMember) {
+    const mods = memberActions(g, m, () => { closeProfile(); if (opts.reload) opts.reload(); });
+    if (mods.length) { entries.push(...mods, '-'); }
+  }
+  let blocked = false;
+  try { blocked = (await api('GET', '/api/me/blocks')).some(b => b.id === p.id); } catch { /* menu still works without the state */ }
+  if (blocked) {
+    entries.push({ label: 'Unblock ' + nm(p), onClick: () => api('DELETE', '/api/me/blocks/' + p.id).then(() => { toast(nm(p) + ' is unblocked'); closeProfile(); }).catch(e => toast(e.message, 'error')) });
+  } else {
+    entries.push({ label: 'Block ' + nm(p) + '…', danger: true, onClick: () => confirmSheet('Block ' + nm(p) + '?',
+      'You’ll be removed as friends and they won’t be able to message you. You can unblock them later from their profile.', 'Block',
+      async () => { await api('POST', '/api/me/blocks/' + p.id); toast(nm(p) + ' is blocked'); closeProfile(); TW.loadSocial().catch(() => {}); }) });
+  }
+  entries.push({ label: 'Report ' + nm(p) + '…', danger: true, onClick: () => openReport(p, g) });
+  showMenu(anchor, entries);
+}
+
+/* ---------- invite code + link, limits ---------- */
+const fmtSlow = (s) => s >= 60 && s % 60 === 0 ? (s / 60) + 'm' : s + 's';
+const isFull = (g) => (g.maxMembers || 0) > 0 && (g.memberCount || 0) >= g.maxMembers;
+
+/** Chips for the group header: member cap and slowmode. */
+function extraChips(g) {
+  const out = [];
+  if ((g.maxMembers || 0) > 0) out.push(h('span', { class: 'chip' + (isFull(g) ? ' bad' : ''), text: isFull(g) ? `Full · max ${g.maxMembers}` : `Max ${g.maxMembers}` }));
+  if ((g.slowmode || 0) > 0) out.push(h('span', { class: 'chip', text: 'Slowmode ' + fmtSlow(g.slowmode) }));
+  return out;
+}
+
+function inviteLink(code) { return `${location.origin}/#/join/${code}`; }
+async function copyText(text) {
+  try { if (navigator.clipboard && window.isSecureContext) { await navigator.clipboard.writeText(text); return true; } } catch { /* fall through */ }
+  const ta = h('textarea', { 'aria-hidden': 'true', tabindex: '-1', style: 'position:fixed;left:-9999px;top:0;opacity:0' });
+  ta.value = text; document.body.append(ta); ta.select();
+  let ok = false; try { ok = document.execCommand('copy'); } catch { ok = false; }
+  ta.remove(); return ok;
+}
+function copyInvite(g) {
+  const link = inviteLink(g.joinCode);
+  copyText(link).then((ok) => {
+    if (ok) { toast('Invite link copied'); return; }
+    // last resort: show the link so it can be copied by hand
+    const box = h('input', { class: 'input', type: 'text', readonly: true, value: link, 'aria-label': 'Invite link' });
+    openSheet('Invite link', h('div', { class: 'stack' }, h('p', { class: 'muted', text: 'Copy this link and send it to your friends.' }), box));
+    box.focus(); box.select();
+  });
+}
+/** Join code pill + "Copy invite link" (members only). */
+function inviteRow(g) {
+  if (!g.isMember || !g.joinCode) return null;
+  return h('div', { class: 'invite-row' },
+    h('span', { class: 'muted small', text: 'Join code' }),
+    h('code', { class: 'join-code', text: g.joinCode, 'aria-label': 'Join code ' + g.joinCode.split('').join(' ') }),
+    btn('Copy invite link', { cls: 'small ghost', onclick: () => copyInvite(g) }));
+}
+
+const SLOW_OPTIONS = [[0, 'Off'], [5, '5 seconds'], [10, '10 seconds'], [30, '30 seconds'], [60, '1 minute'], [300, '5 minutes']];
+/** Max-members input + slowmode dropdown, shared by the create sheet and the settings sheet. */
+function limitFields(cur) {
+  cur = cur || {};
+  const opts = SLOW_OPTIONS.map(([v, l]) => [String(v), l]);
+  if (cur.slowmode > 0 && !SLOW_OPTIONS.some(([v]) => v === cur.slowmode)) opts.push([String(cur.slowmode), cur.slowmode + ' seconds']);
+  const max = h('input', { class: 'input', type: 'number', min: 0, max: 500, inputmode: 'numeric', placeholder: 'No limit', 'aria-label': 'Maximum members', value: cur.maxMembers > 0 ? cur.maxMembers : '' });
+  max.addEventListener('change', () => { const v = parseInt(max.value, 10); max.value = Number.isFinite(v) && v > 0 ? Math.min(500, v) : ''; });
+  const slow = selectEl(opts, String(cur.slowmode || 0));
+  return {
+    el: h('div', { class: 'row limit-row' }, field('Max members', max, 'Empty = no limit (up to 500).'), field('Slowmode', slow, 'Wait between messages. Moderators are exempt.')),
+    values() { const n = parseInt(max.value, 10); return { maxMembers: Number.isFinite(n) && n > 0 ? Math.min(500, n) : 0, slowmode: parseInt(slow.value, 10) || 0 }; }
+  };
 }
 
 /* ---------- header buttons (members) and join controls (non-members) ---------- */
@@ -136,6 +224,11 @@ function joinControls(g, reload) {
     const cancel = btn('Cancel request', { cls: 'small ghost' });
     cancel.addEventListener('click', () => busy(cancel, async () => { await api('DELETE', base(g) + '/request'); toast('Request cancelled'); reload(); }));
     return [h('span', { class: 'chip', text: 'Request pending' }), cancel];
+  }
+  if (isFull(g) && !TW.me.isAdmin) {
+    const full = btn('Group full', { cls: 'small' });
+    full.disabled = true; full.setAttribute('aria-disabled', 'true'); full.title = `This group is at its limit of ${g.maxMembers} members.`;
+    return [h('span', { class: 'chip bad', text: `Max ${g.maxMembers}` }), full];
   }
   if (g.privacy === 'request' && !g.invited) {
     const ask = btn('Request to join', { cls: 'small' });
@@ -170,15 +263,16 @@ function openSettings(g, reload) {
   const privacy = selectEl([['public', 'Public: anyone can join'], ['request', 'Request to join: moderators approve people'], ['private', 'Private: invite only, not listed anywhere']], g.privacy || 'public');
   const rules = h('textarea', { class: 'textarea', maxlength: 1000, rows: 5 }); rules.value = T(g.rules || '');
   const fn = field('Group name', name), fd = field('Description', desc), fp = field('Who can join', privacy), fr = field('Rules', rules);
+  const lim = limitFields(g);
   const save = h('button', { class: 'btn block', type: 'submit' }, 'Save changes');
   const form = h('form', { class: 'stack', style: 'gap:12px', novalidate: true, onsubmit: async (e) => {
     e.preventDefault();
     if (!fn.setError(name.value.trim().length >= 3 ? '' : 'Give it a name (3+ characters)')) return;
     await busy(save, async () => {
-      await api('PUT', base(g) + '/settings', { name: name.value.trim(), description: desc.value.trim(), privacy: privacy.value, rules: rules.value.trim() });
+      await api('PUT', base(g) + '/settings', { name: name.value.trim(), description: desc.value.trim(), privacy: privacy.value, rules: rules.value.trim(), ...lim.values() });
       await TW.refreshMine(); toast('Group updated'); close(); reload();
     });
-  } }, fn, fd, fp, fr, save);
+  } }, fn, fd, fp, lim.el, fr, save);
   close = openSheet('Group settings', form);
 }
 
@@ -217,5 +311,65 @@ function openBans(g, reload) {
   api('GET', base(g) + '/bans').then(draw).catch(e => { toast(e.message, 'error'); close(); });
 }
 
-window.TWG = { members, headerButtons, joinControls, openRules, openSettings, openRequests, openBans, showMenu };
+/* ---------- #/join/<code>: preview a group from an invite link and join it ---------- */
+const JOIN_RE = /^[A-Za-z0-9]{6}$/;
+const AUDIENCE = (g) => g.ageMax <= 17 ? 'Ages 13–17' : g.ageMin >= 18 ? 'Ages 18+' : `Ages ${g.ageMin}–${g.ageMax}`;
+
+function joinProblem(e) {
+  const m = (e && e.message) || '';
+  if (/banned/i.test(m)) return ['You can’t join this group', 'You’ve been banned from it by a moderator.'];
+  if (/\bage\b/i.test(m)) return ['This group isn’t available for your age', 'Groups are split into under-18 and 18+ communities so everyone plays with people their age.'];
+  if (/full|maximum/i.test(m) || (e && e.status === 409)) return ['This group is full', m || 'It has reached its member limit. Ask a moderator to make room.'];
+  if (e && e.status === 404) return ['That invite link doesn’t match a group', 'Check the link or ask for a new one. The group may have been deleted.'];
+  if (e && e.status === 403) return ['This group isn’t available to you', 'It may be private, or meant for a different age group. Groups are split into under-18 and 18+ communities.'];
+  return ['That didn’t load', m || 'Please try again.'];
+}
+
+async function joinView(code, tok) {
+  const page = (...kids) => h('div', { class: 'page join-page' }, ...kids);
+  const clean = String(code || '').trim();
+  if (!JOIN_RE.test(clean)) { TW.show(page(emptyState('That invite link doesn’t look right', 'Invite codes are 6 letters and numbers. Check the link you were sent.', btn('Go to the feed', { onclick: () => TW.go('#/feed') })))); return; }
+  const upper = clean.toUpperCase();
+  let g;
+  try { g = await api('GET', '/api/groups/by-code/' + encodeURIComponent(upper)); }
+  catch (e) { if (!TW.stale(tok)) { const [t, m] = joinProblem(e); TW.show(page(emptyState(t, m, btn('Go to the feed', { onclick: () => TW.go('#/feed') })))); } return; }
+  if (TW.stale(tok)) return;
+
+  const full = isFull(g) && !TW.me.isAdmin;
+  const err = h('div', { class: 'form-error', role: 'alert' });
+  const join = btn(g.isMember ? 'Open group' : full ? 'Group full' : 'Join group', { cls: g.isMember ? 'ghost' : '' });
+  if (full && !g.isMember) { join.disabled = true; join.setAttribute('aria-disabled', 'true'); }
+  join.addEventListener('click', () => {
+    if (g.isMember) { TW.go('#/group/' + encodeURIComponent(g.id)); return; }
+    busy(join, async () => {
+      err.textContent = '';
+      try {
+        const r = await api('POST', '/api/groups/by-code/' + encodeURIComponent(upper) + '/join');
+        await TW.refreshMine();
+        toast('You joined ' + T(g.name));
+        TW.go('#/group/' + encodeURIComponent(r.id || g.id));
+      } catch (e) { err.textContent = joinProblem(e).join(' '); }
+    });
+  });
+  const chips = [h('span', { class: 'chip accent', text: T(g.game) }), h('span', { class: 'chip', text: g.mode === 'competitive' ? 'Competitive' : 'Casual' }),
+    g.region ? h('span', { class: 'chip', text: T(g.region) }) : null, h('span', { class: 'chip', text: AUDIENCE(g) }),
+    h('span', { class: 'chip', text: `${g.memberCount || 0} member${g.memberCount === 1 ? '' : 's'}` }),
+    g.privacy === 'private' ? h('span', { class: 'chip', text: 'Private' }) : g.privacy === 'request' ? h('span', { class: 'chip', text: 'Usually needs approval' }) : null,
+    ...extraChips(g)];
+  const note = g.isMember ? 'You’re already a member of this group.'
+    : full ? `This group has reached its limit of ${g.maxMembers} members.`
+    : g.privacy === 'request' ? 'This group normally approves new members, but this invite link lets you in right away.'
+    : 'You’re invited. Join to see the chat and the other members.';
+  const card = h('div', { class: 'card join-card' },
+    h('div', { class: 'join-head' }, h('span', { class: 'gtile big', 'aria-hidden': 'true', text: (T(g.name)[0] || '?').toUpperCase(), style: `background:${TW.safeColor(g.color)};color:${TW.ink(g.color)}` }),
+      h('div', { class: 'join-title' }, h('h1', { text: T(g.name) }), h('p', { class: 'muted small', text: 'Invite code ' + upper }))),
+    h('div', { class: 'chips' }, chips),
+    g.description ? h('p', { class: 'join-desc', text: T(g.description) }) : null,
+    g.rules ? h('div', { class: 'section' }, h('div', { class: 'section-title', text: 'Group rules' }), h('p', { class: 'rules-text', text: T(g.rules) })) : null,
+    h('p', { class: 'muted', text: note }), err,
+    h('div', { class: 'row', style: 'gap:8px;flex:none' }, join, btn('Not now', { cls: 'ghost', onclick: () => TW.go('#/feed') })));
+  TW.show(page(card));
+}
+
+window.TWG = { members, headerButtons, joinControls, openRules, openSettings, openRequests, openBans, showMenu, profileMenu, openReport, inviteRow, extraChips, limitFields, joinView, copyInvite, isFull };
 })();

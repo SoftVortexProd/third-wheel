@@ -6,17 +6,31 @@
 .role-badge.owner { background: var(--color-accent-soft); color: var(--color-accent-text); border: 1px solid #2d3270; }
 .role-badge.mod { background: #12251b; color: #7ddc9a; border: 1px solid #1f4a33; }
 
-.member-wrap { flex: none; display: inline-flex; align-items: center; gap: 2px; }
-.member-more { flex: none; width: 28px; height: 28px; display: inline-grid; place-items: center; padding: 0; border: 1px solid var(--color-border); border-radius: 50%; background: var(--color-raised); color: var(--color-text-2); font-size: 16px; line-height: 1; cursor: pointer;
-  transition: background var(--dur-fast), color var(--dur-fast), transform .35s cubic-bezier(.34, 1.56, .64, 1); }
-.member-more:hover { background: var(--color-strong); color: var(--color-text); }
-.member-more:active { transform: scale(.88); }
-.member-more[aria-expanded="true"] { background: var(--color-accent-soft); color: #fff; border-color: var(--color-accent); }
+/* ⋯ button in the mini-profile header (group moderation, block, report) */
+.profile-top { position: relative; }
+.profile-top.has-more .profile-names { padding-right: 44px; }
+.profile-more { position: absolute; top: -6px; right: -6px; width: 36px; height: 36px; font-size: 20px; line-height: 1; padding-bottom: 6px; color: var(--color-text-2); }
+.profile-more:hover { color: var(--color-text); }
+.profile-more[aria-expanded="true"] { background: var(--color-accent-soft); color: #fff; }
+
+/* join code, invite link, limits */
+.invite-row { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-3); }
+.join-code { display: inline-block; padding: 3px 12px; border-radius: 999px; background: var(--color-surface); border: 1px solid var(--color-border); color: var(--color-text);
+  font: 700 15px/22px ui-monospace, "Cascadia Mono", Consolas, monospace; letter-spacing: .22em; user-select: all; }
+.limit-row > * { min-width: 0; }
+.join-page { max-width: 560px; }
+.join-card { display: flex; flex-direction: column; gap: var(--space-4); padding: var(--space-6); }
+.join-head { display: flex; align-items: center; gap: var(--space-4); min-width: 0; }
+.join-title { min-width: 0; }
+.join-title h1 { overflow-wrap: anywhere; }
+.join-desc { color: var(--color-text-2); overflow-wrap: anywhere; }
+.gtile.big { width: 56px; height: 56px; border-radius: 16px; font-size: 24px; flex: none; }
+
 .mute-flag { margin-left: 6px; padding: 1px 6px; border-radius: 999px; background: #2a1215; color: var(--color-danger-text); border: 1px solid #5a2328; font-size: 10px; line-height: 14px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; }
 
 .count-badge { display: inline-block; min-width: 18px; height: 18px; margin-left: 8px; padding: 0 5px; border-radius: 999px; background: var(--color-danger); color: #fff; font-size: 11px; line-height: 18px; font-weight: 700; text-align: center; }
 
-.gmenu { position: fixed; z-index: 95; min-width: 220px; max-width: calc(100vw - 16px); padding: 4px; background: #14141a; border: 1px solid #34343c; border-radius: var(--radius-md); box-shadow: 0 18px 40px -12px rgba(0, 0, 0, .85); }
+.gmenu { position: fixed; z-index: 95; min-width: 220px; max-width: calc(100vw - 16px); max-height: calc(100dvh - 16px); overflow-y: auto; padding: 4px; background: #14141a; border: 1px solid #34343c; border-radius: var(--radius-md); box-shadow: 0 18px 40px -12px rgba(0, 0, 0, .85); }
 .gmenu-item { display: flex; align-items: center; justify-content: space-between; width: 100%; padding: 9px 12px; border: 0; border-radius: var(--radius-sm); background: none; color: var(--color-text); text-align: left; font-size: var(--fs-md); line-height: 20px; cursor: pointer; }
 .gmenu-item:hover, .gmenu-item:focus-visible { background: var(--color-strong); outline: none; }
 .gmenu-item:focus-visible { box-shadow: inset 0 0 0 2px var(--color-focus); }
