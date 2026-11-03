@@ -753,6 +753,9 @@ CREATE TABLE IF NOT EXISTS avatars(userId INTEGER PRIMARY KEY, mime TEXT NOT NUL
         if (!cols.Contains("isAdmin")) Exec("ALTER TABLE users ADD COLUMN isAdmin INTEGER DEFAULT 0");
         if (!cols.Contains("banned")) Exec("ALTER TABLE users ADD COLUMN banned INTEGER DEFAULT 0");
         if (!cols.Contains("banReason")) Exec("ALTER TABLE users ADD COLUMN banReason TEXT");
+        // Shared by several features: a group is 'public' (listed, anyone can join) or 'private' (hidden from feed/search/recommendations; invite or approval only).
+        var gcols = Rows("PRAGMA table_info(grps)").Select(r => (string)r["name"]!).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        if (!gcols.Contains("privacy")) Exec("ALTER TABLE grps ADD COLUMN privacy TEXT DEFAULT 'public'");
         // Feature modules add their own tables/columns here (each must be safe to run on every start).
         ChatApi.Migrate(); GroupsApi.Migrate(); ProfileApi.Migrate(); NotifyApi.Migrate();
     }
