@@ -95,7 +95,8 @@ public static class AccountApi
             if (b.TryGetProperty("favoriteGames", out var fg))
             {
                 if (fg.ValueKind != JsonValueKind.Array) return Err("favoriteGames must be a list.");
-                var games = fg.EnumerateArray().Select(x => x.GetString() ?? "").Where(x => Db.Games.Contains(x)).Distinct().Take(12).ToArray();
+                var games = fg.EnumerateArray().Select(x => x.GetString()?.Trim() ?? "").Where(x => !string.IsNullOrEmpty(x) && x.Length <= 80).Select(x => Clean(x, 80)).Distinct().Take(12).ToArray();
+                foreach (var g in games) GamesApi.EnsureGame(g);
                 set.Add("games=@fg"); ps.Add(("@fg", JsonSerializer.Serialize(games))); changed.Add("favorite games");
             }
             if (set.Count == 0) return Err("Nothing to change.");

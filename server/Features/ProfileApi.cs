@@ -173,10 +173,11 @@ CREATE TABLE IF NOT EXISTS activity(userId INTEGER, hour INTEGER, n INTEGER DEFA
         api.MapPut("me/game-details", (HttpContext c, GameDetailsIn b) => WithUser(c, uid =>
         {
             if (Limited($"gd:{uid}", 30, TimeSpan.FromMinutes(1), true)) return Err("Slow down a little.", 429);
-            var rows = (b.Games ?? Array.Empty<GameDetail>()).Where(g => g.Game != null && Db.Games.Contains(g.Game)).GroupBy(g => g.Game!).Select(g => g.First()).Take(40).ToList();
+            var rows = (b.Games ?? Array.Empty<GameDetail>()).Where(g => !string.IsNullOrWhiteSpace(g.Game) && g.Game.Length <= 80).GroupBy(g => g.Game!.Trim()).Select(g => g.First()).Take(40).ToList();
             Db.Exec("DELETE FROM user_games WHERE userId=@u", ("@u", uid));
             foreach (var g in rows)
             {
+                GamesApi.EnsureGame(g.Game);
                 var rank = Enc(Clean(g.Rank, 24)); var role = Enc(Clean(g.Role, 24));
                 if (rank.Length == 0 && role.Length == 0) continue;
                 Db.Exec("INSERT INTO user_games(userId,game,rank,role) VALUES(@u,@g,@r,@o)", ("@u", uid), ("@g", g.Game), ("@r", rank), ("@o", role));

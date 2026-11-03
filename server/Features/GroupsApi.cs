@@ -1,4 +1,4 @@
-﻿using System.Text.Json;
+using System.Text.Json;
 using static Core;
 
 /// <summary>
@@ -127,7 +127,9 @@ CREATE TABLE IF NOT EXISTS join_requests(id INTEGER PRIMARY KEY, groupId INTEGER
             if (Limited($"gc:{uid}", 10, TimeSpan.FromHours(1), true)) return Err("You're creating groups too fast. Try again later.", 429);
             var name = Clean(b.Name, 40);
             if (name.Length < 3) return Err("Group name must be at least 3 characters.");
-            if (!Db.Games.Contains(b.Game ?? "")) return Err("Pick a game from the list.");
+            var game = Clean(b.Game, 80);
+            if (string.IsNullOrWhiteSpace(game) || game.Length < 2) return Err("Pick or enter a game.");
+            GamesApi.EnsureGame(game);
             if (b.Mode is not ("casual" or "competitive")) return Err("Mode must be casual or competitive.");
             if (!Db.Regions.Contains(b.Region ?? "")) return Err("Unknown region.");
             var privacy = b.Privacy ?? "public";
@@ -139,7 +141,7 @@ CREATE TABLE IF NOT EXISTS join_requests(id INTEGER PRIMARY KEY, groupId INTEGER
             if (lo < aMin || hi > aMax || lo > hi) return Err($"Groups you create must be for ages {aMin}–{aMax}.");
             var color = Db.Palette[Random.Shared.Next(Db.Palette.Length)];
             var gid = Db.Insert("INSERT INTO grps(name,game,mode,region,ageMin,ageMax,description,color,ownerId,created,privacy,rules) VALUES(@n,@g,@m,@r,@lo,@hi,@d,@c,@o,@t,@p,@ru)",
-                ("@n", Enc(name)), ("@g", b.Game), ("@m", b.Mode), ("@r", b.Region), ("@lo", lo), ("@hi", hi), ("@d", Enc(Clean(b.Description, 300))),
+                ("@n", Enc(name)), ("@g", game), ("@m", b.Mode), ("@r", b.Region), ("@lo", lo), ("@hi", hi), ("@d", Enc(Clean(b.Description, 300))),
                 ("@c", color), ("@o", uid), ("@t", Now()), ("@p", privacy), ("@ru", Enc(Clean(b.Rules, 1000))));
             Db.Exec("INSERT INTO members(groupId,userId,role) VALUES(@g,@u,'owner')", ("@g", gid), ("@u", uid));
             return Results.Json(GroupObj(Db.Row(GroupSel + " WHERE g.id=@g", ("@g", gid), ("@me", uid))!));

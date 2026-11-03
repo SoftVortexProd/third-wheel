@@ -245,6 +245,249 @@ function suggestInput(input, getList) {
   input.addEventListener('blur', () => setTimeout(() => pop.close(), 120));
   return input;
 }
+
+/* ---- game picker (with Steam Store search, thumbnail covers, chips & custom entry) ---- */
+function gamePicker(opts = {}) {
+  const multi = !!opts.multi;
+  const allowCustom = opts.allowCustom !== false;
+  let cur = multi ? [...(opts.value || [])] : (opts.value ? String(opts.value) : '');
+  const placeholder = opts.placeholder || (multi ? 'Search games to add or type custom...' : 'Search games or type custom...');
+  const anyLabel = opts.anyLabel;
+
+  const root = h('div', { class: 'game-picker', role: 'group', 'aria-label': 'Game selector' });
+  const chipsWrap = multi ? h('div', { class: 'game-picker-chips', role: 'list', 'aria-label': 'Selected games' }) : null;
+  const singlePreview = !multi ? h('div', { class: 'game-picker-single-preview', style: 'display:none' }) : null;
+
+  const input = h('input', { class: 'input', type: 'text', placeholder, autocomplete: 'off' });
+  const searchWrap = h('div', { class: 'game-picker-search' }, icon('search', 16), input);
+  const sIco = searchWrap.querySelector('svg');
+  if (sIco) sIco.classList.add('gp-icon');
+
+  let pop = null, activeIdx = -1, items = [], timer = null, reqToken = 0;
+  const pid = nid('gp');
+
+  const close = () => {
+    if (!pop) return;
+    pop.remove(); pop = null; activeIdx = -1;
+    input.setAttribute('aria-expanded', 'false');
+    document.removeEventListener('pointerdown', onOutside, true);
+  };
+
+  const onOutside = (e) => {
+    if (pop && !pop.contains(e.target) && !searchWrap.contains(e.target)) close();
+  };
+
+  const place = () => {
+    if (!pop) return;
+    const r = input.getBoundingClientRect();
+    const need = Math.min(pop.scrollHeight, 280) + 8;
+    const below = innerHeight - r.bottom >= need || r.top < need;
+    pop.style.left = r.left + 'px';
+    pop.style.width = Math.max(r.width, 240) + 'px';
+    pop.style.maxHeight = '280px';
+    pop.style[below ? 'top' : 'bottom'] = (below ? r.bottom + 6 : innerHeight - r.top + 6) + 'px';
+    pop.style[below ? 'bottom' : 'top'] = 'auto';
+  };
+
+  const setIndex = (i) => {
+    if (!pop || !items.length) return;
+    activeIdx = Math.max(0, Math.min(i, items.length - 1));
+    [...pop.children].forEach((el, j) => el.classList.toggle('active', j === activeIdx));
+    if (pop.children[activeIdx]) {
+      pop.children[activeIdx].scrollIntoView({ block: 'nearest' });
+    }
+  };
+
+  const selectGame = (gameName) => {
+    gameName = String(gameName || '').trim();
+    if (!gameName && anyLabel == null) return;
+    if (multi) {
+      if (gameName && !cur.includes(gameName)) {
+        cur.push(gameName);
+        render();
+        trigger();
+      }
+      input.value = '';
+      close();
+      input.focus();
+    } else {
+      cur = gameName;
+      input.value = '';
+      close();
+      render();
+      trigger();
+    }
+  };
+
+  const removeGame = (gameName) => {
+    if (multi) {
+      const idx = cur.indexOf(gameName);
+      if (idx >= 0) {
+        cur.splice(idx, 1);
+        render();
+        trigger();
+      }
+    } else {
+      cur = '';
+      render();
+      trigger();
+    }
+  };
+
+  const trigger = () => {
+    if (typeof opts.onChange === 'function') opts.onChange(multi ? [...cur] : cur);
+    root.dispatchEvent(new Event('change', { bubbles: true }));
+  };
+
+  const render = () => {
+    if (multi) {
+      chipsWrap.replaceChildren();
+      for (const g of cur) {
+        const c = h('span', { class: 'game-picker-chip', role: 'listitem' },
+          h('span', { text: T(g) }),
+          h('button', {
+            type: 'button', class: 'gp-remove', 'aria-label': 'Remove ' + g,
+            onclick: (e) => { e.preventDefault(); removeGame(g); }
+          }, icon('x', 14))
+        );
+        chipsWrap.append(c);
+      }
+    } else {
+      if (cur) {
+        singlePreview.style.display = 'flex';
+        searchWrap.style.display = 'none';
+        const valSpan = h('span', { class: 'game-picker-single-val' }, icon('pad', 18), h('span', { text: T(cur) }));
+        const changeBtn = h('button', {
+          type: 'button', class: 'btn sm', text: 'Change',
+          onclick: (e) => {
+            e.preventDefault();
+            searchWrap.style.display = 'flex';
+            singlePreview.style.display = 'none';
+            input.value = '';
+            input.focus();
+            search();
+          }
+        });
+        const clearBtn = anyLabel != null ? h('button', {
+          type: 'button', class: 'btn sm secondary', text: 'Clear',
+          onclick: (e) => { e.preventDefault(); selectGame(''); }
+        }) : null;
+        singlePreview.replaceChildren(valSpan, h('div', { class: 'row', style: 'gap:6px' }, changeBtn, clearBtn));
+      } else {
+        singlePreview.style.display = 'none';
+        searchWrap.style.display = 'flex';
+      }
+    }
+  };
+
+  const search = () => {
+    const q = input.value.trim();
+    const myTok = ++reqToken;
+    api('GET', '/api/games/search' + (q ? '?q=' + encodeURIComponent(q) : '')).then(list => {
+      if (myTok !== reqToken) return;
+      showResults(list || [], q);
+    }).catch(() => {
+      if (myTok !== reqToken) return;
+      showResults([], q);
+    });
+  };
+
+  const showResults = (list, q) => {
+    if (!pop) {
+      pop = h('div', { class: 'dd-pop', role: 'listbox', id: pid, style: 'overflow-y:auto' });
+      document.body.append(pop);
+      input.setAttribute('aria-expanded', 'true');
+      input.setAttribute('aria-controls', pid);
+      document.addEventListener('pointerdown', onOutside, true);
+    }
+    pop.replaceChildren();
+    items = [];
+
+    if (!multi && anyLabel != null && !q) {
+      const anyOpt = h('div', { class: 'gp-opt', role: 'option' },
+        icon('pad', 18),
+        h('span', { class: 't', text: anyLabel })
+      );
+      anyOpt.addEventListener('pointerdown', (e) => { e.preventDefault(); selectGame(''); });
+      pop.append(anyOpt);
+      items.push({ name: '', isAny: true });
+    }
+
+    for (const item of list) {
+      const n = item.name || item;
+      const isSel = multi ? cur.includes(n) : cur === n;
+      const thumb = item.coverUrl
+        ? h('img', { class: 'gp-opt-thumb', src: item.coverUrl, alt: '', loading: 'lazy' })
+        : h('div', { class: 'gp-opt-thumb', style: 'display:flex;align-items:center;justify-content:center;background:var(--color-strong)' }, icon('pad', 16));
+
+      const opt = h('div', { class: 'gp-opt' + (isSel ? ' active' : ''), role: 'option' },
+        thumb,
+        h('span', { class: 't', text: T(n) }),
+        (item.isSteam || item.steamAppId) ? h('span', { class: 'gp-opt-badge', text: 'Steam' }) : null,
+        isSel ? icon('check', 16) : null
+      );
+      opt.addEventListener('pointerdown', (e) => {
+        e.preventDefault();
+        selectGame(n);
+      });
+      pop.append(opt);
+      items.push(item);
+    }
+
+    if (allowCustom && q && !list.some(x => (x.name || x).toLowerCase() === q.toLowerCase())) {
+      const custOpt = h('div', { class: 'gp-opt gp-opt-custom', role: 'option' },
+        icon('plus', 18),
+        h('span', { text: `Use custom: "${T(q)}"` })
+      );
+      custOpt.addEventListener('pointerdown', (e) => {
+        e.preventDefault();
+        selectGame(q);
+      });
+      pop.append(custOpt);
+      items.push({ name: q, isCustom: true });
+    }
+
+    if (!items.length) {
+      pop.append(h('div', { class: 'dd-empty', text: 'No games found' }));
+    }
+
+    place();
+    setIndex(0);
+  };
+
+  input.addEventListener('focus', () => search());
+  input.addEventListener('input', () => {
+    clearTimeout(timer);
+    timer = setTimeout(search, 200);
+  });
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'ArrowDown') { e.preventDefault(); if (!pop) search(); else setIndex(activeIdx + 1); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); if (pop) setIndex(activeIdx - 1); }
+    else if (e.key === 'Enter') {
+      e.preventDefault();
+      if (pop && activeIdx >= 0 && items[activeIdx]) {
+        selectGame(items[activeIdx].name || items[activeIdx]);
+      } else if (allowCustom && input.value.trim()) {
+        selectGame(input.value.trim());
+      }
+    }
+    else if (e.key === 'Escape') { e.preventDefault(); close(); }
+  });
+
+  if (multi) {
+    root.append(chipsWrap, searchWrap);
+  } else {
+    root.append(singlePreview, searchWrap);
+  }
+
+  Object.defineProperty(root, 'value', {
+    get: () => multi ? [...cur] : cur,
+    set: (v) => { cur = multi ? [...(v || [])] : String(v || ''); render(); }
+  });
+
+  render();
+  return root;
+}
 function field(label, input, hint) {
   const id = input.id || (input.id = nid('f'));
   const msg = h('div', { class: 'field-msg', id: id + '-m', 'aria-live': 'polite' }, hint || '');
@@ -382,16 +625,9 @@ function renderOnboarding() {
         if (!okR || !okA) return false; d.region = reg.value; d.age = a; return true;
       };
     } else if (step === 1) {
-      const wrap = h('div', { class: 'chips', role: 'group', 'aria-label': 'Favorite games' });
-      for (const g of S.meta.games) {
-        const n = gname(g);
-        wrap.append(h('button', { type: 'button', class: 'chip', 'aria-pressed': String(d.games.includes(n)), onclick: (e) => {
-          const i = d.games.indexOf(n); if (i >= 0) d.games.splice(i, 1); else d.games.push(n);
-          e.currentTarget.setAttribute('aria-pressed', String(i < 0));
-        } }, T(n)));
-      }
-      body.append(h('p', { class: 'muted', text: 'Choose the games you love. Pick as many as you like.' }), wrap);
-      next = () => true;
+      const gp = gamePicker({ multi: true, value: d.games || [] });
+      body.append(h('p', { class: 'muted', text: 'Search or choose the games you love. Pick as many as you like.' }), gp);
+      next = () => { d.games = gp.value; return true; };
     } else if (step === 2) {
       // Optional: play style + availability (profile.js). Skippable.
       const sf = window.TWProfile ? TWProfile.styleForm(d.extras || {}) : null;
@@ -613,7 +849,8 @@ async function searchView(_, tok) {
   const mq = h('input', { class: 'input qinput', type: 'search', placeholder: 'Search groups and people', 'aria-label': 'Search groups and people', maxlength: 60, autocomplete: 'off', value: q.q });
   mq.addEventListener('input', () => setQuery(mq.value, mq));
   if (S.el.q) S.el.q.value = q.q;
-  const game = selectEl(S.meta.games, q.game, 'Any game'), mode = selectEl([['casual', 'Casual'], ['competitive', 'Competitive']], q.mode, 'Casual or competitive');
+  const game = gamePicker({ multi: false, value: q.game, anyLabel: 'Any game', placeholder: 'Any game' });
+  const mode = selectEl([['casual', 'Casual'], ['competitive', 'Competitive']], q.mode, 'Casual or competitive');
   const region = selectEl(S.meta.regions, q.region, 'Any region');
   const amin = h('input', { class: 'input', type: 'number', inputmode: 'numeric', min: 13, max: 99, placeholder: 'Min', 'aria-label': 'Minimum age', value: q.ageMin });
   const amax = h('input', { class: 'input', type: 'number', inputmode: 'numeric', min: 13, max: 99, placeholder: 'Max', 'aria-label': 'Maximum age', value: q.ageMax });
@@ -985,7 +1222,7 @@ function switchEl(on, onChange, label) {
 /* ================= create group ================= */
 function openCreate() {
   const name = h('input', { class: 'input', type: 'text', maxlength: 40, placeholder: 'e.g. Sunday Ranked Squad' });
-  const game = selectEl(S.meta.games, '', 'Choose a game');
+  const game = gamePicker({ multi: false, value: '', placeholder: 'Choose or search a game...' });
   const mode = selectEl([['casual', 'Casual'], ['competitive', 'Competitive']], 'casual');
   const region = selectEl(S.meta.regions, S.me.region || '', 'Choose a region');
   // Age separation: under-18s create groups for 13-17, adults for 18-99 (unless an admin switched the separation off).
@@ -1140,9 +1377,7 @@ async function settingsView() {
   const status = selectEl([['online', 'Online'], ['idle', 'Idle'], ['dnd', 'Do not disturb'], ['offline', 'Appear offline']], statusKey(me.status) || 'online');
   const playing = h('input', { class: 'input', type: 'text', maxlength: 40, value: T(me.playing || ''), placeholder: 'What are you playing right now?', autocomplete: 'off' });
   suggestInput(playing, () => S.meta.games.map(g => [gname(g), gname(g)]));
-  const games = [...(me.favoriteGames || [])];
-  const gw = h('div', { class: 'chips', role: 'group', 'aria-label': 'Favorite games' }, S.meta.games.map(g => { const n = gname(g);
-    return h('button', { type: 'button', class: 'chip', 'aria-pressed': String(games.includes(n)), onclick: (e) => { const i = games.indexOf(n); if (i >= 0) games.splice(i, 1); else games.push(n); e.currentTarget.setAttribute('aria-pressed', String(i < 0)); } }, T(n)); }));
+  const gp = gamePicker({ multi: true, value: me.favoriteGames || [] });
   const fr = field('Region', region), fa = field('Age', age), fs = field('Status', status), fp = field('Currently playing', playing, 'Shown next to your name in friends lists.');
   const motion = selectEl([['system', 'Follow system'], ['on', 'Always on'], ['off', 'Off']], TWM.motionPref());
   motion.addEventListener('change', () => { TWM.setMotionPref(motion.value); toast(motion.value === 'off' ? 'Animations off' : motion.value === 'on' ? 'Animations always on' : 'Animations follow your system'); });
@@ -1157,11 +1392,11 @@ async function settingsView() {
     const ok = [fr.setError(region.value ? '' : 'Choose a region'), fa.setError(a >= 13 && a <= 99 ? '' : 'Enter an age from 13 to 99')].every(Boolean);
     if (!ok) return;
     await busy(save, async () => {
-      await api('PUT', '/api/me/settings', { region: region.value, age: a, favoriteGames: games, playing: playing.value.trim(), status: status.value, onboarded: true });
+      await api('PUT', '/api/me/settings', { region: region.value, age: a, favoriteGames: gp.value, playing: playing.value.trim(), status: status.value, onboarded: true });
       S.me = await api('GET', '/api/me'); renderUserPanel(); toast('Settings saved'); document.dispatchEvent(new Event('tw:me'));
     });
   } }, h('div', { class: 'row' }, fr, fa), h('div', { class: 'row' }, fs, fp), detect, fm,
-    h('div', { class: 'field' }, h('span', { class: 'label', text: 'Favorite games' }), gw), h('div', {}, save));
+    h('div', { class: 'field' }, h('span', { class: 'label', text: 'Favorite games' }), gp), h('div', {}, save));
   const extrasSlot = h('div', { class: 'stack', style: 'gap:16px' });   // game ranks/roles, play style, availability (profile.js)
   if (window.TWProfile) TWProfile.settings(extrasSlot);
   const out = btn('Log out', { cls: 'danger', onclick: async (e) => { try { await api('POST', '/api/auth/logout'); } catch { /* ignore */ } loggedOut(); } });
@@ -1250,7 +1485,7 @@ document.addEventListener('visibilitychange', () => { if (!document.hidden) poll
    Read S/me through the getters; they change after login. */
 window.TW = {
   $, h, icon, api, qs, enc, toast, T, nm, avatar, safeColor, ink, STATUS, statusKey,
-  openSheet, confirmSheet, btn, busy, field, tabs, selectEl, suggestInput, switchEl, emptyState, stagger, when,
+  openSheet, confirmSheet, btn, busy, field, tabs, selectEl, suggestInput, gamePicker, switchEl, emptyState, stagger, when,
   personRow, groupCard, makeChat, openProfile, go, show, route, stale,
   loadSocial, refreshMine, renderFriends, renderBadge, renderUserPanel, applyAutoGame,
   get S() { return S; }, get me() { return S.me; }

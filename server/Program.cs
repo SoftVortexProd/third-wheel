@@ -91,7 +91,7 @@ app.Use(async (ctx, next) =>
         var path = ctx.Request.Path.Value ?? "";
         var page = Site.PageOf(path);
         bool exempt = path is "/api/site" or "/api/me" or "/api/meta" or "/api/auth/login" or "/api/auth/logout"
-            || path.StartsWith("/api/admin") || path.StartsWith("/api/avatars");
+            || path.StartsWith("/api/admin") || path.StartsWith("/api/avatars") || path.StartsWith("/api/games");
         if (!exempt && (Site.Maintenance || (page != null && Site.Closed.ContainsKey(page))))
         {
             var who = CurrentUser(ctx);
@@ -118,6 +118,7 @@ GroupsApi.Map(api);
 ProfileApi.Map(api);
 NotifyApi.Map(api);
 AccountApi.Map(api);
+GamesApi.Map(api);
 
 
 // ---------- auth ----------
@@ -177,7 +178,8 @@ api.MapPut("me/settings", (HttpContext c, SettingsIn b) => WithUser(c, uid =>
 {
     if (b.Region != null && !Db.Regions.Contains(b.Region)) return Err("Unknown region.");
     if (b.Age is < 13 or > 99) return Err("Age must be 13-99.");
-    var games = (b.FavoriteGames ?? Array.Empty<string>()).Where(g => Db.Games.Contains(g)).Distinct().Take(12).ToArray();
+    var games = (b.FavoriteGames ?? Array.Empty<string>()).Where(g => !string.IsNullOrWhiteSpace(g) && g.Length <= 80).Select(g => Clean(g, 80)).Distinct().Take(12).ToArray();
+    foreach (var g in games) GamesApi.EnsureGame(g);
     var status = b.Status ?? "online";
     if (status is not ("online" or "idle" or "dnd" or "offline")) return Err("Bad status.");
     string? playing = string.IsNullOrWhiteSpace(b.Playing) ? null : Enc(Clean(b.Playing, 40));
@@ -689,6 +691,6 @@ CREATE TABLE IF NOT EXISTS avatars(userId INTEGER PRIMARY KEY, mime TEXT NOT NUL
             Exec("UPDATE members SET role='owner' WHERE EXISTS (SELECT 1 FROM grps g WHERE g.id=members.groupId AND g.ownerId=members.userId)");
         }
         // Feature modules add their own tables/columns here (each must be safe to run on every start).
-        ChatApi.Migrate(); GroupsApi.Migrate(); ProfileApi.Migrate(); NotifyApi.Migrate();
+        ChatApi.Migrate(); GroupsApi.Migrate(); ProfileApi.Migrate(); NotifyApi.Migrate(); GamesApi.Migrate();
     }
 }

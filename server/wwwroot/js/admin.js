@@ -49,14 +49,7 @@ async function editUser(u, onDone) {
   suggestInput(playing, () => TW.S.meta.games.map(g => [gname(g), gname(g)]));
   const fdn = field('Display name', dn), fun = field('Username', un), fr = field('Region', region), fa = field('Age', age), fs = field('Status', status), fp = field('Playing', playing);
 
-  const games = [...(d.favoriteGames || [])];
-  const chips = h('div', { class: 'chips', role: 'group', 'aria-label': 'Favorite games' }, TW.S.meta.games.map(g => {
-    const n = gname(g);
-    return h('button', { type: 'button', class: 'chip', 'aria-pressed': String(games.includes(n)), onclick: (e) => {
-      const i = games.indexOf(n); if (i >= 0) games.splice(i, 1); else games.push(n);
-      e.currentTarget.setAttribute('aria-pressed', String(i < 0));
-    } }, T(n));
-  }));
+  const gp = (TW.gamePicker || gamePicker)({ multi: true, value: d.favoriteGames || [] });
 
   const save = btn('Save changes', { icon: 'check' });
   save.addEventListener('click', () => {
@@ -66,7 +59,7 @@ async function editUser(u, onDone) {
     if (!ok) return;
     busy(save, async () => {
       try {
-        await api('PUT', '/api/admin/users/' + enc(d.id), { username: un.value.trim(), displayName: dn.value.trim(), region: region.value, age: a, status: status.value, playing: playing.value.trim(), favoriteGames: games });
+        await api('PUT', '/api/admin/users/' + enc(d.id), { username: un.value.trim(), displayName: dn.value.trim(), region: region.value, age: a, status: status.value, playing: playing.value.trim(), favoriteGames: gp.value });
         toast('Saved changes to ' + un.value.trim()); finish();
       } catch (ex) { if (/username/i.test(ex.message)) fun.setError(ex.message); else throw ex; }
     });
@@ -88,7 +81,7 @@ async function editUser(u, onDone) {
   close = openSheet('Edit ' + nm(d), h('div', { class: 'stack', style: 'gap:16px' },
     h('div', { class: 'profile-top' }, avatar(d, 'lg'), h('div', { class: 'profile-names' }, h('b', { text: nm(d) }), h('p', { class: 'muted small', text: '@' + T(d.username) + ' · id ' + d.id }))),
     h('div', { class: 'row' }, fdn, fun), h('div', { class: 'row' }, fr, fa), h('div', { class: 'row' }, fs, fp),
-    h('div', { class: 'field' }, h('span', { class: 'label', text: 'Favorite games' }), chips),
+    h('div', { class: 'field' }, h('span', { class: 'label', text: 'Favorite games' }), gp),
     save,
     h('div', { class: 'danger-zone' }, h('div', { class: 'section-title', text: 'Moderation' }), reset, fpw, h('div', {}, setPw))));
 }

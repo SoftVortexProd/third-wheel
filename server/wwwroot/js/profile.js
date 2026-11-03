@@ -1,4 +1,4 @@
-/* Profile features: per-game rank/role, play style, availability, recommendations. Loaded after app.js; uses window.TW.
+﻿/* Profile features: per-game rank/role, play style, availability, recommendations. Loaded after app.js; uses window.TW.
    Everything user-supplied is shown through textContent (T() decodes the server's HTML entities). */
 (() => {
 'use strict';
