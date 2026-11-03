@@ -2,6 +2,7 @@
 param([switch]$SkipServer)
 # Native tools log to stderr; failures are caught via $LASTEXITCODE checks instead.
 $ErrorActionPreference = "Continue"
+Stop-Process -Name "ThirdWheel", "QtWebEngineProcess" -Force -ErrorAction SilentlyContinue
 $root = $PSScriptRoot
 $py = Join-Path $root ".venv\Scripts\python.exe"
 if (-not (Test-Path $py)) { py -m venv (Join-Path $root ".venv") }
@@ -44,6 +45,22 @@ Get-ChildItem (Join-Path $pyside "resources") -Filter "qtwebengine_devtools_reso
 $loc = Join-Path $pyside "translations\qtwebengine_locales"
 if (Test-Path $loc) { Get-ChildItem $loc -Filter "*.pak" | Where-Object { $_.BaseName -notin @("en-US", "sv") } | Remove-Item -Force }
 
+# Trim unused translations (*.qm) other than en and sv to reduce size
+$trans = Join-Path $pyside "translations"
+if (Test-Path $trans) {
+    Get-ChildItem $trans -Filter "*.qm" | Where-Object { $_.BaseName -notmatch "_(en|sv)$" } | Remove-Item -Force
+}
+
+# Trim unused imageformat and position plugins
+$imgf = Join-Path $pyside "plugins\imageformats"
+if (Test-Path $imgf) {
+    @("qtiff.dll", "qwbmp.dll", "qtga.dll", "qicns.dll", "qpdf.dll") | ForEach-Object {
+        $p = Join-Path $imgf $_; if (Test-Path $p) { Remove-Item $p -Force }
+    }
+}
+$pos = Join-Path $pyside "plugins\position"
+if (Test-Path $pos) { Remove-Item $pos -Recurse -Force }
+
 $target = Join-Path $root "dist\ThirdWheel\server"
 if (Test-Path $target) { Remove-Item $target -Recurse -Force }
 $cfg = Join-Path $root "desktop\config.json"
@@ -55,4 +72,12 @@ if (Test-Path $cfg) {
     Copy-Item (Join-Path $root "dist\server") $target -Recurse
     Write-Host "Local mode (no desktop\config.json): bundled server included."
 }
-Write-Host "Built: $root\dist\ThirdWheel\ThirdWheel.exe"
+
+$exe = Join-Path $root "dist\ThirdWheel\ThirdWheel.exe"
+$cert = Get-Item "Cert:\CurrentUser\My\F4833A212DD2FD4E70A535FAD5E64ED2DCDA67F1" -ErrorAction SilentlyContinue
+if ($cert -and (Test-Path $exe)) {
+    Set-AuthenticodeSignature -FilePath $exe -Certificate $cert | Out-Null
+    Write-Host "Signed $exe with Authenticode certificate ($($cert.Subject))"
+}
+
+Write-Host "Built: $exe"
