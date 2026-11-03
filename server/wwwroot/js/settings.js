@@ -78,7 +78,13 @@ function profileTab(panel, ctx) {
   const apply = () => { drawPrev(); TW.renderUserPanel(); rmBtn.hidden = !TW.me.avatar; ctx.who.textContent = t('Signed in as @{name}', { name: T(TW.me.username) }); };
   file.addEventListener('change', () => {
     const f = file.files && file.files[0]; file.value = ''; if (!f) return;
-    busy(upBtn, async () => { TW.me = await TW.sendAvatar(await TW.prepAvatar(f)); apply(); toast(t('Profile picture updated')); });
+    busy(upBtn, async () => {
+      const cropped = await TW.cropImage(f, { aspect: 1, shape: 'circle', title: t('Crop profile picture'), outWidth: 512, outHeight: 512 });
+      if (!cropped) return;
+      TW.me = await TW.sendAvatar(cropped);
+      apply();
+      toast(t('Profile picture updated'));
+    });
   });
   rmBtn.hidden = !me.avatar;
   const pic = h('div', { class: 'card pic-card' }, prev,
@@ -89,7 +95,7 @@ function profileTab(panel, ctx) {
   /* banner */
   const bannerPrev = h('div', { class: 'banner-preview' });
   const drawBannerPrev = () => {
-    bannerPrev.style.backgroundImage = TW.me.banner ? url('') : 'none';
+    bannerPrev.style.backgroundImage = TW.me.banner ? ('url(' + TW.me.banner + ')') : 'none';
     bannerPrev.style.backgroundColor = TW.me.banner ? 'transparent' : 'var(--color-raised)';
   };
   drawBannerPrev();
@@ -109,9 +115,9 @@ function profileTab(panel, ctx) {
     const f = bannerFile.files && bannerFile.files[0]; bannerFile.value = ''; if (!f) return;
     if (f.size > 5 * 1024 * 1024) { toast(t('Image must be 5 MB or smaller.'), 'error'); return; }
     busy(upBannerBtn, async () => {
-      const resp = await fetch('/api/me/banner', { method: 'POST', body: f, headers: { 'Content-Type': f.type } });
-      if (!resp.ok) { const j = await resp.json().catch(() => ({})); throw new Error(j.error || 'Upload failed'); }
-      TW.me = await api('GET', '/api/me');
+      const cropped = await TW.cropImage(f, { aspect: 3, shape: 'rect', title: t('Crop profile banner'), outWidth: 900, outHeight: 300 });
+      if (!cropped) return;
+      TW.me = await TW.sendBanner(cropped);
       applyBanner();
       toast(t('Profile banner updated'));
     });

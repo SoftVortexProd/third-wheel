@@ -497,3 +497,114 @@ button.member:active { transform: scale(.94); }
 /* Group icons in tiles */
 .gtile img { width: 100%; height: 100%; object-fit: cover; border-radius: inherit; display: block; }
 .avatar canvas.avatar-static { width: 100%; height: 100%; object-fit: cover; border-radius: inherit; display: block; }
+
+
+/* Image Cropper Modal */
+.sheet.cropper-sheet { width: min(560px, 96vw); }
+.cropper-modal { display: flex; flex-direction: column; gap: var(--space-4); }
+.cropper-stage {
+  position: relative;
+  width: 100%;
+  height: 320px;
+  background: #090a0f;
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  user-select: none;
+  touch-action: none;
+  border: 1px solid var(--color-border);
+}
+.cropper-img {
+  position: absolute;
+  pointer-events: none;
+  max-width: none;
+  max-height: none;
+  user-select: none;
+  display: block;
+}
+.cropper-box {
+  position: absolute;
+  border: 2px solid #ffffff;
+  box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.65);
+  cursor: move;
+  touch-action: none;
+  box-sizing: border-box;
+}
+.cropper-box.circle-guide::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  border: 1.5px dashed rgba(255, 255, 255, 0.55);
+  pointer-events: none;
+}
+.cropper-grid {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  grid-template-rows: 1fr 1fr 1fr;
+  pointer-events: none;
+}
+.cropper-grid > div {
+  border: 1px solid rgba(255, 255, 255, 0.15);
+}
+.cropper-handle {
+  position: absolute;
+  width: 14px;
+  height: 14px;
+  background: #ffffff;
+  border: 2px solid #1a1a24;
+  border-radius: 3px;
+  touch-action: none;
+  z-index: 2;
+}
+.cropper-handle.nw { top: -7px; left: -7px; cursor: nwse-resize; }
+.cropper-handle.ne { top: -7px; right: -7px; cursor: nesw-resize; }
+.cropper-handle.se { bottom: -7px; right: -7px; cursor: nwse-resize; }
+.cropper-handle.sw { bottom: -7px; left: -7px; cursor: nesw-resize; }
+.cropper-controls {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: 0 var(--space-2);
+}
+.cropper-preview-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--color-border);
+  flex-wrap: wrap;
+}
+.cropper-preview-box {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+.cropper-thumb-circle {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  border: 2px solid var(--color-border);
+  overflow: hidden;
+  background: var(--color-raised);
+  display: grid;
+  place-items: center;
+}
+.cropper-thumb-rect {
+  width: 120px;
+  height: 40px;
+  border-radius: var(--radius-sm);
+  border: 2px solid var(--color-border);
+  overflow: hidden;
+  background: var(--color-raised);
+  display: grid;
+  place-items: center;
+}
+.cropper-thumb-circle canvas, .cropper-thumb-rect canvas {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}

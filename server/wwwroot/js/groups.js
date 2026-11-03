@@ -295,9 +295,17 @@ function openSettings(g, reload) {
   rmIconBtn.hidden = !g.icon;
   iconFile.addEventListener('change', () => {
     const f = iconFile.files && iconFile.files[0]; iconFile.value = ''; if (!f) return;
-    if (f.size > 5 * 1024 * 1024) { toast('Image must be 5 MB or smaller.', 'error'); return; }
+    if (f.size > 5 * 1024 * 1024) { toast('Image must be 5 MB or smaller.', 'error'); return;
+    }
     busy(upIconBtn, async () => {
-      const resp = await fetch('/api/groups/' + enc(g.id) + '/icon', { method: 'POST', body: f, headers: { 'Content-Type': f.type } });
+      const cropped = await TW.cropImage(f, { aspect: 1, shape: 'rect', title: 'Crop group picture', outWidth: 512, outHeight: 512 });
+      if (!cropped) return;
+      const resp = await fetch('/api/groups/' + enc(g.id) + '/icon', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'X-TW': '1', 'Content-Type': cropped.type || 'application/octet-stream' },
+        body: cropped
+      });
       if (!resp.ok) { const j = await resp.json().catch(() => ({})); throw new Error(j.error || 'Upload failed'); }
       const res = await resp.json();
       g.icon = res.icon;

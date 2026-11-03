@@ -594,11 +594,11 @@ function tabs(items, active, onChange, label) {
   root.set = set; root.buttons = bs; set(active, false);
   return root;
 }
-function openSheet(title, body) {
+function openSheet(title, body, opts = {}) {
   const prev = document.activeElement;
   let closing = false;
   const ov = h('div', { class: 'overlay' });
-  const panel = h('div', { class: 'sheet', role: 'dialog', 'aria-modal': 'true', 'aria-label': title },
+  const panel = h('div', { class: 'sheet' + (opts.cls ? ' ' + opts.cls : ''), role: 'dialog', 'aria-modal': 'true', 'aria-label': title },
     h('div', { class: 'sheet-head' }, h('h2', { text: title }),
       h('button', { class: 'icon-btn', type: 'button', 'aria-label': 'Close', onclick: () => close() }, icon('x'))),
     h('div', { class: 'sheet-body' }, body));
@@ -1440,6 +1440,337 @@ async function friendsView(_, tok) {
 }
 
 /* ================= settings ================= */
+
+async function sendBanner(blob) {
+  let r;
+  try {
+    r = await fetch('/api/me/banner', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'X-TW': '1', 'Content-Type': blob.type || 'application/octet-stream' },
+      body: blob
+    });
+  } catch {
+    throw new Error(tr('Cannot reach the server. Check your connection.'));
+  }
+  let data = null;
+  try { data = await r.json(); } catch { /* empty */ }
+  if (!r.ok) throw new Error((data && data.error) || `Upload failed (${r.status}).`);
+  return data;
+}
+
+async function cropImage(file, opts = {}) {
+  if (!file) return null;
+  const aspect = opts.aspect || 1;
+  const shape = opts.shape || 'circle';
+  const outW = opts.outWidth || 512;
+  const outH = opts.outHeight || Math.round(outW / aspect);
+  const title = opts.title || tr('Crop image');
+
+  if (file.type === 'image/gif') {
+    const choice = await new Promise((res) => {
+      let close = () => {};
+      const cancelBtn = btn(tr('Cancel'), { cls: 'ghost', onclick: () => { close(); res('cancel'); } });
+      const cropBtn = btn(tr('Crop (static)'), { cls: 'outline', onclick: () => { close(); res('crop'); } });
+      const keepBtn = btn(tr('Keep animated (full)'), { onclick: () => { close(); res('keep'); } });
+      const body = h('div', { class: 'stack', style: 'gap:16px;' },
+        h('p', { class: 'muted', text: tr('This image is an animated GIF. You can keep it full-sized to preserve the animation, or crop it as a static image.') }),
+        h('div', { class: 'row', style: 'justify-content:flex-end;gap:8px;flex-wrap:wrap;' }, cancelBtn, cropBtn, keepBtn)
+      );
+      close = openSheet(tr('Animated GIF detected'), body);
+    });
+    if (choice === 'cancel') return null;
+    if (choice === 'keep') {
+      if (file.size > 5 * 1024 * 1024) throw new Error(tr('GIFs must be 5 MB or smaller.'));
+      return file;
+    }
+  }
+
+  const objUrl = URL.createObjectURL(file);
+  const img = new Image();
+  try {
+    await new Promise((res, rej) => {
+      img.onload = res;
+      img.onerror = () => rej(new Error(tr('That image could not be read.')));
+      img.src = objUrl;
+    });
+  } catch (err) {
+    URL.revokeObjectURL(objUrl);
+    throw err;
+  }
+
+  const origW = img.naturalWidth || img.width;
+  const origH = img.naturalHeight || img.height;
+  if (!origW || !origH) {
+    URL.revokeObjectURL(objUrl);
+    throw new Error(tr('That image could not be read.'));
+  }
+
+  return new Promise((resolve) => {
+    let closed = false;
+    let closeSheet = () => {};
+
+    const stage = h('div', { class: 'cropper-stage' });
+    const imgEl = h('img', { class: 'cropper-img', src: objUrl, draggable: 'false', alt: '' });
+
+    const gridEl = h('div', { class: 'cropper-grid' },
+      h('div', {}), h('div', {}), h('div', {}),
+      h('div', {}), h('div', {}), h('div', {}),
+      h('div', {}), h('div', {}), h('div', {})
+    );
+
+    const hNW = h('div', { class: 'cropper-handle nw' });
+    const hNE = h('div', { class: 'cropper-handle ne' });
+    const hSE = h('div', { class: 'cropper-handle se' });
+    const hSW = h('div', { class: 'cropper-handle sw' });
+
+    const boxEl = h('div', { class: 'cropper-box' + (shape === 'circle' ? ' circle-guide' : '') },
+      gridEl, hNW, hNE, hSE, hSW
+    );
+    stage.append(imgEl, boxEl);
+
+    let zoom = 1;
+    const zoomInput = h('input', { type: 'range', min: '1', max: '3', step: '0.02', value: '1', style: 'flex:1;' });
+    const zoomResetBtn = btn(tr('Center'), { cls: 'small ghost', onclick: () => resetCrop() });
+    const controls = h('div', { class: 'cropper-controls' },
+      icon('search', 14),
+      h('span', { class: 'small muted', text: '1x' }),
+      zoomInput,
+      h('span', { class: 'small muted', text: '3x' }),
+      zoomResetBtn
+    );
+
+    const previewCanvas = h('canvas', { width: shape === 'circle' ? 44 : 120, height: shape === 'circle' ? 44 : 40 });
+    const previewContainer = h('div', { class: shape === 'circle' ? 'cropper-thumb-circle' : 'cropper-thumb-rect' }, previewCanvas);
+    const pctx = previewCanvas.getContext('2d');
+
+    const previewRow = h('div', { class: 'cropper-preview-row' },
+      h('div', { class: 'cropper-preview-box' },
+        previewContainer,
+        h('div', { class: 'stack', style: 'gap:2px;' },
+          h('span', { class: 'small', style: 'font-weight:600;', text: tr('Preview') }),
+          h('span', { class: 'small muted', text: shape === 'circle' ? tr('Drag to move the crop area') : tr('Drag handles to resize') })
+        )
+      ),
+      h('div', { class: 'row', style: 'gap:8px;' },
+        btn(tr('Cancel'), { cls: 'ghost', onclick: () => { cleanup(); resolve(null); closeSheet(); } }),
+        btn(tr('Apply'), { cls: 'primary', onclick: async () => {
+          try {
+            const blob = await exportCrop();
+            cleanup();
+            closeSheet();
+            resolve(blob);
+          } catch (e) {
+            toast(e.message || 'Crop failed', 'error');
+          }
+        }})
+      )
+    );
+
+    const body = h('div', { class: 'cropper-modal' },
+      stage,
+      controls,
+      previewRow
+    );
+
+    closeSheet = openSheet(title, body, { cls: 'cropper-sheet' });
+
+    function cleanup() {
+      if (closed) return;
+      closed = true;
+      URL.revokeObjectURL(objUrl);
+    }
+
+    let stW = 460, stH = 300;
+    let fitScale = 1, curScale = 1;
+    let dispW = 0, dispH = 0;
+    let imgX = 0, imgY = 0;
+    let boxX = 0, boxY = 0, boxW = 0, boxH = 0;
+
+    function initGeometry() {
+      const rect = stage.getBoundingClientRect();
+      stW = rect.width || 460;
+      stH = rect.height || 300;
+      fitScale = Math.min((stW - 20) / origW, (stH - 20) / origH);
+      curScale = fitScale * zoom;
+      dispW = origW * curScale;
+      dispH = origH * curScale;
+      imgX = (stW - dispW) / 2;
+      imgY = (stH - dispH) / 2;
+
+      if (dispW / dispH > aspect) {
+        boxH = dispH * 0.85;
+        boxW = boxH * aspect;
+      } else {
+        boxW = dispW * 0.85;
+        boxH = boxW / aspect;
+      }
+      boxX = imgX + (dispW - boxW) / 2;
+      boxY = imgY + (dispH - boxH) / 2;
+      paint();
+    }
+
+    function resetCrop() {
+      zoom = 1;
+      zoomInput.value = '1';
+      curScale = fitScale;
+      dispW = origW * curScale;
+      dispH = origH * curScale;
+      imgX = (stW - dispW) / 2;
+      imgY = (stH - dispH) / 2;
+      if (dispW / dispH > aspect) {
+        boxH = dispH * 0.85;
+        boxW = boxH * aspect;
+      } else {
+        boxW = dispW * 0.85;
+        boxH = boxW / aspect;
+      }
+      boxX = imgX + (dispW - boxW) / 2;
+      boxY = imgY + (dispH - boxH) / 2;
+      paint();
+    }
+
+    function paint() {
+      imgEl.style.width = Math.round(dispW) + 'px';
+      imgEl.style.height = Math.round(dispH) + 'px';
+      imgEl.style.left = Math.round(imgX) + 'px';
+      imgEl.style.top = Math.round(imgY) + 'px';
+
+      boxEl.style.width = Math.round(boxW) + 'px';
+      boxEl.style.height = Math.round(boxH) + 'px';
+      boxEl.style.left = Math.round(boxX) + 'px';
+      boxEl.style.top = Math.round(boxY) + 'px';
+
+      drawPreview();
+    }
+
+    function drawPreview() {
+      if (!pctx) return;
+      pctx.clearRect(0, 0, previewCanvas.width, previewCanvas.height);
+      const sX = (boxX - imgX) / curScale;
+      const sY = (boxY - imgY) / curScale;
+      const sW = boxW / curScale;
+      const sH = boxH / curScale;
+      pctx.drawImage(img, Math.max(0, sX), Math.max(0, sY), Math.min(origW, sW), Math.min(origH, sH), 0, 0, previewCanvas.width, previewCanvas.height);
+    }
+
+    async function exportCrop() {
+      const cv = document.createElement('canvas');
+      cv.width = outW;
+      cv.height = outH;
+      const ctx = cv.getContext('2d');
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = 'high';
+      const sX = (boxX - imgX) / curScale;
+      const sY = (boxY - imgY) / curScale;
+      const sW = boxW / curScale;
+      const sH = boxH / curScale;
+      ctx.drawImage(img, Math.max(0, sX), Math.max(0, sY), Math.min(origW, sW), Math.min(origH, sH), 0, 0, outW, outH);
+      const blob = await new Promise(r => cv.toBlob(r, 'image/webp', 0.92)) || await new Promise(r => cv.toBlob(r, 'image/png'));
+      if (!blob || blob.size > 5 * 1024 * 1024) throw new Error(tr('Image must be 5 MB or smaller.'));
+      return blob;
+    }
+
+    zoomInput.addEventListener('input', () => {
+      const newZoom = parseFloat(zoomInput.value);
+      const centerRelX = (boxX + boxW / 2 - imgX) / curScale;
+      const centerRelY = (boxY + boxH / 2 - imgY) / curScale;
+
+      zoom = newZoom;
+      curScale = fitScale * zoom;
+      dispW = origW * curScale;
+      dispH = origH * curScale;
+      imgX = (stW - dispW) / 2;
+      imgY = (stH - dispH) / 2;
+
+      boxX = imgX + centerRelX * curScale - boxW / 2;
+      boxY = imgY + centerRelY * curScale - boxH / 2;
+
+      if (boxW > dispW) { boxW = dispW; boxH = boxW / aspect; }
+      if (boxH > dispH) { boxH = dispH; boxW = boxH * aspect; }
+
+      boxX = Math.max(imgX, Math.min(imgX + dispW - boxW, boxX));
+      boxY = Math.max(imgY, Math.min(imgY + dispH - boxH, boxY));
+
+      paint();
+    });
+
+    let dragMode = null;
+    let startX = 0, startY = 0;
+    let startBoxX = 0, startBoxY = 0, startBoxW = 0, startBoxH = 0;
+
+    boxEl.addEventListener('pointerdown', (e) => {
+      const handle = e.target.closest('.cropper-handle');
+      if (handle) {
+        if (handle.classList.contains('nw')) dragMode = 'nw';
+        else if (handle.classList.contains('ne')) dragMode = 'ne';
+        else if (handle.classList.contains('se')) dragMode = 'se';
+        else if (handle.classList.contains('sw')) dragMode = 'sw';
+      } else {
+        dragMode = 'move';
+      }
+      startX = e.clientX;
+      startY = e.clientY;
+      startBoxX = boxX;
+      startBoxY = boxY;
+      startBoxW = boxW;
+      startBoxH = boxH;
+      boxEl.setPointerCapture(e.pointerId);
+      e.preventDefault();
+      e.stopPropagation();
+    });
+
+    boxEl.addEventListener('pointermove', (e) => {
+      if (!dragMode) return;
+      const dx = e.clientX - startX;
+      const dy = e.clientY - startY;
+
+      if (dragMode === 'move') {
+        boxX = Math.max(imgX, Math.min(imgX + dispW - boxW, startBoxX + dx));
+        boxY = Math.max(imgY, Math.min(imgY + dispH - boxH, startBoxY + dy));
+      } else if (dragMode === 'se') {
+        const d = Math.max(dx, dy * aspect);
+        let nw = Math.max(48, Math.min(startBoxW + d, (imgX + dispW) - startBoxX, ((imgY + dispH) - startBoxY) * aspect));
+        boxW = nw;
+        boxH = nw / aspect;
+      } else if (dragMode === 'sw') {
+        const d = Math.max(-dx, dy * aspect);
+        let nw = Math.max(48, Math.min(startBoxW + d, (startBoxX + startBoxW) - imgX, ((imgY + dispH) - startBoxY) * aspect));
+        boxW = nw;
+        boxH = nw / aspect;
+        boxX = startBoxX + startBoxW - boxW;
+      } else if (dragMode === 'ne') {
+        const d = Math.max(dx, -dy * aspect);
+        let nw = Math.max(48, Math.min(startBoxW + d, (imgX + dispW) - startBoxX, (startBoxY + startBoxH - imgY) * aspect));
+        boxW = nw;
+        boxH = nw / aspect;
+        boxY = startBoxY + startBoxH - boxH;
+      } else if (dragMode === 'nw') {
+        const d = Math.max(-dx, -dy * aspect);
+        let nw = Math.max(48, Math.min(startBoxW + d, (startBoxX + startBoxW) - imgX, (startBoxY + startBoxH - imgY) * aspect));
+        boxW = nw;
+        boxH = nw / aspect;
+        boxX = startBoxX + startBoxW - boxW;
+        boxY = startBoxY + startBoxH - boxH;
+      }
+      paint();
+    });
+
+    const onPointerUp = (e) => {
+      if (dragMode) {
+        dragMode = null;
+        try { boxEl.releasePointerCapture(e.pointerId); } catch {}
+      }
+    };
+    boxEl.addEventListener('pointerup', onPointerUp);
+    boxEl.addEventListener('pointercancel', onPointerUp);
+
+    requestAnimationFrame(() => {
+      initGeometry();
+    });
+  });
+}
+
 const MAX_AVATAR = 5 * 1024 * 1024;
 /* GIFs are sent untouched so they stay animated; other images are centre-cropped and shrunk first. */
 async function prepAvatar(file) {
@@ -1562,7 +1893,7 @@ window.TW = {
   openSheet, confirmSheet, btn, busy, field, tabs, selectEl, suggestInput, gamePicker, switchEl, emptyState, stagger, when,
   personRow, groupCard, makeChat, openProfile, go, show, route, stale, playingStatusText, gameThumb, groupTile,
   loadSocial, refreshMine, renderFriends, renderBadge, renderUserPanel, applyAutoGame,
-  t: tr, loggedOut, prepAvatar, sendAvatar, autoOn,
+  t: tr, loggedOut, prepAvatar, sendAvatar, sendBanner, cropImage, autoOn,
   get S() { return S; }, get me() { return S.me; }, set me(u) { S.me = u; }
 };
 
