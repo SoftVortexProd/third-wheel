@@ -83,3 +83,50 @@
   .msg .actions { right: 4px; }
   .att-img img { max-height: 260px; }
 }
+
+/* ===== GIF picker, GIF messages, translate + report ===== */
+.composer .gif-btn { flex: none; align-self: center; width: 40px; }
+.gif-glyph { font-size: 11px; font-weight: 800; letter-spacing: .04em; line-height: 1; padding: 4px 5px; border: 1.5px solid currentColor; border-radius: 6px; }
+.gif-btn[aria-expanded="true"] { background: var(--color-accent-soft); color: var(--color-accent-text); }
+
+.gif-pop { position: fixed; z-index: 95; display: flex; flex-direction: column; min-height: 220px; background: #14141a; border: 1px solid #34343c; border-radius: var(--radius-lg, 16px); box-shadow: 0 24px 50px -14px rgba(0, 0, 0, .9); overflow: hidden; transform-origin: bottom left; }
+.gif-head { flex: none; padding: var(--space-3) var(--space-3) 0; }
+.gif-search { border-radius: var(--radius-pill, 999px); background: var(--color-raised); }
+.gif-pop > .tabs { flex: none; margin: var(--space-2) var(--space-3) 0; }
+.gif-note { flex: none; margin: 0; padding: 6px var(--space-4) 0; color: var(--color-text-2); font-size: var(--fs-sm); line-height: 16px; }
+.gif-note[hidden] { display: none; }
+.gif-scroll { flex: 1; min-height: 0; overflow-y: auto; padding: var(--space-3); }
+.gif-msg { display: flex; flex-direction: column; align-items: center; gap: var(--space-3); padding: 40px var(--space-4); text-align: center; color: var(--color-text-2); font-size: var(--fs-md); line-height: 20px; overflow-wrap: anywhere; }
+.gif-msg[hidden] { display: none; }
+.gif-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
+.gif-grid:empty { display: none; }
+.gif-cell { position: relative; aspect-ratio: 4 / 3; border-radius: var(--radius-md); overflow: hidden; background: var(--color-raised); }
+.gif-tile { display: block; width: 100%; height: 100%; padding: 0; border: 0; background: transparent; cursor: pointer; transition: transform .35s var(--spring, ease); }
+.gif-tile img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.gif-tile:hover { transform: scale(1.04); }
+.gif-tile:active { transform: scale(.97); }
+.gif-heart { position: absolute; top: 5px; right: 5px; display: grid; place-items: center; width: 30px; height: 30px; padding: 0; border: 0; border-radius: 50%; background: rgba(0, 0, 0, .6); color: #fff; opacity: .85; transition: transform .35s var(--spring, ease), background .2s, color .2s, opacity .2s; }
+.gif-heart:hover, .gif-heart:focus-visible { opacity: 1; transform: scale(1.12); background: rgba(0, 0, 0, .8); }
+.gif-heart:active { transform: scale(.88); }
+.gif-heart[aria-pressed="true"] { color: #ff6b81; opacity: 1; }
+.gif-heart[aria-pressed="true"] svg { fill: currentColor; }
+
+.gif-card { position: relative; display: block; margin-top: 6px; padding: 0; max-width: min(300px, 100%); border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-raised); overflow: hidden; cursor: zoom-in; transition: transform .35s var(--spring, ease), border-color .2s; }
+.gif-card:hover { border-color: #44444d; transform: scale(1.015); }
+.gif-card img { display: block; max-width: 100%; max-height: 260px; width: auto; height: auto; }
+.gif-tag { position: absolute; left: 6px; bottom: 6px; padding: 1px 6px; border-radius: 4px; background: rgba(0, 0, 0, .65); color: #fff; font-size: 10px; font-weight: 800; letter-spacing: .06em; line-height: 16px; }
+
+.msg .txt.translated { color: var(--color-text); }
+.tr-note { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; margin-top: 2px; color: var(--color-text-2); font-size: var(--fs-sm); line-height: 18px; }
+.linklike { padding: 0; border: 0; background: none; color: var(--color-accent-text); font: inherit; cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }
+.linklike:hover { color: #fff; }
+.act-btn { position: relative; }
+.act-btn.loading svg { opacity: 0; }
+.act-btn.loading::after { content: ""; position: absolute; width: 14px; height: 14px; border: 2px solid var(--color-border); border-top-color: var(--color-text); border-radius: 50%; animation: spin .7s linear infinite; }
+.report-quote { display: flex; flex-direction: column; gap: 2px; padding: 10px 12px; border-left: 3px solid var(--color-danger); border-radius: 0 var(--radius-sm) var(--radius-sm) 0; background: var(--color-raised); font-size: var(--fs-md); line-height: 20px; }
+.report-quote span { color: var(--color-text-2); overflow-wrap: anywhere; }
+
+@media (max-width: 899px) {
+  .gif-pop { transform-origin: bottom center; }
+  .gif-card img { max-height: 220px; }
+}
