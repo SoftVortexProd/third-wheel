@@ -1506,19 +1506,21 @@ async function cropImage(file, opts = {}) {
     const hSE = h('div', { class: 'cropper-handle se' });
     const hSW = h('div', { class: 'cropper-handle sw' });
 
+    const bannerBadge = (aspect > 1) ? h('span', { class: 'cropper-banner-badge', text: tr('Banner') }) : null;
+
     const boxEl = h('div', { class: 'cropper-box' + (shape === 'circle' ? ' circle-guide' : '') },
-      gridEl, hNW, hNE, hSE, hSW
+      gridEl, bannerBadge, hNW, hNE, hSE, hSW
     );
     stage.append(imgEl, boxEl);
 
     let zoom = 1;
-    const zoomInput = h('input', { type: 'range', min: '1', max: '3', step: '0.02', value: '1', style: 'flex:1;' });
+    const zoomInput = h('input', { type: 'range', min: '1', max: '4', step: '0.01', value: '1', style: 'flex:1;' });
     const zoomResetBtn = btn(tr('Center'), { cls: 'small ghost', onclick: () => resetCrop() });
     const controls = h('div', { class: 'cropper-controls' },
       icon('search', 14),
       h('span', { class: 'small muted', text: '1x' }),
       zoomInput,
-      h('span', { class: 'small muted', text: '3x' }),
+      h('span', { class: 'small muted', text: '4x' }),
       zoomResetBtn
     );
 
@@ -1541,7 +1543,7 @@ async function cropImage(file, opts = {}) {
         previewContainer,
         h('div', { class: 'stack', style: 'gap:2px;' },
           h('span', { class: 'small', style: 'font-weight:600;', text: tr('Preview') }),
-          h('span', { class: 'small muted', text: isGif ? tr('Animation preserved on save') : (shape === 'circle' ? tr('Drag to move the crop area') : tr('Drag handles to resize')) })
+          h('span', { class: 'small muted', text: isGif ? tr('Animation preserved on save') : tr('Drag anywhere to move • scroll to zoom') })
         )
       ),
       h('div', { class: 'row', style: 'gap:8px;' },
@@ -1559,57 +1561,86 @@ async function cropImage(file, opts = {}) {
 
     closeSheet = openSheet(title, body, { cls: 'cropper-sheet' });
 
+    let ro = null;
     function cleanup() {
       if (closed) return;
       closed = true;
+      if (ro) { ro.disconnect(); ro = null; }
     }
 
-    let stW = 460, stH = 300;
+    let stW = 540, stH = 340;
     let fitScale = 1, curScale = 1;
     let dispW = 0, dispH = 0;
     let imgX = 0, imgY = 0;
     let boxX = 0, boxY = 0, boxW = 0, boxH = 0;
 
     function initGeometry() {
-      const rect = stage.getBoundingClientRect();
-      stW = rect.width || 460;
-      stH = rect.height || 300;
-      fitScale = Math.min((stW - 20) / origW, (stH - 20) / origH);
-      curScale = fitScale * zoom;
-      dispW = origW * curScale;
-      dispH = origH * curScale;
-      imgX = (stW - dispW) / 2;
-      imgY = (stH - dispH) / 2;
+      const w = stage.clientWidth || 540;
+      const h = stage.clientHeight || 340;
+      stW = w;
+      stH = h;
 
-      if (dispW / dispH > aspect) {
-        boxH = dispH * 0.85;
-        boxW = boxH * aspect;
+      // 1. Calculate Crop Box in the center of the stage
+      if (aspect > 1) {
+        boxW = Math.round(Math.min(stW - 32, (stH - 40) * aspect));
+        boxH = Math.round(boxW / aspect);
       } else {
-        boxW = dispW * 0.85;
-        boxH = boxW / aspect;
+        const maxSz = Math.min(stW - 32, stH - 32, 260);
+        boxW = Math.round(maxSz);
+        boxH = Math.round(boxW / aspect);
       }
-      boxX = imgX + (dispW - boxW) / 2;
-      boxY = imgY + (dispH - boxH) / 2;
+      boxX = Math.round((stW - boxW) / 2);
+      boxY = Math.round((stH - boxH) / 2);
+
+      // 2. Automatically scale up to the GIF/image so it fully COVERS the crop box
+      fitScale = Math.max(boxW / origW, boxH / origH);
+      curScale = fitScale * zoom;
+      dispW = Math.round(origW * curScale);
+      dispH = Math.round(origH * curScale);
+
+      // 3. Center image behind crop box
+      imgX = Math.round(boxX + (boxW - dispW) / 2);
+      imgY = Math.round(boxY + (boxH - dispH) / 2);
+
+      clampImage();
       paint();
+    }
+
+    function clampImage() {
+      if (dispW >= boxW) {
+        if (imgX > boxX) imgX = boxX;
+        if (imgX + dispW < boxX + boxW) imgX = boxX + boxW - dispW;
+      } else {
+        imgX = Math.round(boxX + (boxW - dispW) / 2);
+      }
+      if (dispH >= boxH) {
+        if (imgY > boxY) imgY = boxY;
+        if (imgY + dispH < boxY + boxH) imgY = boxY + boxH - dispH;
+      } else {
+        imgY = Math.round(boxY + (boxH - dispH) / 2);
+      }
     }
 
     function resetCrop() {
       zoom = 1;
       zoomInput.value = '1';
-      curScale = fitScale;
-      dispW = origW * curScale;
-      dispH = origH * curScale;
-      imgX = (stW - dispW) / 2;
-      imgY = (stH - dispH) / 2;
-      if (dispW / dispH > aspect) {
-        boxH = dispH * 0.85;
-        boxW = boxH * aspect;
-      } else {
-        boxW = dispW * 0.85;
-        boxH = boxW / aspect;
-      }
-      boxX = imgX + (dispW - boxW) / 2;
-      boxY = imgY + (dispH - boxH) / 2;
+      initGeometry();
+    }
+
+    function applyZoom(newZoom) {
+      newZoom = Math.max(1, Math.min(4, newZoom));
+      const centerRelX = (boxX + boxW / 2 - imgX) / curScale;
+      const centerRelY = (boxY + boxH / 2 - imgY) / curScale;
+
+      zoom = newZoom;
+      curScale = fitScale * zoom;
+      dispW = Math.round(origW * curScale);
+      dispH = Math.round(origH * curScale);
+
+      imgX = Math.round(boxX + boxW / 2 - centerRelX * curScale);
+      imgY = Math.round(boxY + boxH / 2 - centerRelY * curScale);
+
+      clampImage();
       paint();
     }
 
@@ -1671,34 +1702,25 @@ async function cropImage(file, opts = {}) {
     }
 
     zoomInput.addEventListener('input', () => {
-      const newZoom = parseFloat(zoomInput.value);
-      const centerRelX = (boxX + boxW / 2 - imgX) / curScale;
-      const centerRelY = (boxY + boxH / 2 - imgY) / curScale;
-
-      zoom = newZoom;
-      curScale = fitScale * zoom;
-      dispW = origW * curScale;
-      dispH = origH * curScale;
-      imgX = (stW - dispW) / 2;
-      imgY = (stH - dispH) / 2;
-
-      boxX = imgX + centerRelX * curScale - boxW / 2;
-      boxY = imgY + centerRelY * curScale - boxH / 2;
-
-      if (boxW > dispW) { boxW = dispW; boxH = boxW / aspect; }
-      if (boxH > dispH) { boxH = dispH; boxW = boxH * aspect; }
-
-      boxX = Math.max(imgX, Math.min(imgX + dispW - boxW, boxX));
-      boxY = Math.max(imgY, Math.min(imgY + dispH - boxH, boxY));
-
-      paint();
+      applyZoom(parseFloat(zoomInput.value));
     });
+
+    stage.addEventListener('wheel', (e) => {
+      e.preventDefault();
+      const delta = e.deltaY < 0 ? 0.08 : -0.08;
+      const newZoom = Math.max(1, Math.min(4, zoom + delta));
+      if (newZoom !== zoom) {
+        zoomInput.value = newZoom.toFixed(2);
+        applyZoom(newZoom);
+      }
+    }, { passive: false });
 
     let dragMode = null;
     let startX = 0, startY = 0;
+    let startImgX = 0, startImgY = 0;
     let startBoxX = 0, startBoxY = 0, startBoxW = 0, startBoxH = 0;
 
-    boxEl.addEventListener('pointerdown', (e) => {
+    stage.addEventListener('pointerdown', (e) => {
       const handle = e.target.closest('.cropper-handle');
       if (handle) {
         if (handle.classList.contains('nw')) dragMode = 'nw';
@@ -1706,51 +1728,58 @@ async function cropImage(file, opts = {}) {
         else if (handle.classList.contains('se')) dragMode = 'se';
         else if (handle.classList.contains('sw')) dragMode = 'sw';
       } else {
-        dragMode = 'move';
+        dragMode = 'pan';
       }
       startX = e.clientX;
       startY = e.clientY;
+      startImgX = imgX;
+      startImgY = imgY;
       startBoxX = boxX;
       startBoxY = boxY;
       startBoxW = boxW;
       startBoxH = boxH;
-      boxEl.setPointerCapture(e.pointerId);
+      stage.setPointerCapture(e.pointerId);
+      stage.classList.add('grabbing');
       e.preventDefault();
-      e.stopPropagation();
     });
 
-    boxEl.addEventListener('pointermove', (e) => {
+    stage.addEventListener('pointermove', (e) => {
       if (!dragMode) return;
       const dx = e.clientX - startX;
       const dy = e.clientY - startY;
 
-      if (dragMode === 'move') {
-        boxX = Math.max(imgX, Math.min(imgX + dispW - boxW, startBoxX + dx));
-        boxY = Math.max(imgY, Math.min(imgY + dispH - boxH, startBoxY + dy));
+      if (dragMode === 'pan') {
+        imgX = startImgX + dx;
+        imgY = startImgY + dy;
+        clampImage();
       } else if (dragMode === 'se') {
         const d = Math.max(dx, dy * aspect);
-        let nw = Math.max(48, Math.min(startBoxW + d, (imgX + dispW) - startBoxX, ((imgY + dispH) - startBoxY) * aspect));
-        boxW = nw;
-        boxH = nw / aspect;
+        const nw = Math.max(64, Math.min(startBoxW + d, (imgX + dispW) - startBoxX, ((imgY + dispH) - startBoxY) * aspect));
+        boxW = Math.round(nw);
+        boxH = Math.round(nw / aspect);
+        clampImage();
       } else if (dragMode === 'sw') {
         const d = Math.max(-dx, dy * aspect);
-        let nw = Math.max(48, Math.min(startBoxW + d, (startBoxX + startBoxW) - imgX, ((imgY + dispH) - startBoxY) * aspect));
-        boxW = nw;
-        boxH = nw / aspect;
-        boxX = startBoxX + startBoxW - boxW;
+        const nw = Math.max(64, Math.min(startBoxW + d, (startBoxX + startBoxW) - imgX, ((imgY + dispH) - startBoxY) * aspect));
+        boxW = Math.round(nw);
+        boxH = Math.round(nw / aspect);
+        boxX = Math.round(startBoxX + startBoxW - boxW);
+        clampImage();
       } else if (dragMode === 'ne') {
         const d = Math.max(dx, -dy * aspect);
-        let nw = Math.max(48, Math.min(startBoxW + d, (imgX + dispW) - startBoxX, (startBoxY + startBoxH - imgY) * aspect));
-        boxW = nw;
-        boxH = nw / aspect;
-        boxY = startBoxY + startBoxH - boxH;
+        const nw = Math.max(64, Math.min(startBoxW + d, (imgX + dispW) - startBoxX, (startBoxY + startBoxH - imgY) * aspect));
+        boxW = Math.round(nw);
+        boxH = Math.round(nw / aspect);
+        boxY = Math.round(startBoxY + startBoxH - boxH);
+        clampImage();
       } else if (dragMode === 'nw') {
         const d = Math.max(-dx, -dy * aspect);
-        let nw = Math.max(48, Math.min(startBoxW + d, (startBoxX + startBoxW) - imgX, (startBoxY + startBoxH - imgY) * aspect));
-        boxW = nw;
-        boxH = nw / aspect;
-        boxX = startBoxX + startBoxW - boxW;
-        boxY = startBoxY + startBoxH - boxH;
+        const nw = Math.max(64, Math.min(startBoxW + d, (startBoxX + startBoxW) - imgX, (startBoxY + startBoxH - imgY) * aspect));
+        boxW = Math.round(nw);
+        boxH = Math.round(nw / aspect);
+        boxX = Math.round(startBoxX + startBoxW - boxW);
+        boxY = Math.round(startBoxY + startBoxH - boxH);
+        clampImage();
       }
       paint();
     });
@@ -1758,17 +1787,30 @@ async function cropImage(file, opts = {}) {
     const onPointerUp = (e) => {
       if (dragMode) {
         dragMode = null;
-        try { boxEl.releasePointerCapture(e.pointerId); } catch {}
+        stage.classList.remove('grabbing');
+        try { stage.releasePointerCapture(e.pointerId); } catch {}
       }
     };
-    boxEl.addEventListener('pointerup', onPointerUp);
-    boxEl.addEventListener('pointercancel', onPointerUp);
+    stage.addEventListener('pointerup', onPointerUp);
+    stage.addEventListener('pointercancel', onPointerUp);
 
-    requestAnimationFrame(() => {
-      initGeometry();
+    // Initial calculation & observer
+    initGeometry();
+    ro = new ResizeObserver(() => {
+      const w = stage.clientWidth;
+      const h = stage.clientHeight;
+      if (w >= 100 && h >= 100 && (Math.abs(w - stW) > 4 || Math.abs(h - stH) > 4)) {
+        stW = w;
+        stH = h;
+        initGeometry();
+      }
     });
+    ro.observe(stage);
+    setTimeout(() => initGeometry(), 60);
+    setTimeout(() => initGeometry(), 350);
   });
 }
+
 const MAX_AVATAR = 5 * 1024 * 1024;
 /* GIFs are sent untouched so they stay animated; other images are centre-cropped and shrunk first. */
 async function prepAvatar(file) {

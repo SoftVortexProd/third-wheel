@@ -501,18 +501,22 @@ button.member:active { transform: scale(.94); }
 
 
 /* Image Cropper Modal */
-.sheet.cropper-sheet { width: min(560px, 96vw); }
+.sheet.cropper-sheet { width: min(620px, 96vw); }
 .cropper-modal { display: flex; flex-direction: column; gap: var(--space-4); }
 .cropper-stage {
   position: relative;
   width: 100%;
-  height: 320px;
+  height: 340px;
   background: #090a0f;
   border-radius: var(--radius-md);
   overflow: hidden;
   user-select: none;
   touch-action: none;
   border: 1px solid var(--color-border);
+  cursor: grab;
+}
+.cropper-stage.grabbing {
+  cursor: grabbing;
 }
 .cropper-img {
   position: absolute;
@@ -525,18 +529,38 @@ button.member:active { transform: scale(.94); }
 .cropper-box {
   position: absolute;
   border: 2px solid #ffffff;
-  box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.65);
-  cursor: move;
+  box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.72);
+  cursor: grab;
   touch-action: none;
   box-sizing: border-box;
+}
+.cropper-stage.grabbing .cropper-box {
+  cursor: grabbing;
 }
 .cropper-box.circle-guide::after {
   content: '';
   position: absolute;
   inset: 0;
   border-radius: 50%;
-  border: 1.5px dashed rgba(255, 255, 255, 0.55);
+  border: 2px dashed rgba(255, 255, 255, 0.85);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.4);
   pointer-events: none;
+}
+.cropper-banner-badge {
+  position: absolute;
+  top: 6px;
+  left: 8px;
+  background: rgba(0, 0, 0, 0.65);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  padding: 2px 7px;
+  border-radius: 4px;
+  pointer-events: none;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  user-select: none;
 }
 .cropper-grid {
   position: absolute;
@@ -547,7 +571,7 @@ button.member:active { transform: scale(.94); }
   pointer-events: none;
 }
 .cropper-grid > div {
-  border: 1px solid rgba(255, 255, 255, 0.15);
+  border: 1px solid rgba(255, 255, 255, 0.22);
 }
 .cropper-handle {
   position: absolute;
