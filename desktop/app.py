@@ -30,7 +30,7 @@ except ImportError:  # pragma: no cover
 ROUTE_RE = re.compile(r"^#/(dm|group)/\d{1,12}$")
 
 # ---- update check: compares this version with the latest GitHub release (bump APP_VERSION when you publish a release) ----
-APP_VERSION = os.environ.get("TW_APP_VERSION", "0.5.2")
+APP_VERSION = os.environ.get("TW_APP_VERSION", "0.5.3")
 UPDATE_REPO = "SoftVortexProd/third-wheel"
 
 
