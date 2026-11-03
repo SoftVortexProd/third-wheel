@@ -22,6 +22,9 @@ var builder = WebApplication.CreateBuilder(new WebApplicationOptions
 });
 builder.Host.UseWindowsService(o => o.ServiceName = "ThirdWheel");
 builder.WebHost.UseUrls(Environment.GetEnvironmentVariable("TW_URLS") ?? "http://127.0.0.1:5173");
+// The Windows service host adds an Event Log logger whose missing event source can itself crash startup and hide the real error; log to console instead.
+builder.Logging.ClearProviders();
+builder.Logging.AddConsole();
 builder.Logging.SetMinimumLevel(LogLevel.Warning);
 var app = builder.Build();
 
@@ -475,7 +478,13 @@ api.MapPost("invites/{id:long}/decline", (HttpContext c, long id) => WithUser(c,
 
 api.MapFallback(() => Err("Not found.", 404));
 app.MapFallbackToFile("index.html");
-app.Run();
+try { app.Run(); }
+catch (Exception ex)
+{
+    // A service has no console: keep the real startup error (e.g. "port already in use") where you can read it.
+    try { File.AppendAllText(Path.Combine(dataDir, "server.log"), $"{DateTime.UtcNow:o} startup failed: {ex}\n"); } catch { /* best effort */ }
+    throw;
+}
 
 record Creds(string? Username, string? Password);
 record ProfileIn(string? DisplayName, string? Username, string? Password);
