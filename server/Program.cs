@@ -324,7 +324,7 @@ api.MapDelete("admin/users/{id:long}", (HttpContext c, long id) => WithAdmin(c, 
     foreach (var sql in new[] {
         "DELETE FROM sessions WHERE userId=@i", "DELETE FROM messages WHERE userId=@i", "DELETE FROM dms WHERE a=@i OR b=@i",
         "DELETE FROM friends WHERE a=@i OR b=@i", "DELETE FROM frequests WHERE fromId=@i OR toId=@i", "DELETE FROM invites WHERE fromId=@i OR toId=@i",
-        "DELETE FROM members WHERE userId=@i", "DELETE FROM avatars WHERE userId=@i", "DELETE FROM users WHERE id=@i" })
+        "DELETE FROM members WHERE userId=@i", "DELETE FROM avatars WHERE userId=@i", "DELETE FROM reactions WHERE userId=@i", "DELETE FROM users WHERE id=@i" })
         Db.Exec(sql, ps);
     foreach (var g in Db.Rows("SELECT g.id FROM grps g WHERE NOT EXISTS (SELECT 1 FROM members m WHERE m.groupId=g.id)")) DeleteGroup((long)g["id"]!);
     Audit(me, "deleted user", (string)u["username"]!);
@@ -454,29 +454,6 @@ api.MapPost("groups/{id:long}/leave", (HttpContext c, long id) => WithUser(c, ui
     return Results.Json(new { ok = true, deleted });
 }));
 
-api.MapGet("groups/{id:long}/messages", (HttpContext c, long id, long? after) => WithUser(c, uid =>
-{
-    if (!IsMember(id, uid)) return Err("Join the group to read its chat.", 403);
-    var sql = MsgSel + " WHERE m.groupId=@g";
-    List<Dictionary<string, object?>> rows;
-    if (after != null) rows = Db.Rows(sql + " AND m.id>@a ORDER BY m.id ASC LIMIT 200", ("@g", id), ("@a", after));
-    else { rows = Db.Rows(sql + " ORDER BY m.id DESC LIMIT 100", ("@g", id)); rows.Reverse(); }
-    return Results.Json(rows.Select(MsgObj));
-}));
-
-api.MapPost("groups/{id:long}/messages", (HttpContext c, long id, MessageIn b) => WithUser(c, uid =>
-{
-    if (!IsMember(id, uid)) return Err("Join the group to chat.", 403);
-    var blocked = GroupPostBlock(id, uid); if (blocked != null) return Err(blocked, 403);
-    var text = Clean(b.Text, 1000);
-    if (text.Length == 0) return Err("Message is empty.");
-    if (Limited($"msg:{uid}", 30, TimeSpan.FromMinutes(1), true)) return Err("Slow down a little.", 429);
-    var mid = Db.Insert("INSERT INTO messages(groupId,userId,text,createdAt) VALUES(@g,@u,@t,@c)", ("@g", id), ("@u", uid), ("@t", Enc(text)), ("@c", Now()));
-    var r = Db.Row(MsgSel + " WHERE m.id=@i", ("@i", mid))!;
-    Hooks.GroupMessage(id, mid, uid, Enc(text));
-    return Results.Json(MsgObj(r));
-}));
-
 // ---------- profiles + direct messages (friends only) ----------
 api.MapGet("users/{id:long}", (HttpContext c, long id) => WithUser(c, uid =>
 {
@@ -489,32 +466,8 @@ api.MapGet("users/{id:long}", (HttpContext c, long id) => WithUser(c, uid =>
         id, username = (string)u["username"]!, displayName = u["display"] as string, avatar = AvatarUrl(id, u["avatarVer"]),
         avatarColor = (string)u["color"]!, status = (string)u["status"]!, playing = u["playing"] as string,
         region = (string)u["region"]!, ageRange = AgeRange(Convert.ToInt32(u["age"])), favoriteGames = games,
-        isFriend = friend, isMe = id == uid, joined = (string)u["created"]!
+        isFriend = friend, isMe = id == uid, joined = (string)u["created"]!, rckt = IsRckt(u["rcktUntil"])
     });
-}));
-
-const string DmSel = "SELECT d.id, d.fromId userId, u.username, u.display, u.avatarVer, u.color avatarColor, d.text, d.createdAt FROM dms d JOIN users u ON u.id=d.fromId WHERE d.a=@a AND d.b=@b";
-api.MapGet("dms/{id:long}", (HttpContext c, long id, long? after) => WithUser(c, uid =>
-{
-    if (id == uid || !AreFriends(uid, id)) return Err("You can only message friends.", 403);
-    var ps = new (string, object?)[] { ("@a", Math.Min(uid, id)), ("@b", Math.Max(uid, id)), ("@after", after) };
-    List<Dictionary<string, object?>> rows;
-    if (after != null) rows = Db.Rows(DmSel + " AND d.id>@after ORDER BY d.id ASC LIMIT 200", ps);
-    else { rows = Db.Rows(DmSel + " ORDER BY d.id DESC LIMIT 100", ps); rows.Reverse(); }
-    return Results.Json(rows.Select(MsgObj));
-}));
-
-api.MapPost("dms/{id:long}", (HttpContext c, long id, MessageIn b) => WithUser(c, uid =>
-{
-    if (id == uid || !AreFriends(uid, id)) return Err("You can only message friends.", 403);
-    var text = Clean(b.Text, 1000);
-    if (text.Length == 0) return Err("Message is empty.");
-    if (Limited($"dm:{uid}", 40, TimeSpan.FromMinutes(1), true)) return Err("Slow down a little.", 429);
-    var mid = Db.Insert("INSERT INTO dms(a,b,fromId,text,createdAt) VALUES(@a,@b,@f,@t,@c)",
-        ("@a", Math.Min(uid, id)), ("@b", Math.Max(uid, id)), ("@f", uid), ("@t", Enc(text)), ("@c", Now()));
-    var r = Db.Row(DmSel + " AND d.id=@i", ("@a", Math.Min(uid, id)), ("@b", Math.Max(uid, id)), ("@i", mid))!;
-    Hooks.DirectMessage(id, mid, uid, Enc(text));
-    return Results.Json(MsgObj(r));
 }));
 
 // The desktop app reports the game it detects; this only touches the "playing" line.

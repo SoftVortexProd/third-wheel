@@ -55,6 +55,16 @@ public static class Core
         Db.Exec("INSERT INTO audit(adminId,action,target,at) VALUES(@a,@x,@t,@n)", ("@a", admin), ("@x", action), ("@t", target), ("@n", Now()));
     public static long Count(string sql) => Convert.ToInt64(Db.Scalar(sql));
 
+    /// <summary>RCKT is an admin-granted subscription: users.rcktUntil is 'forever' or an ISO UTC expiry. Perks: GIFs in chat, uploads up to 250 MB (20 MB otherwise).</summary>
+    public static bool IsRckt(object? until)
+    {
+        var s = until as string;
+        if (string.IsNullOrEmpty(s)) return false;
+        return s == "forever" || (DateTime.TryParse(s, null, System.Globalization.DateTimeStyles.RoundtripKind, out var d) && d.ToUniversalTime() > DateTime.UtcNow);
+    }
+    public static bool IsRcktUser(long uid) => IsRckt(Db.Scalar("SELECT rcktUntil FROM users WHERE id=@i", ("@i", uid)));
+    static object? Col(Dictionary<string, object?> r, string key) => r.TryGetValue(key, out var v) ? v : null;
+
     public static object? UserDto(long id)
     {
         var u = Db.Row("SELECT * FROM users WHERE id=@i", ("@i", id));
@@ -67,6 +77,7 @@ public static class Core
         {
             id = (long)u["id"]!, username = (string)u["username"]!, displayName = u["display"] as string, avatar = AvatarUrl((long)u["id"]!, u["avatarVer"]),
             avatarColor = (string)u["color"]!, isAdmin = Convert.ToInt32(u["isAdmin"]) == 1,
+            rckt = IsRckt(Col(u, "rcktUntil")), rcktUntil = Col(u, "rcktUntil") as string,
             region = (string)u["region"]!, age, ageRange = AgeRange(age),
             favoriteGames = JsonSerializer.Deserialize<string[]>((string)u["games"]!) ?? Array.Empty<string>(),
             onboarded = Convert.ToInt32(u["onboarded"]) == 1, status = (string)u["status"]!,
@@ -79,7 +90,7 @@ public static class Core
     public static object PersonObj(Dictionary<string, object?> r, bool isFriend) => new
     {
         id = (long)r["id"]!, username = (string)r["username"]!, displayName = r["display"] as string, avatar = AvatarUrl((long)r["id"]!, r["avatarVer"]),
-        avatarColor = (string)r["color"]!,
+        avatarColor = (string)r["color"]!, rckt = IsRckt(Col(r, "rcktUntil")),
         status = (string)r["status"]!, playing = r["playing"] as string, region = (string)r["region"]!, isFriend
     };
 
@@ -97,7 +108,8 @@ public static class Core
     public static object MsgObj(Dictionary<string, object?> r) => new
     {
         id = (long)r["id"]!, userId = (long)r["userId"]!, username = (string)r["username"]!, displayName = r["display"] as string,
-        avatar = AvatarUrl((long)r["userId"]!, r["avatarVer"]), avatarColor = (string)r["avatarColor"]!, text = (string)r["text"]!, createdAt = (string)r["createdAt"]!
+        avatar = AvatarUrl((long)r["userId"]!, r["avatarVer"]), avatarColor = (string)r["avatarColor"]!, rckt = IsRckt(Col(r, "rcktUntil")),
+        text = (string)r["text"]!, createdAt = (string)r["createdAt"]!
     };
     public static bool AreFriends(long a, long b) => Db.Scalar("SELECT 1 FROM friends WHERE a=@a AND b=@b", ("@a", Math.Min(a, b)), ("@b", Math.Max(a, b))) != null;
     public static bool IsMember(long g, long u) => Db.Scalar("SELECT 1 FROM members WHERE groupId=@g AND userId=@u", ("@g", g), ("@u", u)) != null;
