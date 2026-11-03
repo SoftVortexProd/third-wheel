@@ -1467,42 +1467,24 @@ async function cropImage(file, opts = {}) {
   const outH = opts.outHeight || Math.round(outW / aspect);
   const title = opts.title || tr('Crop image');
 
-  if (file.type === 'image/gif') {
-    const choice = await new Promise((res) => {
-      let close = () => {};
-      const cancelBtn = btn(tr('Cancel'), { cls: 'ghost', onclick: () => { close(); res('cancel'); } });
-      const cropBtn = btn(tr('Crop (static)'), { cls: 'outline', onclick: () => { close(); res('crop'); } });
-      const keepBtn = btn(tr('Keep animated (full)'), { onclick: () => { close(); res('keep'); } });
-      const body = h('div', { class: 'stack', style: 'gap:16px;' },
-        h('p', { class: 'muted', text: tr('This image is an animated GIF. You can keep it full-sized to preserve the animation, or crop it as a static image.') }),
-        h('div', { class: 'row', style: 'justify-content:flex-end;gap:8px;flex-wrap:wrap;' }, cancelBtn, cropBtn, keepBtn)
-      );
-      close = openSheet(tr('Animated GIF detected'), body);
-    });
-    if (choice === 'cancel') return null;
-    if (choice === 'keep') {
-      if (file.size > 5 * 1024 * 1024) throw new Error(tr('GIFs must be 5 MB or smaller.'));
-      return file;
-    }
-  }
+  // Read image via FileReader (data: URL) to bypass any CSP / blob restrictions
+  const dataUrl = await new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(new Error(tr('That image could not be read.')));
+    reader.readAsDataURL(file);
+  });
 
-  const objUrl = URL.createObjectURL(file);
   const img = new Image();
-  try {
-    await new Promise((res, rej) => {
-      img.onload = res;
-      img.onerror = () => rej(new Error(tr('That image could not be read.')));
-      img.src = objUrl;
-    });
-  } catch (err) {
-    URL.revokeObjectURL(objUrl);
-    throw err;
-  }
+  await new Promise((resolve, reject) => {
+    img.onload = resolve;
+    img.onerror = () => reject(new Error(tr('That image could not be read.')));
+    img.src = dataUrl;
+  });
 
   const origW = img.naturalWidth || img.width;
   const origH = img.naturalHeight || img.height;
   if (!origW || !origH) {
-    URL.revokeObjectURL(objUrl);
     throw new Error(tr('That image could not be read.'));
   }
 
@@ -1511,7 +1493,7 @@ async function cropImage(file, opts = {}) {
     let closeSheet = () => {};
 
     const stage = h('div', { class: 'cropper-stage' });
-    const imgEl = h('img', { class: 'cropper-img', src: objUrl, draggable: 'false', alt: '' });
+    const imgEl = h('img', { class: 'cropper-img', src: dataUrl, draggable: 'false', alt: '' });
 
     const gridEl = h('div', { class: 'cropper-grid' },
       h('div', {}), h('div', {}), h('div', {}),
@@ -1544,26 +1526,28 @@ async function cropImage(file, opts = {}) {
     const previewContainer = h('div', { class: shape === 'circle' ? 'cropper-thumb-circle' : 'cropper-thumb-rect' }, previewCanvas);
     const pctx = previewCanvas.getContext('2d');
 
+    const isGif = file.type === 'image/gif';
+    const applyBtn = btn(tr('Apply'), { cls: 'primary', onclick: async () => {
+      busy(applyBtn, async () => {
+        const blob = await exportCrop();
+        cleanup();
+        closeSheet();
+        resolve(blob);
+      });
+    }});
+
     const previewRow = h('div', { class: 'cropper-preview-row' },
       h('div', { class: 'cropper-preview-box' },
         previewContainer,
         h('div', { class: 'stack', style: 'gap:2px;' },
           h('span', { class: 'small', style: 'font-weight:600;', text: tr('Preview') }),
-          h('span', { class: 'small muted', text: shape === 'circle' ? tr('Drag to move the crop area') : tr('Drag handles to resize') })
+          h('span', { class: 'small muted', text: isGif ? tr('Animation preserved on save') : (shape === 'circle' ? tr('Drag to move the crop area') : tr('Drag handles to resize')) })
         )
       ),
       h('div', { class: 'row', style: 'gap:8px;' },
         btn(tr('Cancel'), { cls: 'ghost', onclick: () => { cleanup(); resolve(null); closeSheet(); } }),
-        btn(tr('Apply'), { cls: 'primary', onclick: async () => {
-          try {
-            const blob = await exportCrop();
-            cleanup();
-            closeSheet();
-            resolve(blob);
-          } catch (e) {
-            toast(e.message || 'Crop failed', 'error');
-          }
-        }})
+        isGif ? btn(tr('Keep original'), { cls: 'outline', onclick: () => { cleanup(); resolve(file); closeSheet(); } }) : null,
+        applyBtn
       )
     );
 
@@ -1578,7 +1562,6 @@ async function cropImage(file, opts = {}) {
     function cleanup() {
       if (closed) return;
       closed = true;
-      URL.revokeObjectURL(objUrl);
     }
 
     let stW = 460, stH = 300;
@@ -1655,17 +1638,33 @@ async function cropImage(file, opts = {}) {
     }
 
     async function exportCrop() {
+      const sX = Math.round(Math.max(0, (boxX - imgX) / curScale));
+      const sY = Math.round(Math.max(0, (boxY - imgY) / curScale));
+      const sW = Math.round(Math.min(origW - sX, boxW / curScale));
+      const sH = Math.round(Math.min(origH - sY, boxH / curScale));
+
+      if (isGif) {
+        const url = `/api/media/crop-gif?x=${sX}&y=${sY}&w=${sW}&h=${sH}`;
+        const resp = await fetch(url, {
+          method: 'POST',
+          credentials: 'same-origin',
+          headers: { 'X-TW': '1', 'Content-Type': 'image/gif' },
+          body: file
+        });
+        if (!resp.ok) {
+          const errText = await resp.text().catch(() => '');
+          throw new Error(errText || 'GIF crop failed');
+        }
+        return await resp.blob();
+      }
+
       const cv = document.createElement('canvas');
       cv.width = outW;
       cv.height = outH;
       const ctx = cv.getContext('2d');
       ctx.imageSmoothingEnabled = true;
       ctx.imageSmoothingQuality = 'high';
-      const sX = (boxX - imgX) / curScale;
-      const sY = (boxY - imgY) / curScale;
-      const sW = boxW / curScale;
-      const sH = boxH / curScale;
-      ctx.drawImage(img, Math.max(0, sX), Math.max(0, sY), Math.min(origW, sW), Math.min(origH, sH), 0, 0, outW, outH);
+      ctx.drawImage(img, sX, sY, sW, sH, 0, 0, outW, outH);
       const blob = await new Promise(r => cv.toBlob(r, 'image/webp', 0.92)) || await new Promise(r => cv.toBlob(r, 'image/png'));
       if (!blob || blob.size > 5 * 1024 * 1024) throw new Error(tr('Image must be 5 MB or smaller.'));
       return blob;
@@ -1770,7 +1769,6 @@ async function cropImage(file, opts = {}) {
     });
   });
 }
-
 const MAX_AVATAR = 5 * 1024 * 1024;
 /* GIFs are sent untouched so they stay animated; other images are centre-cropped and shrunk first. */
 async function prepAvatar(file) {

@@ -76,8 +76,23 @@ if (Test-Path $cfg) {
 $exe = Join-Path $root "dist\ThirdWheel\ThirdWheel.exe"
 $cert = Get-Item "Cert:\CurrentUser\My\F4833A212DD2FD4E70A535FAD5E64ED2DCDA67F1" -ErrorAction SilentlyContinue
 if ($cert -and (Test-Path $exe)) {
-    Set-AuthenticodeSignature -FilePath $exe -Certificate $cert | Out-Null
+    try {
+        Set-AuthenticodeSignature -FilePath $exe -Certificate $cert -TimestampServer "http://timestamp.digicert.com" | Out-Null
+    } catch {
+        Set-AuthenticodeSignature -FilePath $exe -Certificate $cert | Out-Null
+    }
     Write-Host "Signed $exe with Authenticode certificate ($($cert.Subject))"
+
+    $cerPath = Join-Path $root "dist\ThirdWheel\ThirdWheel.cer"
+    Export-Certificate -Cert $cert -FilePath $cerPath -Force | Out-Null
+    $installBat = "@echo off
+echo Installing Third Wheel publisher certificate...
+powershell -NoProfile -ExecutionPolicy Bypass -Command `"Import-Certificate -FilePath '%~dp0ThirdWheel.cer' -CertStoreLocation 'Cert:\CurrentUser\Root' | Out-Null; Import-Certificate -FilePath '%~dp0ThirdWheel.cer' -CertStoreLocation 'Cert:\CurrentUser\TrustedPublisher' | Out-Null`\"
+echo.
+echo Third Wheel publisher certificate installed successfully. Windows now trusts SoftVortexProd / Third Wheel.
+echo.
+pause"
+    Set-Content (Join-Path $root "dist\ThirdWheel\install-certificate.bat") $installBat -Encoding ascii
 }
 
 Write-Host "Built: $exe"

@@ -6,6 +6,8 @@ using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using Microsoft.Data.Sqlite;
+using SixLabors.ImageSharp;
+using SixLabors.ImageSharp.Processing;
 
 // Deployment knobs (all optional): TW_DATA = data folder, TW_URLS = listen address.
 var dataDir = Environment.GetEnvironmentVariable("TW_DATA")
@@ -72,7 +74,7 @@ app.Use(async (ctx, next) =>
 {
     var h = ctx.Response.Headers;
     if (ctx.Request.IsHttps) h["Strict-Transport-Security"] = "max-age=31536000";
-    h["Content-Security-Policy"] = "default-src 'self'; img-src 'self' data:; media-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'";
+    h["Content-Security-Policy"] = "default-src 'self'; img-src 'self' data: blob:; media-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'";
     h["X-Content-Type-Options"] = "nosniff";
     h["Referrer-Policy"] = "no-referrer";
     h["X-Frame-Options"] = "DENY";
@@ -281,6 +283,48 @@ api.MapDelete("me/banner", (HttpContext c) => WithUser(c, uid =>
     Db.Exec("UPDATE users SET bannerVer=0 WHERE id=@i", ("@i", uid));
     return Results.Json(UserDto(uid));
 }));
+
+api.MapPost("media/crop-gif", async Task<IResult> (HttpContext c) =>
+{
+    var uid = CurrentUser(c);
+    if (uid is null) return Err("Not signed in.", 401);
+    if (!int.TryParse(c.Request.Query["x"], out var x) ||
+        !int.TryParse(c.Request.Query["y"], out var y) ||
+        !int.TryParse(c.Request.Query["w"], out var w) ||
+        !int.TryParse(c.Request.Query["h"], out var h) ||
+        w <= 0 || h <= 0)
+        return Err("Invalid crop coordinates.");
+
+    if (c.Request.ContentLength > MaxAvatar) return Err("Image must be 5 MB or smaller.", 413);
+
+    using var ms = new MemoryStream();
+    var buf = new byte[81920]; int n;
+    while ((n = await c.Request.Body.ReadAsync(buf)) > 0)
+    {
+        ms.Write(buf, 0, n);
+        if (ms.Length > MaxAvatar) return Err("Image must be 5 MB or smaller.", 413);
+    }
+    ms.Position = 0;
+
+    try
+    {
+        using var image = await Image.LoadAsync(ms);
+        int cropX = Math.Clamp(x, 0, Math.Max(0, image.Width - 1));
+        int cropY = Math.Clamp(y, 0, Math.Max(0, image.Height - 1));
+        int cropW = Math.Clamp(w, 1, image.Width - cropX);
+        int cropH = Math.Clamp(h, 1, image.Height - cropY);
+
+        image.Mutate(ctx => ctx.Crop(new SixLabors.ImageSharp.Rectangle(cropX, cropY, cropW, cropH)));
+
+        var outMs = new MemoryStream();
+        await image.SaveAsGifAsync(outMs);
+        return Results.File(outMs.ToArray(), "image/gif");
+    }
+    catch (Exception ex)
+    {
+        return Err("GIF processing failed: " + ex.Message);
+    }
+});
 
 api.MapGet("banners/{id:long}", (HttpContext c, long id) => WithUser(c, _ =>
 {

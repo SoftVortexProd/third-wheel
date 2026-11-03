@@ -78,6 +78,8 @@ const SV = {
   'Center': 'Centrera',
   'Preview': 'Förhandsgranskning',
   'Apply': 'Använd',
+  'Keep original': 'Behåll original',
+  'Animation preserved on save': 'Animationen bevaras vid sparning',
   'Keep animated (full)': 'Behåll animerad (full storlek)',
   'Crop (static)': 'Beskär (statisk bild)',
   'Animated GIF detected': 'Animerad GIF identifierad',
