@@ -85,13 +85,15 @@ if ($cert -and (Test-Path $exe)) {
 
     $cerPath = Join-Path $root "dist\ThirdWheel\ThirdWheel.cer"
     Export-Certificate -Cert $cert -FilePath $cerPath -Force | Out-Null
-    $installBat = "@echo off
+    $installBat = @'
+@echo off
 echo Installing Third Wheel publisher certificate...
-powershell -NoProfile -ExecutionPolicy Bypass -Command `"Import-Certificate -FilePath '%~dp0ThirdWheel.cer' -CertStoreLocation 'Cert:\CurrentUser\Root' | Out-Null; Import-Certificate -FilePath '%~dp0ThirdWheel.cer' -CertStoreLocation 'Cert:\CurrentUser\TrustedPublisher' | Out-Null`\"
+powershell -NoProfile -ExecutionPolicy Bypass -Command "Import-Certificate -FilePath '%~dp0ThirdWheel.cer' -CertStoreLocation 'Cert:\CurrentUser\Root' | Out-Null; Import-Certificate -FilePath '%~dp0ThirdWheel.cer' -CertStoreLocation 'Cert:\CurrentUser\TrustedPublisher' | Out-Null"
 echo.
 echo Third Wheel publisher certificate installed successfully. Windows now trusts SoftVortexProd / Third Wheel.
 echo.
-pause"
+pause
+'@
     Set-Content (Join-Path $root "dist\ThirdWheel\install-certificate.bat") $installBat -Encoding ascii
 }
 
