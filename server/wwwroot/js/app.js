@@ -1,4 +1,4 @@
-﻿/* Third Wheel — client. DOM is built with createElement/textContent only (no innerHTML). */
+/* Third Wheel — client. DOM is built with createElement/textContent only (no innerHTML). */
 (() => {
 'use strict';
 
@@ -103,6 +103,8 @@ const qs = (o) => { const p = new URLSearchParams(); for (const [k, v] of Object
 const enc = encodeURIComponent;
 
 /* ================= state ================= */
+/* Friends, invites, requests, groups and open chats refresh every 3 seconds. */
+const POLL_MS = 3000;
 const S = {
   me: null, meta: { games: [], regions: [] },
   friends: [], mine: [], invites: [], reqs: { incoming: [], outgoing: [] },
@@ -246,6 +248,24 @@ function suggestInput(input, getList) {
   return input;
 }
 
+/* Game cover thumbnails: filled from search results and looked up lazily by name. */
+const gameCovers = new Map();
+function gameThumb(name) {
+  const key = String(name || '').toLowerCase();
+  const el = h('span', { class: 'gp-thumb', 'aria-hidden': 'true' });
+  const paint = (url) => { el.replaceChildren(url ? h('img', { src: url, alt: '', loading: 'lazy', onerror: (e) => e.target.replaceWith(icon('pad', 16)) }) : icon('pad', 16)); };
+  const known = gameCovers.get(key);
+  paint(known || null);
+  if (known === undefined) {
+    gameCovers.set(key, '');   // look up once
+    api('GET', '/api/games/search?q=' + encodeURIComponent(name)).then(list => {
+      const hit = (list || []).find(x => String(x.name || '').toLowerCase() === key && x.coverUrl);
+      if (hit) { gameCovers.set(key, hit.coverUrl); paint(hit.coverUrl); } else gameCovers.delete(key);
+    }).catch(() => gameCovers.delete(key));
+  }
+  return el;
+}
+
 /* ---- game picker (with Steam Store search, thumbnail covers, chips & custom entry) ---- */
 function gamePicker(opts = {}) {
   const multi = !!opts.multi;
@@ -356,9 +376,9 @@ function gamePicker(opts = {}) {
       if (cur) {
         singlePreview.style.display = 'flex';
         searchWrap.style.display = 'none';
-        const valSpan = h('span', { class: 'game-picker-single-val' }, icon('pad', 18), h('span', { text: T(cur) }));
-        const changeBtn = h('button', {
-          type: 'button', class: 'btn sm', text: 'Change',
+        // [cover] Game name [x]: click the name to pick a different game, the X clears it.
+        const body = h('button', {
+          type: 'button', class: 'gp-single-body', 'aria-label': 'Change game, currently ' + T(cur),
           onclick: (e) => {
             e.preventDefault();
             searchWrap.style.display = 'flex';
@@ -367,12 +387,12 @@ function gamePicker(opts = {}) {
             input.focus();
             search();
           }
-        });
-        const clearBtn = anyLabel != null ? h('button', {
-          type: 'button', class: 'btn sm secondary', text: 'Clear',
-          onclick: (e) => { e.preventDefault(); selectGame(''); }
-        }) : null;
-        singlePreview.replaceChildren(valSpan, h('div', { class: 'row', style: 'gap:6px' }, changeBtn, clearBtn));
+        }, gameThumb(cur), h('span', { class: 'gp-single-name', text: T(cur) }));
+        const x = h('button', {
+          type: 'button', class: 'gp-remove gp-single-x', 'aria-label': 'Clear game ' + T(cur),
+          onclick: (e) => { e.preventDefault(); removeGame(cur); }
+        }, icon('x', 16));
+        singlePreview.replaceChildren(body, x);
       } else {
         singlePreview.style.display = 'none';
         searchWrap.style.display = 'flex';
@@ -415,6 +435,7 @@ function gamePicker(opts = {}) {
 
     for (const item of list) {
       const n = item.name || item;
+      if (item.coverUrl) gameCovers.set(String(n).toLowerCase(), item.coverUrl);
       const isSel = multi ? cur.includes(n) : cur === n;
       const thumb = item.coverUrl
         ? h('img', { class: 'gp-opt-thumb', src: item.coverUrl, alt: '', loading: 'lazy' })
@@ -615,12 +636,14 @@ function renderOnboarding() {
     let next;
     if (step === 0) {
       const reg = selectEl(S.meta.regions, d.region, 'Choose a region');
-      const age = h('input', { class: 'input', type: 'number', inputmode: 'numeric', min: 13, max: 99, value: d.age || '', placeholder: 'Your age' });
-      const fr = field('Region', reg, 'We match you with groups close by.'), fa = field('Age', age, 'Must be 13 or older.');
+      // Once an age has been chosen only an admin can change it.
+      const ageLocked = (S.me.age || 0) > 0;
+      const age = h('input', { class: 'input', type: 'number', inputmode: 'numeric', min: 13, max: 99, value: d.age || '', placeholder: 'Your age', disabled: ageLocked });
+      const fr = field('Region', reg, 'We match you with groups close by.'), fa = field('Age', age, ageLocked ? 'Only an admin can change your age.' : 'Must be 13 or older. You can’t change it later.');
       body.append(h('p', { class: 'muted', text: 'Pick your region and age so we can match you with the right groups.' }), h('div', { class: 'row' }, fr, fa));
       next = () => {
         const okR = fr.setError(reg.value ? '' : 'Choose a region');
-        const a = parseInt(age.value, 10);
+        const a = ageLocked ? S.me.age : parseInt(age.value, 10);
         const okA = fa.setError(a >= 13 && a <= 99 ? '' : 'Enter an age from 13 to 99');
         if (!okR || !okA) return false; d.region = reg.value; d.age = a; return true;
       };
@@ -649,8 +672,9 @@ function renderOnboarding() {
         S.me = await api('GET', '/api/me'); await start();
       });
     });
-    const stepEl = h('div', { class: 'step-in', style: `--dx:${dir * 30}px` },
-      h('h1', { text: steps[step] }), h('div', { style: 'height:12px' }), body, err,
+    // Title stays put, the form scrolls, and the buttons stay pinned to the bottom of the card.
+    const stepEl = h('div', { class: 'step-in ob-step', style: `--dx:${dir * 30}px` },
+      h('h1', { text: steps[step] }), h('div', { class: 'ob-body' }, body, err),
       h('div', { class: 'ob-actions' },
         step > 0 ? h('button', { class: 'btn ghost', type: 'button', onclick: () => { step--; dir = -1; draw(); } }, 'Back') : h('span'),
         h('div', { style: 'display:flex;gap:8px' }, step === 2 ? h('button', { class: 'btn ghost', type: 'button', onclick: () => { d.extras = null; step++; dir = 1; draw(); } }, 'Skip') : null, nextBtn)));
@@ -944,7 +968,7 @@ async function groupView(id, tok) {
   showPage();
   chat.log.scrollTo({ top: chat.log.scrollHeight, behavior: 'instant' });
   chat.done();
-  S.chatTimer = setInterval(() => { if (!document.hidden) chat.poll(); }, 2500);
+  S.chatTimer = setInterval(() => { if (!document.hidden) chat.poll(); }, POLL_MS);
   if (matchMedia('(min-width:900px)').matches) chat.input.focus();
 }
 function leaveGroup(g, b) {
@@ -1070,7 +1094,7 @@ async function dmView(id, tok) {
   show(page);
   chat.log.scrollTo({ top: chat.log.scrollHeight, behavior: 'instant' });
   chat.done();
-  S.chatTimer = setInterval(() => { if (!document.hidden) { chat.poll(); paintSub(); } }, 2500);
+  S.chatTimer = setInterval(() => { if (!document.hidden) { chat.poll(); paintSub(); } }, POLL_MS);
   if (matchMedia('(min-width:900px)').matches) chat.input.focus();
 }
 
@@ -1450,7 +1474,7 @@ async function poll() {
   if (S.tick % 3 === 0 || S.maint) await loadSite();
   if (S.maint) return;
   try {
-    const [f, i, r, m] = await Promise.all([api('GET', '/api/friends'), api('GET', '/api/invites'), api('GET', '/api/friends/requests'), S.tick % 3 === 1 ? api('GET', '/api/groups/mine') : Promise.resolve(null)]);
+    const [f, i, r, m] = await Promise.all([api('GET', '/api/friends'), api('GET', '/api/invites'), api('GET', '/api/friends/requests'), api('GET', '/api/groups/mine')]);
     applySocial(f, i, r, false);
     if (m && update('m', m)) { S.mine = m; renderRail(); }
   } catch { /* transient */ }
@@ -1465,14 +1489,14 @@ async function start() {
   try { const m = await api('GET', '/api/meta'); S.meta = { games: m.games || [], regions: m.regions || [] }; } catch (e) { toast(e.message, 'error'); }
   try { S.site = await api('GET', '/api/site'); S.closedSig = JSON.stringify(S.site.closed); } catch { /* assume open */ }
   if (S.site.maintenance.on && !S.me.isAdmin) {
-    clearInterval(S.pollTimer); S.pollTimer = setInterval(poll, 2500);
+    clearInterval(S.pollTimer); S.pollTimer = setInterval(poll, POLL_MS);
     showMaintenance(); return;
   }
   S.maint = false;
   if (!S.me.onboarded) { renderOnboarding(); return; }
   buildShell();
   try { await Promise.all([loadSocial(), refreshMine()]); } catch (e) { toast(e.message, 'error'); }
-  clearInterval(S.pollTimer); S.pollTimer = setInterval(poll, 2500);
+  clearInterval(S.pollTimer); S.pollTimer = setInterval(poll, POLL_MS);
   if (!location.hash || location.hash === '#/') location.hash = '#/feed';
   route();
   applyAutoGame();

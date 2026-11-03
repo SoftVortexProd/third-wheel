@@ -5,16 +5,18 @@ import json
 import os
 import subprocess
 import sys
+import threading
 import urllib.request
 from pathlib import Path
 
-from PySide6.QtCore import QSettings, QTimer, QUrl, Qt
+from PySide6.QtCore import QObject, QSettings, QTimer, QUrl, Qt, Signal
 from PySide6.QtGui import QColor, QDesktopServices, QIcon, QPalette
 import re
 
 from PySide6.QtWebEngineCore import QWebEnginePage, QWebEngineProfile, QWebEngineScript, QWebEngineSettings
 from PySide6.QtWebEngineWidgets import QWebEngineView
-from PySide6.QtWidgets import QApplication, QLabel, QMainWindow, QStackedWidget, QSystemTrayIcon
+from PySide6.QtWidgets import (QApplication, QHBoxLayout, QLabel, QMainWindow, QPushButton, QStackedWidget,
+                               QSystemTrayIcon, QVBoxLayout, QWidget)
 
 try:  # Qt 6.8+
     from PySide6.QtWebEngineCore import QWebEnginePermission
@@ -23,6 +25,36 @@ except ImportError:  # pragma: no cover
 
 # Notification clicks may only open chats; anything else the page sends is ignored.
 ROUTE_RE = re.compile(r"^#/(dm|group)/\d{1,12}$")
+
+# ---- update check: compares this version with the latest GitHub release (bump APP_VERSION when you publish a release) ----
+APP_VERSION = os.environ.get("TW_APP_VERSION", "0.4.0")
+UPDATE_REPO = "SoftVortexProd/third-wheel"
+
+
+def version_tuple(v: str) -> tuple:
+    return tuple(int(p) for p in re.findall(r"\d+", v)[:4])
+
+
+def latest_release() -> tuple[str, str] | None:
+    """(version, release page url) of the newest GitHub release, or None. Network errors just mean 'no update info'."""
+    try:
+        req = urllib.request.Request(f"https://api.github.com/repos/{UPDATE_REPO}/releases/latest",
+                                     headers={"User-Agent": "ThirdWheel-Desktop", "Accept": "application/vnd.github+json"})
+        with urllib.request.urlopen(req, timeout=8) as r:
+            data = json.load(r)
+        tag = str(data.get("tag_name", "")).strip().lstrip("vV")
+        url = str(data.get("html_url", ""))
+        # Only ever open links that really point at our own repository.
+        if not tag or not url.startswith(f"https://github.com/{UPDATE_REPO}/"):
+            return None
+        return tag, url
+    except Exception:
+        return None
+
+
+class UpdateBus(QObject):
+    found = Signal(str, str)   # version, release url (emitted from the worker thread, delivered on the UI thread)
+
 
 LOCAL_URL = "http://127.0.0.1:5173"
 BG = "#0f1115"
@@ -233,7 +265,35 @@ class Main(QMainWindow):
             self.resize(1280, 800)
 
         self.stack = QStackedWidget()
-        self.setCentralWidget(self.stack)
+        # A slim banner above the page announces new releases (hidden until the update check finds one).
+        self.update_url = ""
+        self.update_version = ""
+        self.update_bar = QWidget()
+        self.update_bar.setStyleSheet(f"background:#1b1e45;")
+        bar = QHBoxLayout(self.update_bar)
+        bar.setContentsMargins(14, 8, 10, 8)
+        bar.setSpacing(8)
+        self.update_label = QLabel()
+        self.update_label.setWordWrap(True)
+        self.update_label.setStyleSheet("color:#e8eaf2;font:600 13px 'Segoe UI';")
+        bar.addWidget(self.update_label, 1)
+        flat = "QPushButton{border:0;border-radius:6px;padding:6px 12px;font:600 12px 'Segoe UI';%s}QPushButton:hover{background:%s;}"
+        for text, slot, style, hover in (("Download", self.open_update, "background:#4f5ee6;color:#fff;", "#6270ee"),
+                                         ("Skip this version", self.skip_update, "background:transparent;color:#aab2ff;", "#26294f"),
+                                         ("Later", self.hide_update, "background:transparent;color:#aab2ff;", "#26294f")):
+            b = QPushButton(text)
+            b.setCursor(Qt.PointingHandCursor)
+            b.setStyleSheet(flat % (style, hover))
+            b.clicked.connect(slot)
+            bar.addWidget(b)
+        self.update_bar.hide()
+        holder = QWidget()
+        col = QVBoxLayout(holder)
+        col.setContentsMargins(0, 0, 0, 0)
+        col.setSpacing(0)
+        col.addWidget(self.update_bar)
+        col.addWidget(self.stack, 1)
+        self.setCentralWidget(holder)
         self.splash = QLabel("Third Wheel\n\nStarting…")
         self.splash.setAlignment(Qt.AlignCenter)
         self.splash.setStyleSheet(f"background:{BG};color:{MUTED};font:600 18px 'Segoe UI';")
@@ -284,6 +344,12 @@ class Main(QMainWindow):
         self.game_timer = QTimer(self)
         self.game_timer.timeout.connect(self.scan_game)
         self.game_timer.start(6000)
+
+        # Update check: a few seconds after launch, in the background (set TW_NO_UPDATE_CHECK=1 to turn it off).
+        self.update_bus = UpdateBus()
+        self.update_bus.found.connect(self.show_update)
+        if not os.environ.get("TW_NO_UPDATE_CHECK"):
+            QTimer.singleShot(4000, lambda: threading.Thread(target=self._update_worker, daemon=True).start())
 
         # Notifications: the page queues alerts (window.TWApp._q) when it's in the background; we turn them into
         # Windows notifications from the tray icon. This works on plain-http servers too, where the browser API is unavailable.
@@ -384,6 +450,30 @@ class Main(QMainWindow):
         if open_chat and self.tray_route:
             self.page.runJavaScript(f"location.hash={json.dumps(self.tray_route)}")
         self.tray_route = None
+
+    def _update_worker(self):
+        info = latest_release()
+        if info and version_tuple(info[0]) > version_tuple(APP_VERSION):
+            self.update_bus.found.emit(*info)
+
+    def show_update(self, version: str, url: str):
+        if self.settings.value("skippedVersion") == version:
+            return
+        self.update_version, self.update_url = version, url
+        self.update_label.setText(f"Third Wheel {version} is available (you have {APP_VERSION}).")
+        self.update_bar.show()
+
+    def open_update(self):
+        if self.update_url:
+            QDesktopServices.openUrl(QUrl(self.update_url))
+        self.update_bar.hide()
+
+    def skip_update(self):
+        self.settings.setValue("skippedVersion", self.update_version)
+        self.update_bar.hide()
+
+    def hide_update(self):
+        self.update_bar.hide()
 
     def stop_server(self):
         if self.proc and self.proc.poll() is None:

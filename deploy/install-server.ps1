@@ -1,7 +1,8 @@
 # Run ON the Windows server, in an elevated PowerShell, from the extracted package folder.
 #   .\install-server.ps1                      -> plain HTTP on port 1732 (no encryption!)  [-Port N to change]
 #   .\install-server.ps1 -Domain play.example.com  -> server listens on localhost, Caddy provides HTTPS
-param([string]$Domain = "", [int]$Port = 1732)
+#   Add -TenorKey <key> once to enable the GIF picker (stored as a service setting; later updates keep it).
+param([string]$Domain = "", [int]$Port = 1732, [string]$TenorKey = "")
 $ErrorActionPreference = "Stop"
 
 $src = Join-Path $PSScriptRoot "app"
@@ -21,7 +22,11 @@ if (-not $svc) {
     sc.exe failure ThirdWheel reset= 86400 actions= restart/5000/restart/5000/restart/30000 | Out-Null
 }
 # Per-service environment variables (read by the server): data folder + listen address.
-Set-ItemProperty "HKLM:\SYSTEM\CurrentControlSet\Services\ThirdWheel" -Name Environment -Type MultiString -Value @("TW_DATA=$data", "TW_URLS=$urls")
+$svcKey = "HKLM:\SYSTEM\CurrentControlSet\Services\ThirdWheel"
+$vars = @("TW_DATA=$data", "TW_URLS=$urls")
+if ($TenorKey) { $vars += "TW_TENOR_KEY=$TenorKey" }
+else { $vars += @((Get-ItemProperty $svcKey -Name Environment -ErrorAction SilentlyContinue).Environment) | Where-Object { $_ -like "TW_TENOR_KEY=*" } }   # keep a key set earlier
+Set-ItemProperty $svcKey -Name Environment -Type MultiString -Value $vars
 icacls $data /grant "NT AUTHORITY\LocalService:(OI)(CI)M" | Out-Null
 icacls $app /grant "NT AUTHORITY\LocalService:(OI)(CI)RX" | Out-Null
 

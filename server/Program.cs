@@ -178,6 +178,9 @@ api.MapPut("me/settings", (HttpContext c, SettingsIn b) => WithUser(c, uid =>
 {
     if (b.Region != null && !Db.Regions.Contains(b.Region)) return Err("Unknown region.");
     if (b.Age is < 13 or > 99) return Err("Age must be 13-99.");
+    // Age is chosen once (at the starter menu). After that only an admin can change it, from the admin panel.
+    var currentAge = Convert.ToInt32(Db.Scalar("SELECT age FROM users WHERE id=@i", ("@i", uid)));
+    if (b.Age != null && currentAge > 0 && b.Age != currentAge) return Err("Your age can only be changed by an admin.", 403);
     var games = (b.FavoriteGames ?? Array.Empty<string>()).Where(g => !string.IsNullOrWhiteSpace(g) && g.Length <= 80).Select(g => Clean(g, 80)).Distinct().Take(12).ToArray();
     foreach (var g in games) GamesApi.EnsureGame(g);
     var status = b.Status ?? "online";

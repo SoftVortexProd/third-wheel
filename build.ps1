@@ -14,14 +14,35 @@ if (-not $SkipServer) {
 }
 
 & $py (Join-Path $root "desktop\make_icon.py")
+
+# The app only uses QtCore/Gui/Widgets and QtWebEngine. Leaving the rest of PySide6 (and unused stdlib bits) out keeps the exe much smaller.
+$exclude = @(
+    'PySide6.QtQuick', 'PySide6.QtQuickWidgets', 'PySide6.QtQuickControls2', 'PySide6.QtQml', 'PySide6.QtQuick3D',
+    'PySide6.Qt3DCore', 'PySide6.Qt3DRender', 'PySide6.Qt3DInput', 'PySide6.Qt3DLogic', 'PySide6.Qt3DAnimation', 'PySide6.Qt3DExtras',
+    'PySide6.QtDesigner', 'PySide6.QtUiTools', 'PySide6.QtHelp', 'PySide6.QtTest',
+    'PySide6.QtMultimedia', 'PySide6.QtMultimediaWidgets', 'PySide6.QtSpatialAudio', 'PySide6.QtTextToSpeech',
+    'PySide6.QtSensors', 'PySide6.QtBluetooth', 'PySide6.QtNfc', 'PySide6.QtSerialPort', 'PySide6.QtSerialBus',
+    'PySide6.QtCharts', 'PySide6.QtDataVisualization', 'PySide6.QtGraphs', 'PySide6.QtGraphsWidgets',
+    'PySide6.QtLocation', 'PySide6.QtPdf', 'PySide6.QtPdfWidgets', 'PySide6.QtRemoteObjects', 'PySide6.QtScxml', 'PySide6.QtStateMachine',
+    'PySide6.QtSql', 'PySide6.QtHttpServer', 'PySide6.QtWebView', 'PySide6.QtConcurrent',
+    'tkinter', 'unittest', 'pydoc', 'doctest', 'test', 'distutils', 'lib2to3', 'idlelib', 'turtledemo'
+)
+$excludeArgs = @(); foreach ($m in $exclude) { $excludeArgs += '--exclude-module'; $excludeArgs += $m }
+
 Push-Location (Join-Path $root "desktop")
 try {
     & $py -m PyInstaller --noconfirm --clean --noconsole --name ThirdWheel `
         --icon (Join-Path $root "desktop\app.ico") --add-data "$(Join-Path $root 'desktop\app.ico');." `
         --distpath (Join-Path $root "dist") --workpath (Join-Path $root "build") --specpath (Join-Path $root "build") `
-        app.py
+        @excludeArgs app.py
     if ($LASTEXITCODE -ne 0) { throw "pyinstaller failed" }
 } finally { Pop-Location }
+
+# Chromium parts the app never uses: the DevTools UI (the context menu and F12 are disabled in release) and spare spell-check/UI language packs.
+$pyside = Join-Path $root "dist\ThirdWheel\_internal\PySide6"
+Get-ChildItem (Join-Path $pyside "resources") -Filter "qtwebengine_devtools_resources*.pak" -ErrorAction SilentlyContinue | Remove-Item -Force
+$loc = Join-Path $pyside "translations\qtwebengine_locales"
+if (Test-Path $loc) { Get-ChildItem $loc -Filter "*.pak" | Where-Object { $_.BaseName -notin @("en-US", "sv") } | Remove-Item -Force }
 
 $target = Join-Path $root "dist\ThirdWheel\server"
 if (Test-Path $target) { Remove-Item $target -Recurse -Force }
