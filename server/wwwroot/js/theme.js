@@ -30,7 +30,7 @@ const FONTS = {
 };
 const RADII = { square: 0, sharp: .5, default: 1, round: 1.6 };
 const DENSITY = { compact: .82, default: 1, roomy: 1.18 };
-const DEFAULT = { preset: 'dark', custom: '#101820', radius: 'default', density: 'default', font: 'system' };
+const DEFAULT = { preset: 'dark', custom: '#101820', radius: 'default', density: 'default', font: 'system', simple: false };
 
 let st = { ...DEFAULT };
 try { Object.assign(st, JSON.parse(localStorage.getItem(KEY) || '{}')); } catch { /* storage unavailable */ }
@@ -76,6 +76,7 @@ function apply() {
   const meta = document.querySelector('meta[name="theme-color"]'); if (meta) meta.content = pal ? rgb2hex(pal.c[0]) : '#000000';
   const cs = document.querySelector('meta[name="color-scheme"]'); if (cs) cs.content = isLight ? 'light' : 'dark';
   root.dataset.theme = isLight ? 'light' : 'dark';
+  root.classList.toggle('simple', !!st.simple);   // Simple mode: hides explanatory text
 
   const r = RADII[st.radius] ?? 1, d = DENSITY[st.density] ?? 1;
   Object.entries(RAD).forEach(([p, v]) => { if (r === 1) s.removeProperty(p); else s.setProperty(p, (v * r).toFixed(1) + 'px'); });

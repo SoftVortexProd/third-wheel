@@ -20,6 +20,7 @@ const ICONS = {
   check: 'M20 6L9 17l-5-5',
   chev: 'M6 9l6 6 6-6',
   menu: 'M4 6h16M4 12h16M4 18h16',
+  dots: 'M5 12h.01M12 12h.01M19 12h.01',
   clock: 'M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20zM12 6v6l4 2',
   speaker: 'M11 5L6 9H2v6h4l5 4zM15.5 8.5a5 5 0 0 1 0 7M19 5a9 9 0 0 1 0 14',
   full: 'M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5',
@@ -774,6 +775,20 @@ const NAV = () => [
   ['Social', [['#/messages', 'msg', 'Messages'], ['#/friends', 'users', 'Friends']]],
   ['Play', [['#/games', 'pad', 'My games'], ['#/history', 'clock', 'History']]]
 ];
+/* The sidebar shows four main links and folds the rest under "More". */
+const NAV_MAIN = () => [['#/feed', 'feed', 'Feed'], ['#/discover', 'compass', 'Discover'], ['#/messages', 'msg', 'Messages'], ['#/lfg', 'mega', 'Looking for group']];
+const NAV_MORE = () => [['#/search', 'search', 'Find groups'], ['#/friends', 'users', 'Friends'], ['#/games', 'pad', 'My games'], ['#/history', 'clock', 'History']];
+function railLinks() {
+  let open = false; try { open = localStorage.getItem('tw_nav_more') === '1'; } catch { /* storage unavailable */ }
+  const extras = NAV_MORE().map(([href, ico, label]) => { const a = navLink(href, ico, tr(label)); a.classList.add('nav-extra'); return a; });
+  const fold = h('button', { class: 'nav-link nav-fold', type: 'button', 'aria-expanded': 'false' }, icon('menu', 20), h('span', { class: 't', text: tr('More') }), h('span', { class: 'chev' }, icon('chev', 16)));
+  const set = (on, save) => { extras.forEach(a => { a.hidden = !on; }); fold.setAttribute('aria-expanded', String(on)); if (save) { try { localStorage.setItem('tw_nav_more', on ? '1' : '0'); } catch { /* ignore */ } } if (window.TWM) TWM.nav(); };
+  fold.addEventListener('click', () => set(fold.getAttribute('aria-expanded') !== 'true', true));
+  S.el.setMore = (on) => set(on, false);
+  set(open, false);
+  return [...NAV_MAIN().map(([href, ico, label]) => navLink(href, ico, tr(label))), fold, ...extras];
+}
+
 /* Phones: the bottom bar only has three buttons, so every tab is reachable from this menu in the top bar. */
 function openMenu() {
   let close = () => {};
@@ -788,6 +803,25 @@ function openMenu() {
     link('#/settings', 'gear', tr('Settings')),
     ...(document.documentElement.requestFullscreen ? [h('button', { class: 'nav-link menu-link', type: 'button', onclick: () => { close(); toggleFullscreen(); } }, icon('full', 20), h('span', { class: 't', text: tr('Fullscreen') }))] : []));
   close = openSheet(tr('Menu'), body);
+}
+/* Top-bar menu: fullscreen, admin, the friends list toggle, settings. */
+const friendsHidden = () => { try { return localStorage.getItem('tw_hide_friends') === '1'; } catch { return false; } };
+function openTopMenu(anchor) {
+  document.querySelectorAll('.topbar-menu').forEach(x => x.remove());
+  const items = [];
+  items.push([icon('user', 18), friendsHidden() ? tr('Show friends list') : tr('Hide friends list'), () => { const hide = !friendsHidden(); try { localStorage.setItem('tw_hide_friends', hide ? '1' : '0'); } catch { /* ignore */ } document.querySelector('.shell')?.classList.toggle('no-friends', hide); }]);
+  if (document.documentElement.requestFullscreen) items.push([icon('full', 18), document.fullscreenElement ? tr('Exit fullscreen') : tr('Fullscreen') + ' (F11)', toggleFullscreen]);
+  if (S.me.isAdmin) items.push([icon('shield', 18), tr('Admin panel'), () => go('#/admin')]);
+  items.push([icon('gear', 18), tr('Settings'), () => go('#/settings')]);
+  const pop = h('div', { class: 'topbar-menu', role: 'menu' }, ...items.map(([ic, label, fn]) => h('button', { type: 'button', role: 'menuitem', onclick: () => { close(); fn(); } }, ic, h('span', { text: label }))));
+  document.body.append(pop);
+  const r = anchor.getBoundingClientRect();
+  pop.style.top = (r.bottom + 6) + 'px'; pop.style.left = Math.max(8, Math.min(innerWidth - pop.offsetWidth - 8, r.right - pop.offsetWidth)) + 'px';
+  const out = (e) => { if (!pop.contains(e.target) && e.target !== anchor && !anchor.contains(e.target)) close(); };
+  const key = (e) => { if (e.key === 'Escape') { close(); anchor.focus(); } };
+  function close() { pop.remove(); document.removeEventListener('pointerdown', out, true); document.removeEventListener('keydown', key, true); }
+  document.addEventListener('pointerdown', out, true); document.addEventListener('keydown', key, true);
+  pop.querySelector('button').focus();
 }
 function buildShell() {
   const E = S.el = {};
@@ -804,10 +838,7 @@ function buildShell() {
 
   const rail = h('nav', { class: 'rail', 'aria-label': 'Main' },
     h('div', { class: 'brand' }, h('img', { src: 'icon.svg', alt: '', width: 32, height: 32 }), 'Third Wheel'),
-    h('div', { class: 'nav-main' }, NAV().flatMap(([sec, links]) => [
-      h('div', { class: 'nav-label', text: tr(sec) }),
-      ...links.map(([href, ico, label]) => navLink(href, ico, tr(label)))
-    ])),
+    h('div', { class: 'nav-main' }, ...railLinks()),
     h('div', { class: 'rail-head' }, tr('My groups'), h('button', { class: 'icon-btn', type: 'button', 'aria-label': tr('Create a group'), onclick: openCreate }, icon('plus', 16))),
     E.railGroups, E.user);
 
@@ -815,10 +846,8 @@ function buildShell() {
     h('div', { class: 'brand brand-mobile' }, h('button', { class: 'icon-btn mobile-only', type: 'button', 'aria-label': tr('Menu'), onclick: openMenu }, icon('menu')), h('img', { src: 'icon.svg', alt: '', width: 28, height: 28 }), 'Third Wheel'),
     h('div', { class: 'searchbox', role: 'search' }, h('span', { class: 'ico' }, icon('search', 18)), E.q),
     h('div', { class: 'actions' },
-      S.me.isAdmin ? h('a', { class: 'icon-btn', href: '#/admin', 'aria-label': tr('Admin panel') }, icon('shield')) : null,
-      document.documentElement.requestFullscreen ? E.fs = h('button', { class: 'icon-btn', type: 'button', 'aria-label': tr('Fullscreen'), title: tr('Fullscreen') + ' (F11)', onclick: toggleFullscreen }, icon('full')) : null,
       h('a', { class: 'icon-btn', href: '#/friends', 'aria-label': tr('Friend requests and invites') }, icon('bell'), E.badge),
-      h('a', { class: 'icon-btn', href: '#/settings', 'aria-label': tr('Settings') }, icon('gear'))));
+      E.menuBtn = h('button', { class: 'icon-btn', type: 'button', 'aria-label': tr('More'), 'aria-haspopup': 'menu', onclick: () => openTopMenu(E.menuBtn) }, icon('dots'))));
 
   const panel = h('aside', { class: 'friends-panel', 'aria-label': tr('Friends') },
     h('header', {}, h('h3', { text: tr('Friends') }), E.fCount), E.fList);
@@ -832,6 +861,7 @@ function buildShell() {
     h('button', { class: 'bn-item', type: 'button', 'aria-label': tr('Menu'), onclick: openMenu }, h('span', { class: 'bn-ico' }, icon('menu', 24)), tr('More')));
 
   const shell = h('div', { class: 'shell enter' }, rail, h('div', { class: 'main' }, topbar, E.view), panel, bottom);
+  shell.classList.toggle('no-friends', friendsHidden());
   $('#app').replaceChildren(shell);
   setTimeout(() => shell.classList.remove('enter'), 1200);
   renderUserPanel(); renderRail(); renderFriends(); renderBadge();
@@ -921,6 +951,7 @@ function markNav() {
     const on = hash.startsWith(a.dataset.route);
     if (on) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current');
   });
+  const curExtra = document.querySelector('.nav-extra[aria-current="page"]'); if (curExtra && curExtra.hidden && S.el.setMore) S.el.setMore(true);
   renderRail(); TWM.nav();
 }
 async function route() {
@@ -1062,24 +1093,46 @@ async function groupView(id, tok) {
   if (stale(tok)) return;
   const ages = g.ageMin || g.ageMax ? `Ages ${g.ageMin || '13'}–${g.ageMax || '99'}` : 'All ages';
   const G = window.TWG;   // roles / moderation / requests UI from js/groups.js
-  const actions = h('div', { class: 'row group-actions', style: 'flex:none;gap:8px;flex-wrap:wrap' });
+  // Slim header: name, voice button and a ⋯ menu on one line; the chips on a second; description, invite code and members fold away under "Details".
+  const actions = h('div', { class: 'row group-actions', style: 'flex:none;gap:8px;align-items:center' });
+  const tuck = h('div', { hidden: true });   // the real buttons live here so the ⋯ menu can press them
   if (isMember) {
     if (window.TWVoice) actions.append(TWVoice.button(g));   // join / leave the group's voice chat
-    actions.append(btn('Invite friend', { cls: 'small', icon: 'plus', onclick: () => openInvite(g, members) }),
-      ...(G ? G.headerButtons(g, route) : []),
-      btn('Leave', { cls: 'small ghost', onclick: (e) => leaveGroup(g, e.currentTarget) }));
+    const real = [btn('Invite friend', { cls: 'small', icon: 'plus', onclick: () => openInvite(g, members) }), ...(G ? G.headerButtons(g, route) : []), btn('Leave', { cls: 'small ghost', onclick: (e) => leaveGroup(g, e.currentTarget) })];
+    tuck.append(...real);
+    const more = h('button', { class: 'icon-btn', type: 'button', 'aria-haspopup': 'menu', 'aria-label': tr('More'), title: tr('More') }, icon('dots'));
+    more.addEventListener('click', () => {
+      document.querySelectorAll('.topbar-menu').forEach(x => x.remove());
+      const pop = h('div', { class: 'topbar-menu', role: 'menu' }, ...real.map(rb => h('button', { type: 'button', role: 'menuitem', onclick: () => { close(); rb.click(); } }, h('span', { text: rb.textContent.trim() }))));
+      document.body.append(pop);
+      const r = more.getBoundingClientRect();
+      pop.style.top = (r.bottom + 6) + 'px'; pop.style.left = Math.max(8, Math.min(innerWidth - pop.offsetWidth - 8, r.right - pop.offsetWidth)) + 'px';
+      const out = (e) => { if (!pop.contains(e.target) && !more.contains(e.target)) close(); };
+      const key = (e) => { if (e.key === 'Escape') { close(); more.focus(); } };
+      function close() { pop.remove(); document.removeEventListener('pointerdown', out, true); document.removeEventListener('keydown', key, true); }
+      document.addEventListener('pointerdown', out, true); document.addEventListener('keydown', key, true);
+      pop.querySelector('button').focus();
+    });
+    actions.append(more, tuck);
   } else if (G) {
     actions.append(...G.joinControls(g, route));
   }
-  const head = h('div', { class: 'ghead' },
-    h('div', { class: 'top', style: 'display:flex;align-items:center;gap:12px;' }, h('a', { class: 'icon-btn mobile-only', href: '#/feed', 'aria-label': 'Back to feed' }, icon('back')), groupTile(g, 'big'), h('h1', { text: T(g.name), style: 'flex:1;' }), actions),
-    h('div', { class: 'chips stagger-pop' }, h('span', { class: 'chip accent', style: 'display:inline-flex;align-items:center;gap:4px;' }, gameThumb(g.game), h('span', { text: T(g.game) })), h('span', { class: 'chip', text: g.mode === 'competitive' ? 'Competitive' : 'Casual' }),
-      g.region ? h('span', { class: 'chip', text: T(g.region) }) : null, h('span', { class: 'chip', text: ages }), h('span', { class: 'chip', text: `${g.memberCount ?? members.length} members` }),
-      g.privacy === 'private' ? h('span', { class: 'chip', text: 'Private' }) : g.privacy === 'request' ? h('span', { class: 'chip', text: 'Approval needed' }) : null,
-      ...(G ? G.extraChips(g) : [])),
+  const detailsBox = h('div', { class: 'ghead-details' },
     g.description ? h('p', { class: 'desc', text: T(g.description) }) : null,
+    h('p', { class: 'muted small', text: ages }),
     G ? G.inviteRow(g) : null,
     members.length ? (G ? G.members(g, route) : h('div', { class: 'members stagger-pop', 'aria-label': 'Members' }, members.map(m => h('button', { class: 'member', type: 'button', 'aria-label': 'View ' + nm(m) + '’s profile', onclick: () => openProfile(m.id) }, avatar(m, 'sm'), nm(m))))) : null);
+  const detailsOpen = !isMember;   // people who haven't joined yet need the description to decide
+  const moreBtn = h('button', { class: 'ghead-more', type: 'button', 'aria-expanded': String(detailsOpen) }, tr('Details'), icon('chev', 14));
+  detailsBox.hidden = !detailsOpen;
+  moreBtn.addEventListener('click', () => { const on = detailsBox.hidden; detailsBox.hidden = !on; moreBtn.setAttribute('aria-expanded', String(on)); });
+  const head = h('div', { class: 'ghead slim' },
+    h('div', { class: 'top', style: 'display:flex;align-items:center;gap:12px;' }, h('a', { class: 'icon-btn mobile-only', href: '#/feed', 'aria-label': 'Back to feed' }, icon('back')), groupTile(g, 'big'), h('h1', { text: T(g.name), style: 'flex:1;' }), actions),
+    h('div', { class: 'ghead-meta' }, h('span', { class: 'chip accent', style: 'display:inline-flex;align-items:center;gap:4px;' }, gameThumb(g.game), h('span', { text: T(g.game) })), h('span', { class: 'chip', text: g.mode === 'competitive' ? 'Competitive' : 'Casual' }),
+      g.region ? h('span', { class: 'chip', text: T(g.region) }) : null, h('span', { class: 'chip', text: `${g.memberCount ?? members.length} members` }),
+      g.privacy === 'private' ? h('span', { class: 'chip', text: 'Private' }) : g.privacy === 'request' ? h('span', { class: 'chip', text: 'Approval needed' }) : null,
+      ...(G ? G.extraChips(g) : []), moreBtn),
+    detailsBox);
   head.querySelectorAll('.btn.small').forEach(b => b.style.minHeight = '32px');
   head.querySelectorAll('.stagger-pop').forEach(stagger);
   const showPage = () => show(page, morph ? { from: morph, to: () => head } : {});

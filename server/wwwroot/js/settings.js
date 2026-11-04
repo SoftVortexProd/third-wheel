@@ -15,7 +15,8 @@ const PATHS = {
   language: 'M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM3 12h18M12 3c2.5 2.7 3.8 5.7 3.8 9S14.5 18.3 12 21c-2.5-2.7-3.8-5.7-3.8-9S9.5 5.7 12 3z',
   account: 'M5 11h14v10H5zM8 11V7a4 4 0 0 1 8 0v4',
   look: 'M12 3l2.6 5.3 5.9.9-4.3 4.1 1 5.8L12 16.3 6.8 19.1l1-5.8L3.5 9.2l5.9-.9z',
-  connections: 'M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7'
+  connections: 'M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7',
+  chev: 'M6 9l6 6 6-6'
 };
 function ico(name, size = 20) {
   const s = document.createElementNS(SVGNS, 'svg');
@@ -185,7 +186,7 @@ function profileTab(panel, ctx) {
   const extras = h('div', { class: 'stack', style: 'gap:16px' });
   if (window.TWProfile) TWProfile.settings(extras);
 
-  panel.append(pic, bannerCard, idCard, general, extras);
+  panel.append(h('div', { class: 'id-pair' }, pic, bannerCard), idCard, general, extras);
 }
 
 /* ---- Profile look: frame + the order of the sections on your profile ---- */
@@ -379,7 +380,8 @@ function themeCard() {
   document.addEventListener('tw:theme', paint);
   paint();
   return card(cardHead(t('Theme'), t('Pick a look. Accent colour (below) works with every theme. Saved on this device.')), tiles, customRow,
-    h('div', { class: 'row2' }, field(t('Corners'), radius), field(t('Spacing'), density)), field(t('Font'), font), h('div', {}, reset));
+    h('div', { class: 'row2' }, field(t('Corners'), radius), field(t('Spacing'), density)), field(t('Font'), font),
+    switchRow(t('Simple mode'), t('Hide explanatory text and keep only the controls.'), !!T.get().simple, (v) => T.set({ simple: v })), h('div', {}, reset));
 }
 
 function appearanceTab(panel) {
@@ -496,6 +498,26 @@ function accountTab(panel) {
     h('div', { class: 'card scard logout-card' }, h('div', {}, h('h3', { text: t('Log out') }), h('p', { class: 'muted small', text: t('You’ll need your password to come back.') })), out));
 }
 
+/* Folding rows: every settings card becomes one line (its title) that opens when you click it. Works on cards built by other modules too (RCKT, password, ...). */
+const FOLD_SKIP = '.pic-card, .banner-card, .logout-card, .sample';
+function foldify(panel, openFirst) {
+  const cards = [...panel.querySelectorAll('.card')].filter(c => !c.dataset.fold && !c.matches(FOLD_SKIP) && !c.parentElement.closest('.card') && c.querySelector('h3'));
+  if (!cards.length) return;
+  const total = panel.querySelectorAll('.card.fold').length + cards.length;
+  for (const card of cards) {
+    const h3 = card.querySelector('h3');
+    let headBlock = h3; while (headBlock.parentElement !== card) headBlock = headBlock.parentElement;
+    const hint = headBlock === h3 ? [] : [...headBlock.children].filter(x => x !== h3 && !x.contains(h3));
+    const rest = [...card.children].filter(x => x !== headBlock);
+    const body = h('div', { class: 'fold-body' }, ...hint, ...rest);
+    const head = h('button', { class: 'fold-head', type: 'button', 'aria-expanded': 'false' }, h('span', { text: h3.textContent }), ico('chev'));
+    const open = !!openFirst && total <= 1;                    // tabs with a single card (Connections, Language) show it; everything else starts as one line each
+    const set = (on) => { card.classList.toggle('open', on); head.setAttribute('aria-expanded', String(on)); body.hidden = !on; };
+    head.addEventListener('click', () => set(!card.classList.contains('open')));
+    card.replaceChildren(head, body); card.classList.add('fold'); card.dataset.fold = '1'; set(open);
+  }
+}
+
 /* ================= page ================= */
 const TABS = [['profile', 'Profile & identity', 'profile', profileTab], ['look', 'Profile look', 'look', lookTab], ['connections', 'Connections', 'connections', connectionsTab],
   ['appearance', 'Appearance & theme', 'appearance', appearanceTab], ['safety', 'Content & safety', 'safety', safetyTab], ['language', 'Language', 'language', languageTab], ['account', 'Account & security', 'account', accountTab]];
@@ -532,6 +554,8 @@ function build() {
       panels[tab] = p; body.append(p);
       def[3](p, ctx);
       document.dispatchEvent(new CustomEvent('tw:settings-tab', { detail: { tab, root: p } }));
+      foldify(p, tab === 'connections' || tab === 'language');
+      if (window.MutationObserver) { let q = 0; new MutationObserver(() => { clearTimeout(q); q = setTimeout(() => foldify(p, false), 30); }).observe(p, { childList: true, subtree: true }); }   // cards that arrive later (profile extras, RCKT, ...)
     }
     Object.entries(panels).forEach(([k, p]) => { p.hidden = k !== cur; });
     if (!first && prev !== idx) TWM.slide(panels[tab], idx > prev ? 1 : -1);
