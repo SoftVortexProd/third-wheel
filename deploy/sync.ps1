@@ -4,8 +4,9 @@
 #   .\deploy\sync.ps1 -SetupKey    one-time: create an SSH key and authorise it on the server (ssh asks for the server password itself)
 #   .\deploy\sync.ps1 -DryRun      build the package and show what would run, without connecting
 # Settings come from deploy\sync.config.json (see sync.config.example.json); parameters override them.
+#   Add -DiscordClientId <id> -DiscordSecret <secret> once (or set $env:TW_DISCORD_CLIENT_ID / $env:TW_DISCORD_CLIENT_SECRET) to turn on "Verify Discord"; the server keeps them.
 #   Add -KlipyKey <key> (or set $env:TW_KLIPY_KEY on your PC) to turn on the GIF picker; it is stored on the server and later syncs keep it. -TenorKey is the old name.
-param([switch]$Watch, [switch]$SetupKey, [switch]$DryRun, [string]$Server, [string]$User, [int]$Port, [string]$Domain, [string]$KlipyKey, [string]$TenorKey)
+param([switch]$Watch, [switch]$SetupKey, [switch]$DryRun, [string]$Server, [string]$User, [int]$Port, [string]$Domain, [string]$KlipyKey, [string]$TenorKey, [string]$DiscordClientId, [string]$DiscordSecret)
 $ErrorActionPreference = "Stop"
 $root = Split-Path $PSScriptRoot -Parent
 
@@ -20,6 +21,9 @@ if ($cfg.user -notmatch '^[A-Za-z0-9._\-]+$') { throw "Invalid user name." }
 if ($cfg.domain -and $cfg.domain -notmatch '^[A-Za-z0-9.\-]+$') { throw "Invalid domain." }
 if (-not $KlipyKey) { $KlipyKey = if ($TenorKey) { $TenorKey } elseif ($env:TW_KLIPY_KEY) { $env:TW_KLIPY_KEY } else { $env:TW_TENOR_KEY } }
 if ($KlipyKey -and $KlipyKey -notmatch '^[A-Za-z0-9_\-]{10,120}$') { throw "That doesn't look like a Klipy API key (letters, numbers, - and _ only)." }
+if (-not $DiscordClientId) { $DiscordClientId = $env:TW_DISCORD_CLIENT_ID }; if (-not $DiscordSecret) { $DiscordSecret = $env:TW_DISCORD_CLIENT_SECRET }
+if ($DiscordClientId -and $DiscordClientId -notmatch '^\d{5,25}$') { throw "The Discord client id should be only digits." }
+if ($DiscordSecret -and $DiscordSecret -notmatch '^[A-Za-z0-9_\-]{10,120}$') { throw "That doesn't look like a Discord client secret." }
 $cfg.port = [int]$cfg.port
 $target = "$($cfg.user)@$($cfg.server)"
 
@@ -53,7 +57,7 @@ function Deploy {
     Write-Host "[$stamp] Building package ..."
     & (Join-Path $PSScriptRoot "publish.ps1") | Out-Null
     $zip = Join-Path $root "dist\ThirdWheel-server.zip"
-    $installArgs = "-Port $($cfg.port)" + $(if ($cfg.domain) { " -Domain $($cfg.domain)" } else { "" }) + $(if ($KlipyKey) { " -KlipyKey $KlipyKey" } else { "" })
+    $installArgs = "-Port $($cfg.port)" + $(if ($cfg.domain) { " -Domain $($cfg.domain)" } else { "" }) + $(if ($KlipyKey) { " -KlipyKey $KlipyKey" } else { "" }) + $(if ($DiscordClientId -and $DiscordSecret) { " -DiscordClientId $DiscordClientId -DiscordSecret $DiscordSecret" } else { "" })
     $remote = @"
 `$ErrorActionPreference='Stop'; `$d='C:\ThirdWheel\incoming'
 Remove-Item "`$d\pkg" -Recurse -Force -ErrorAction SilentlyContinue
@@ -64,7 +68,7 @@ Set-Location "`$d\pkg"; .\install-server.ps1 $installArgs
         Write-Host ("Package: {0} ({1:N0} MB)" -f $zip, ((Get-Item $zip).Length / 1MB))
         Write-Host "Would run:  ssh $target  (create C:\ThirdWheel\incoming)"
         Write-Host "Would run:  scp $zip ${target}:C:/ThirdWheel/incoming/pkg.zip"
-        $shown = if ($KlipyKey) { $remote.Replace($KlipyKey, "<hidden>") } else { $remote }   # never print the key
+        $shown = $remote; if ($KlipyKey) { $shown = $shown.Replace($KlipyKey, "<hidden>") }; if ($DiscordSecret) { $shown = $shown.Replace($DiscordSecret, "<hidden>") }   # never print secrets
         Write-Host "Would run on the server:`n$shown"
         return
     }
