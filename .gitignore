@@ -14,3 +14,6 @@ deploy/sync.config.json
 
 # agent worktrees
 .claude/
+
+# ffmpeg is downloaded by deploy\get-ffmpeg.ps1 (about 180 MB), never committed
+deploy/ffmpeg/

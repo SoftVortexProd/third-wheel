@@ -113,23 +113,26 @@ CREATE TABLE IF NOT EXISTS activity(userId INTEGER, hour INTEGER, n INTEGER DEFA
         return sums.Select(s => max == 0 ? 0 : (int)Math.Ceiling(3.0 * s / max)).ToArray();
     }
 
-    static object Details(long id)
+    static object Details(long id, long viewer)
     {
         var u = Db.Row("SELECT games FROM users WHERE id=@i", ("@i", id));
         var favs = Arr(u?["games"]);
         var x = ReadExtras(Db.Row("SELECT * FROM profile_extras WHERE userId=@i", ("@i", id)));
-        var games = Db.Rows("SELECT game,rank,role FROM user_games WHERE userId=@i", ("@i", id))
+        var (order, hidden) = CosmeticsApi.LayoutOf(id); bool own = viewer == id; bool Hid(string s) => !own && hidden.Contains(s);   // sections the owner hid are not sent at all
+        var games = Db.Rows("SELECT game,rank,role,hours FROM user_games WHERE userId=@i", ("@i", id))
             .Where(r => favs.Contains((string)r["game"]!))
-            .Select(r => new { game = (string)r["game"]!, rank = (r["rank"] as string) ?? "", role = (r["role"] as string) ?? "" }).ToList();
+            .Select(r => new { game = (string)r["game"]!, rank = (r["rank"] as string) ?? "", role = (r["role"] as string) ?? "", hours = r["hours"] is long hh ? hh : 0L }).ToList();
         int[]? act = null; var all = Db.Rows("SELECT hour,n FROM activity WHERE userId=@i", ("@i", id));
         if (all.Count > 0) { act = new int[24]; foreach (var r in all) { var h = Convert.ToInt32(r["hour"]); if (h is >= 0 and < 24) act[h] = Convert.ToInt32(r["n"]); } }
         var prefRow = Db.Row("SELECT gamerTags FROM user_prefs WHERE userId=@i", ("@i", id));
         var gamerTags = prefRow != null ? (JsonSerializer.Deserialize<Dictionary<string, string>>(prefRow["gamerTags"] as string ?? "{}") ?? new()) : new();
         return new
         {
-            bio = x.Bio, playMode = x.Mode, tags = x.Tags, languages = x.Langs, games, gamerTags, verified = VerifyApi.For(id),
-            availability = new { tz = x.Tz, weekdays = x.Wd, weekends = x.We, set = x.HasAvail },
-            online = new { blocks = OnlineBlocks(act) }
+            bio = Hid("bio") ? "" : x.Bio, playMode = Hid("play") ? "" : x.Mode, tags = Hid("play") ? new string[0] : x.Tags, languages = Hid("play") ? new string[0] : x.Langs,
+            games = Hid("games") ? games.Take(0).ToList() : games, gamerTags = Hid("tags") ? new Dictionary<string, string>() : gamerTags, verified = Hid("tags") ? new List<object>() : VerifyApi.For(id),
+            layout = new { order, hidden = own ? hidden : new string[0] }, reputation = Hid("reputation") ? null : new { good = SessionsApi.GoodCount(id) },
+            availability = new { tz = Hid("when") ? 0 : x.Tz, weekdays = Hid("when") ? new bool[7] : x.Wd, weekends = Hid("when") ? new bool[4] : x.We, set = !Hid("when") && x.HasAvail },
+            online = new { blocks = Hid("when") ? null : OnlineBlocks(act) }
         };
     }
 
@@ -143,14 +146,14 @@ CREATE TABLE IF NOT EXISTS activity(userId INTEGER, hour INTEGER, n INTEGER DEFA
                                new { key = "evening", label = "Evening", hours = "18–24" }, new { key = "night", label = "Late night", hours = "0–6" } }
         })));
 
-        api.MapGet("me/profile-extras", (HttpContext c) => WithUser(c, uid => Results.Json(Details(uid))));
+        api.MapGet("me/profile-extras", (HttpContext c) => WithUser(c, uid => Results.Json(Details(uid, uid))));
 
         api.MapGet("users/{id:long}/details", (HttpContext c, long id) => WithUser(c, uid =>
         {
             var u = Db.Row("SELECT age FROM users WHERE id=@i", ("@i", id));
             if (u == null) return Err("User not found.", 404);
             if (id != uid && !Age.UserVisible(Age.Of(uid), Convert.ToInt32(u["age"]))) return Err("User not found.", 404);
-            return Results.Json(Details(id));
+            return Results.Json(Details(id, uid));
         }));
 
         api.MapPut("me/profile-extras", (HttpContext c, ExtrasIn b) => WithUser(c, uid =>
@@ -170,7 +173,7 @@ CREATE TABLE IF NOT EXISTS activity(userId INTEGER, hour INTEGER, n INTEGER DEFA
             Db.Exec("INSERT OR REPLACE INTO profile_extras(userId,bio,playMode,tags,langs,tz,avail,updated) VALUES(@u,@b,@m,@t,@l,@z,@a,@n)",
                 ("@u", uid), ("@b", bio), ("@m", mode), ("@t", JsonSerializer.Serialize(tags)), ("@l", JsonSerializer.Serialize(langs)), ("@z", tz),
                 ("@a", JsonSerializer.Serialize(new { wd, we })), ("@n", Now()));
-            return Results.Json(Details(uid));
+            return Results.Json(Details(uid, uid));
         }));
 
         api.MapPut("me/game-details", (HttpContext c, GameDetailsIn b) => WithUser(c, uid =>
@@ -186,7 +189,7 @@ CREATE TABLE IF NOT EXISTS activity(userId INTEGER, hour INTEGER, n INTEGER DEFA
                 if (rank.Length == 0 && role.Length == 0) continue;
                 Db.Exec("INSERT OR REPLACE INTO user_games(userId,game,rank,role) VALUES(@u,@g,@r,@o)", ("@u", uid), ("@g", game), ("@r", rank), ("@o", role));
             }
-            return Results.Json(Details(uid));
+            return Results.Json(Details(uid, uid));
         }));
 
         // The page pings while it is open and visible (about every 10 minutes). The histogram is bumped at most once per ~10 minutes per user,

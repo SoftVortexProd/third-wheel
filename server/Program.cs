@@ -109,6 +109,30 @@ app.Use(async (ctx, next) =>
     await next();
 });
 
+// ---- live updates: after any successful change, tell the people it concerns (they then fetch the new data through the normal API) ----
+app.Use(async (ctx, next) =>
+{
+    await next();
+    try
+    {
+        var path = ctx.Request.Path.Value ?? "";
+        var m = ctx.Request.Method;
+        if (m is "GET" or "HEAD" or "OPTIONS" || ctx.Response.StatusCode >= 300 || !path.StartsWith("/api/", StringComparison.Ordinal)) return;
+        var me = CurrentUser(ctx); if (me == null) return;
+        if (path.StartsWith("/api/lfg", StringComparison.Ordinal)) { Realtime.Lfg(); return; }
+        var seg = path.Split('/', StringSplitOptions.RemoveEmptyEntries);   // api, groups, 12, join ...
+        if (seg.Length >= 3 && seg[1] == "groups" && long.TryParse(seg[2], out var gid))
+        {
+            if (seg.Length >= 4 && seg[3] is "messages" or "typing" or "sync" or "pins" or "search" or "voice") return;   // chat traffic has its own events
+            var ids = Db.Rows("SELECT userId FROM members WHERE groupId=@g", ("@g", gid)).Select(r => (long)r["userId"]!).ToList(); ids.Add(me.Value);
+            Realtime.Social(ids.ToArray()); return;
+        }
+        if (seg.Length >= 2 && (seg[1] is "friends" or "invites" || (seg[1] == "me" && seg.Length >= 3 && seg[2] is "settings" or "playing" or "status" or "avatar" or "banner" or "profile" or "frame" or "profile-layout" or "blocks")))
+            Realtime.FriendsOf(me.Value);
+    }
+    catch { /* live updates are best effort */ }
+});
+
 app.UseDefaultFiles();
 // Always revalidate (ETag makes it a cheap 304) so an updated server never serves stale scripts/styles from the browser cache.
 app.UseStaticFiles(new StaticFileOptions { OnPrepareResponse = ctx => ctx.Context.Response.Headers["Cache-Control"] = "no-cache" });
@@ -122,7 +146,7 @@ ProfileApi.Map(api);
 NotifyApi.Map(api);
 AccountApi.Map(api);
 HubApi.Map(api);
-LfgApi.Map(api); PushApi.Map(api); VerifyApi.Map(api);
+LfgApi.Map(api); PushApi.Map(api); VerifyApi.Map(api); SessionsApi.Map(api); CosmeticsApi.Map(api); Voice.MapApi(api); Realtime.Map(app);
 GamesApi.Map(api);
 
 
@@ -568,10 +592,10 @@ api.MapGet("users/{id:long}", (HttpContext c, long id) => WithUser(c, uid =>
     return Results.Json(new
     {
         id, username = (string)u["username"]!, displayName = u["display"] as string, avatar = AvatarUrl(id, u["avatarVer"]),
-        avatarColor = (string)u["color"]!, status = (string)u["status"]!, playing = u["playing"] as string,
+        avatarColor = (string)u["color"]!, frame = FrameOf(u), status = (string)u["status"]!, playing = u["playing"] as string,
         playingWith = PlayingPartyCount(id, u["playing"] as string),
         banner = BannerUrl(id, u["bannerVer"]),
-        region = (string)u["region"]!, ageRange = AgeRange(Convert.ToInt32(u["age"])), favoriteGames = games,
+        region = (string)u["region"]!, ageRange = AgeRange(Convert.ToInt32(u["age"])), favoriteGames = (id != uid && CosmeticsApi.LayoutOf(id).Hidden.Contains("games")) ? Array.Empty<string>() : games,
         isFriend = friend, isMe = id == uid, joined = (string)u["created"]!, rckt = IsRckt(u["rcktUntil"])
     });
 }));
@@ -613,7 +637,7 @@ api.MapPost("friends/request", (HttpContext c, FriendIn b) => WithUser(c, uid =>
     if (Limited($"fr:{uid}", 20, TimeSpan.FromHours(1), true)) return Err("Too many requests.", 429);
     var fresh = Db.Scalar("SELECT 1 FROM frequests WHERE fromId=@f AND toId=@t", ("@f", uid), ("@t", tid)) == null;
     Db.Exec("INSERT OR IGNORE INTO frequests(fromId,toId) VALUES(@f,@t)", ("@f", uid), ("@t", tid));
-    if (fresh) PushApi.Notify(tid, "Friend request", $"{Who(uid)} wants to be your friend.", "/#/friends", $"fr:{uid}");
+    if (fresh) { PushApi.Notify(tid, "Friend request", $"{Who(uid)} wants to be your friend.", "/#/friends", $"fr:{uid}"); Realtime.Social(uid, tid); }
     return Results.Json(new { ok = true });
 }));
 
@@ -687,6 +711,7 @@ api.MapPost("invites/{id:long}/decline", (HttpContext c, long id) => WithUser(c,
 
 api.MapFallback(() => Err("Not found.", 404));
 app.MapFallbackToFile("index.html");
+VideoConvert.Start();
 try { app.Run(); }
 catch (Exception ex)
 {
@@ -846,6 +871,6 @@ CREATE TABLE IF NOT EXISTS group_icons(groupId INTEGER PRIMARY KEY, mime TEXT NO
             Exec("UPDATE members SET role='owner' WHERE EXISTS (SELECT 1 FROM grps g WHERE g.id=members.groupId AND g.ownerId=members.userId)");
         }
         // Feature modules add their own tables/columns here (each must be safe to run on every start).
-        ChatApi.Migrate(); GroupsApi.Migrate(); ProfileApi.Migrate(); NotifyApi.Migrate(); GamesApi.Migrate(); AccountApi.Migrate(); HubApi.Migrate(); LfgApi.Migrate(); PushApi.Migrate(); VerifyApi.Migrate();
+        ChatApi.Migrate(); GroupsApi.Migrate(); ProfileApi.Migrate(); NotifyApi.Migrate(); GamesApi.Migrate(); AccountApi.Migrate(); HubApi.Migrate(); LfgApi.Migrate(); PushApi.Migrate(); VerifyApi.Migrate(); SessionsApi.Migrate(); CosmeticsApi.Migrate();
     }
 }

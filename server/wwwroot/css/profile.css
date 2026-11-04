@@ -30,3 +30,7 @@
   .avail-row { flex-direction: column; align-items: flex-start; gap: var(--space-2); }
   .rec-item { flex-basis: 88%; }
 }
+.rep-badge { display: inline-flex; align-items: center; gap: 6px; padding: 4px 12px; border-radius: 999px; font-weight: 700; font-size: var(--fs-sm); border: 1px solid var(--color-line-2); background: var(--color-raised); }
+.rep-badge.bronze { color: #cd7f32; border-color: #cd7f32; }
+.rep-badge.silver { color: #9aa7b8; border-color: #9aa7b8; }
+.rep-badge.gold { color: #e6b422; border-color: #e6b422; }

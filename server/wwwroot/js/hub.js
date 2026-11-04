@@ -2,7 +2,7 @@
 (() => {
 'use strict';
 const TW = window.TW, TWPages = window.TWPages;
-const { h, icon, api, enc, toast, T, nm, avatar, btn, busy, openSheet, emptyState, stagger, show, stale, go, gamePicker, gameThumb, openProfile } = TW;
+const { h, icon, api, enc, toast, T, nm, avatar, btn, busy, openSheet, emptyState, stagger, show, stale, go, gamePicker, gameThumb, openProfile, when } = TW;
 const t = TW.t;
 
 TWPrefs.addStrings('sv', {
@@ -18,6 +18,18 @@ TWPrefs.addStrings('sv', {
   'Read receipts': 'Läskvitton', 'Let friends see when you’ve read their message. If you turn this off, you won’t see their “Seen” either.': 'Låt vänner se när du har läst deras meddelande. Stänger du av det ser du inte heller deras “Sedd”.',
   'More': 'Mer', 'Account': 'Konto', 'You haven’t joined any groups yet.': 'Du har inte gått med i några grupper än.', 'Reports': 'Rapporter',
   'Copy': 'Kopiera', 'Copied {name}': 'Kopierade {name}',
+  'History': 'Historik', 'Voice chat': 'Röstchatt', 'Good teammate': 'Bra lagkamrat', 'Great teammate': 'Mycket bra lagkamrat', 'Legendary teammate': 'Legendarisk lagkamrat', 'Open group': 'Öppna grupp', 'Find a group': 'Hitta en grupp', 'Requested': 'Skickad',
+  'Everyone you’ve played with: voice chats with friends and LFG groups that filled up. Say who was a good teammate.': 'Alla du har spelat med: röstchattar och spelsökningar som blev fulla. Berätta vem som var en bra lagkamrat.',
+  'Thanks! They’ll see a teammate badge after a few.': 'Tack! De får ett lagkamratmärke efter några.', 'Nobody else to show here.': 'Ingen annan att visa här.', 'No sessions yet': 'Inga sessioner än',
+  'Join a voice chat with a friend or fill an LFG post and it shows up here.': 'Gå med i en röstchatt med en vän eller fyll en spelsökning så dyker den upp här.', '{n} people said they were a good teammate': '{n} personer sa att de var en bra lagkamrat',
+  'Avatar frame': 'Avatarram', 'Animated rings around your profile picture. Shown next to your name everywhere.': 'Animerade ringar runt din profilbild. Visas bredvid ditt namn överallt.', 'None': 'Ingen', 'Frame applied': 'Ramen användes', 'Frame removed': 'Ramen togs bort',
+  'Avatar frames are exclusive to RCKT. Ask an admin for RCKT to wear one.': 'Avatarramar är exklusiva för RCKT. Be en admin om RCKT för att bära en.', 'Aurora': 'Norrsken', 'Ember': 'Glöd', 'Neon': 'Neon', 'Glitch': 'Glitch', 'Royal': 'Kunglig', 'Frost': 'Frost', 'Toxic': 'Giftig', 'Void': 'Tomhet', 'Rainbow': 'Regnbåge', 'Heartbeat': 'Hjärtslag',
+  'Profile layout': 'Profillayout', 'Drag sections (or use the arrows) to reorder them. Turn a section off to hide it from everyone else.': 'Dra sektioner (eller använd pilarna) för att ändra ordning. Stäng av en sektion för att dölja den för alla andra.',
+  'About me': 'Om mig', 'Favorite games': 'Favoritspel', 'Gamer tags': 'Spelartaggar', 'How you play': 'Hur du spelar', 'When you play': 'När du spelar', 'Good teammate badge': 'Märket bra lagkamrat', 'Move up': 'Flytta upp', 'Move down': 'Flytta ner', 'Show {name}': 'Visa {name}',
+  'Import my Steam games': 'Importera mina Steam-spel', 'Import from Steam': 'Importera från Steam', 'Add to my games': 'Lägg till i mina spel', 'Games imported': 'Spel importerade', '{n} of {m} selected': '{n} av {m} valda', 'You can have up to {m} favorite games.': 'Du kan ha upp till {m} favoritspel.',
+  'Pick up to 12. Hours played come from Steam and show on your profile.': 'Välj upp till 12. Speltimmarna kommer från Steam och visas på din profil.', 'Bring in the games you own, with hours played.': 'Hämta spelen du äger, med speltimmar.',
+  'Your Steam game list is private. Set “Game details” to Public in Steam’s privacy settings, then try again.': 'Din Steam-spellista är privat. Ställ in “Speldetaljer” på Offentlig i Steams sekretessinställningar och försök igen.', 'None of your Steam games are in our catalog yet.': 'Inga av dina Steam-spel finns i vår katalog än.',
+  'Processing video…': 'Bearbetar video…', 'This video is being converted so it plays everywhere. It will appear here in a moment.': 'Videon konverteras så att den spelas överallt. Den dyker upp här strax.',
   'Verified accounts': 'Verifierade konton', 'Verified': 'Verifierad', 'Unlink': 'Koppla bort', 'Unlinked': 'Bortkopplad', 'Verify {name}': 'Verifiera {name}',
   'Not set up on this server.': 'Inte konfigurerat på den här servern.', 'Prove it’s really your account.': 'Bevisa att det verkligen är ditt konto.',
   'Finish signing in in your browser, then come back here.': 'Slutför inloggningen i webbläsaren och kom sedan tillbaka hit.',
@@ -87,7 +99,8 @@ TWPages.messages = async (_, tok) => {
   }
   search.addEventListener('input', draw);
   await load();
-  TW.S.chatTimer = setInterval(() => { if (!document.hidden) load().catch(() => {}); }, 3000);   // cleared automatically when you leave the page
+  TW.S.chatTimer = (window.TWRT ? TWRT.every : setInterval)(() => { if (!document.hidden) load().catch(() => {}); }, 3000);
+  if (window.TWRT) (TW.S.rtOff = TW.S.rtOff || []).push(TWRT.pokes('chat', () => load().catch(() => {})));   // cleared automatically when you leave the page
 
   function openNew() {
     let close = () => {};
@@ -114,7 +127,7 @@ TWPages.messages = async (_, tok) => {
     }
     last = n;
   }
-  setInterval(refresh, 4000); document.addEventListener('visibilitychange', refresh); setTimeout(refresh, 1500);
+  (window.TWRT ? TWRT.every : setInterval)(refresh, 4000); if (window.TWRT) TWRT.pokes('chat', refresh); document.addEventListener('visibilitychange', refresh); setTimeout(refresh, 1500);
 })();
 
 /* ---------- Discover ---------- */
@@ -182,4 +195,30 @@ TWPages.games = async (_, tok) => {
   picker.addEventListener('change', () => saveGames(picker.value));
   await load();
 };
+
+/* ---------- History: who I played with ---------- */
+TWPages.history = async (_, tok) => {
+  const list = h('div', { class: 'stack hist-list', style: 'gap:12px' });
+  show(h('div', { class: 'page' }, head(t('History'), t('Everyone you’ve played with: voice chats with friends and LFG groups that filled up. Say who was a good teammate.')), list));
+  const KIND = { voice: t('Voice chat'), lfg: t('Looking for group') };
+  const dur = (a, b) => { const m = Math.round((new Date(b) - new Date(a)) / 60000); return m < 1 ? '' : m < 60 ? m + ' min' : Math.floor(m / 60) + ' h ' + (m % 60) + ' min'; };
+  function person(sid, pl) {
+    const p = pl.person; let good = pl.good;
+    const thumb = h('button', { class: 'icon-btn hist-thumb', type: 'button', 'aria-pressed': String(good), 'aria-label': t('Good teammate'), title: t('Good teammate') }, icon('check', 16));
+    const paint = () => { thumb.setAttribute('aria-pressed', String(good)); thumb.classList.toggle('on', good); };
+    thumb.addEventListener('click', () => busy(thumb, async () => { await api('POST', `/api/sessions/${sid}/rate`, { userId: p.id, good: !good }); good = !good; pl.good = good; paint(); if (good) toast(t('Thanks! They’ll see a teammate badge after a few.')); }));
+    paint();
+    const act = p.isFriend ? btn(t('Message'), { cls: 'small ghost', onclick: () => go('#/dm/' + enc(p.id)) })
+      : (() => { const a = btn(t('Add friend'), { cls: 'small', icon: 'plus' }); a.addEventListener('click', () => busy(a, async () => { await api('POST', '/api/friends/request', { username: p.username }); a.replaceWith(h('span', { class: 'chip ok' }, icon('check', 12), t('Requested'))); TW.loadSocial().catch(() => {}); })); return a; })();
+    return h('div', { class: 'hist-person' }, h('button', { class: 'hist-who', type: 'button', onclick: () => openProfile(p.id) }, avatar(p, 'sm', true), h('span', { text: nm(p) })), thumb, act);
+  }
+  const r = await api('GET', '/api/sessions'); if (stale(tok)) return;
+  list.replaceChildren(...(r.length ? r.map(s => h('article', { class: 'card hist-card', 'data-key': 's' + s.id },
+    h('div', { class: 'hist-top' }, s.game ? gameThumb(s.game) : null, h('div', { class: 'hist-title' }, h('b', { text: s.game ? T(s.game) : (KIND[s.kind] || '') }),
+      h('span', { class: 'muted small', text: [KIND[s.kind], s.groupName ? T(s.groupName) : '', when(s.startedAt), dur(s.startedAt, s.endedAt)].filter(Boolean).join(' · ') })),
+      s.groupId ? btn(t('Open group'), { cls: 'small ghost', onclick: () => go('#/group/' + enc(s.groupId)) }) : btn(t('Find a group'), { cls: 'small ghost', onclick: () => go('#/lfg') })),
+    s.players.length ? h('div', { class: 'stack', style: 'gap:8px' }, s.players.map(pl => person(s.id, pl))) : h('p', { class: 'muted small', text: t('Nobody else to show here.') }))) : [emptyState(t('No sessions yet'), t('Join a voice chat with a friend or fill an LFG post and it shows up here.'))]));
+  stagger(list);
+};
+
 })();

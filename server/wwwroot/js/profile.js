@@ -195,29 +195,47 @@ document.addEventListener('tw:me', refreshGames);   // favorite games changed in
 async function profileDetails(slot, id) {
   let d;
   try { d = await api('GET', `/api/users/${enc(id)}/details`); } catch { return; }
-  const kids = [];
-  if (d.bio) kids.push(h('p', { class: 'profile-bio', text: T(d.bio) }));
+  // Each part of the profile is a "section" with an id, so the owner can reorder / hide them (Settings -> Profile layout). The server already left out hidden ones.
+  const secs = {};
+  if (d.bio) secs.bio = h('p', { class: 'profile-bio', 'data-sec': 'bio', text: T(d.bio) });
   const vibe = [MODE_LABEL[d.playMode] || null, ...(d.tags || []).map(t => TAG_LABEL[t] || t)].filter(Boolean);
-  if (vibe.length) kids.push(section('How they play', h('div', { class: 'chips' }, vibe.map((t, i) => h('span', { class: 'chip' + (i === 0 ? ' accent' : ''), text: t })))));
+  if (vibe.length || (d.languages || []).length) {
+    const box = section('How they play');
+    if (vibe.length) box.append(h('div', { class: 'chips' }, vibe.map((t, i) => h('span', { class: 'chip' + (i === 0 ? ' accent' : ''), text: t }))));
+    if ((d.languages || []).length) box.append(h('p', { class: 'muted small', text: 'Speaks ' + words(d.languages) }));
+    box.dataset.sec = 'play'; secs.play = box;
+  }
   // Gamer tags (Steam, Discord, ...): tap one to copy the handle.
   // verified ones come first (with a check mark); a typed tag for the same platform is hidden so nobody can fake a verified one
   const verified = (d.verified || []).filter(v => v.platform && v.handle);
   const vp = new Set(verified.map(v => v.platform.toLowerCase()));
   const tagList = [...verified.map(v => [v.platform, T(v.handle), true]), ...Object.entries(d.gamerTags || {}).filter(([k, v]) => k && v && !vp.has(k.toLowerCase())).map(([k, v]) => [k, v, false])];
-  if (tagList.length) kids.push(section(TW.t('Gamer tags'), h('div', { class: 'chips tag-list' }, tagList.map(([k, v, ok]) =>
-    h('button', { class: 'chip tag-chip' + (ok ? ' verified' : ''), type: 'button', title: ok ? TW.t('Verified') + ' · ' + TW.t('Copy') : TW.t('Copy'), 'aria-label': `${k}: ${v}${ok ? '. ' + TW.t('Verified') : ''}. ${TW.t('Copy')}`, onclick: async () => {
-      try { await navigator.clipboard.writeText(String(v)); TW.toast(TW.t('Copied {name}', { name: k })); } catch { TW.toast(`${k}: ${v}`); }
-    } }, ok ? TW.icon('check', 12) : null, h('b', { text: k }), h('span', { class: 'tag-val', text: v }))))));
-  if ((d.languages || []).length) kids.push(h('p', { class: 'muted small', text: 'Speaks ' + words(d.languages) }));
+  if (tagList.length) {
+    secs.tags = section(TW.t('Gamer tags'), h('div', { class: 'chips tag-list' }, tagList.map(([k, v, ok]) =>
+      h('button', { class: 'chip tag-chip' + (ok ? ' verified' : ''), type: 'button', title: ok ? TW.t('Verified') + ' · ' + TW.t('Copy') : TW.t('Copy'), 'aria-label': `${k}: ${v}${ok ? '. ' + TW.t('Verified') : ''}. ${TW.t('Copy')}`, onclick: async () => {
+        try { await navigator.clipboard.writeText(String(v)); TW.toast(TW.t('Copied {name}', { name: k })); } catch { TW.toast(`${k}: ${v}`); }
+      } }, ok ? TW.icon('check', 12) : null, h('b', { text: k }), h('span', { class: 'tag-val', text: v })))));
+    secs.tags.dataset.sec = 'tags';
+  }
   const seen = onlineSummary(d.online && d.online.blocks), free = declaredSummary(d.availability);
-  if (seen || free) kids.push(section('When they play', ...[seen ? `Usually online in the ${seen} (your time)` : null, free ? `${free} (their time)` : null].filter(Boolean).map(t => h('p', { class: 'avail-line', text: t }))));
-  // Ranks and roles: upgrade the plain favorite-game chips in place ("Valorant · Diamond · Controller").
+  if (seen || free) { secs.when = section('When they play', ...[seen ? `Usually online in the ${seen} (your time)` : null, free ? `${free} (their time)` : null].filter(Boolean).map(t => h('p', { class: 'avail-line', text: t }))); secs.when.dataset.sec = 'when'; }
+  // "Good teammate" badge from session ratings (3 / 10 / 25 thumbs-ups)
+  const good = d.reputation && d.reputation.good || 0;
+  if (good >= 3) {
+    const tier = good >= 25 ? ['Legendary teammate', 'gold'] : good >= 10 ? ['Great teammate', 'silver'] : ['Good teammate', 'bronze'];
+    secs.reputation = h('div', { class: 'section', 'data-sec': 'reputation' }, h('span', { class: 'rep-badge ' + tier[1], title: TW.t('{n} people said they were a good teammate', { n: good }) }, TW.icon('check', 14), TW.t(tier[0]), h('span', { class: 'muted small', text: '×' + good })));
+  }
+  // Ranks, roles and hours: upgrade the plain favorite-game chips in place ("Valorant · Diamond · Controller · 120 h").
+  const gamesSec = slot.parentElement && slot.parentElement.querySelector('[data-sec="games"]');
   const by = new Map((d.games || []).map(g => [g.game, g]));
-  const fav = slot.parentElement && slot.parentElement.querySelector('.favgames');
+  const fav = gamesSec && gamesSec.querySelector('.favgames');
   if (fav && by.size) fav.querySelectorAll('.chip').forEach(c => {
     const g = by.get(c.textContent); if (!g) return;
-    c.textContent = [T(g.game), T(g.rank), T(g.role)].filter(Boolean).join(' · '); c.classList.add('accent');
+    c.textContent = [T(g.game), T(g.rank), T(g.role), g.hours ? g.hours + ' h' : ''].filter(Boolean).join(' · '); c.classList.add('accent');
   });
+  if (gamesSec) secs.games = gamesSec;   // moved into the ordered list below
+  const order = (d.layout && d.layout.order) || ['bio', 'games', 'tags', 'play', 'when', 'reputation'];
+  const kids = order.map(id => secs[id]).filter(Boolean);
   if (!kids.length) return;
   slot.replaceChildren(...kids);
   if (!TWM.reduce()) slot.animate([{ opacity: 0, transform: 'translateY(8px)' }, { opacity: 1, transform: 'none' }], { duration: 420, easing: TWM.EASE });

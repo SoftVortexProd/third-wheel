@@ -20,6 +20,8 @@ const ICONS = {
   check: 'M20 6L9 17l-5-5',
   chev: 'M6 9l6 6 6-6',
   menu: 'M4 6h16M4 12h16M4 18h16',
+  clock: 'M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20zM12 6v6l4 2',
+  speaker: 'M11 5L6 9H2v6h4l5 4zM15.5 8.5a5 5 0 0 1 0 7M19 5a9 9 0 0 1 0 14',
   full: 'M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5',
   fullexit: 'M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5',
   eye: 'M1 12s4-7 11-7 11 7 11 7-4 7-11 7S1 12 1 12zM12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z',
@@ -121,8 +123,10 @@ function avatar(u, size = 'md', withStatus = false) {
       el.append(img);
     }
   }
-  if (!withStatus) return el;
-  return h('span', { class: 'av-wrap' }, el, h('span', { class: 'dot ' + statusKey(u.status), 'aria-hidden': 'true' }));
+  // RCKT avatar frame: an animated ring around the picture (css/frames.css). The server only sends rame for people who currently have RCKT.
+  const core = u.frame && /^[a-z]{3,12}$/.test(u.frame) ? h('span', { class: 'framed ' + size, 'data-frame': u.frame }, el) : el;
+  if (!withStatus) return core;
+  return h('span', { class: 'av-wrap' }, core, h('span', { class: 'dot ' + statusKey(u.status), 'aria-hidden': 'true' }));
 }
 
 function groupTile(g, sz = '') {
@@ -162,6 +166,8 @@ const enc = encodeURIComponent;
 /* ================= state ================= */
 /* Friends, invites, requests, groups and open chats refresh every 3 seconds. */
 const POLL_MS = 3000;
+/* While the live connection (js/rt.js) is up, polling only runs as a slow safety net; the server pokes us the moment something changes. */
+const every = (fn, ms) => window.TWRT ? TWRT.every(fn, ms) : setInterval(fn, ms);
 const S = {
   me: null, meta: { games: [], regions: [] },
   friends: [], mine: [], invites: [], reqs: { incoming: [], outgoing: [] },
@@ -766,7 +772,7 @@ function navLink(href, ico, label, cls) {
 const NAV = () => [
   ['Home', [['#/feed', 'feed', 'Feed'], ['#/discover', 'compass', 'Discover'], ['#/search', 'search', 'Find groups'], ['#/lfg', 'mega', 'Looking for group']]],
   ['Social', [['#/messages', 'msg', 'Messages'], ['#/friends', 'users', 'Friends']]],
-  ['Play', [['#/games', 'pad', 'My games']]]
+  ['Play', [['#/games', 'pad', 'My games'], ['#/history', 'clock', 'History']]]
 ];
 /* Phones: the bottom bar only has three buttons, so every tab is reachable from this menu in the top bar. */
 function openMenu() {
@@ -908,7 +914,7 @@ function show(node, o = {}) {
     if (!node.classList.contains('chat-page')) S.el.view.scrollTop = 0;
   }, { from, to: o.to });
 }
-function clearTimers() { clearInterval(S.chatTimer); S.chatTimer = null; S.onData = null; }
+function clearTimers() { clearInterval(S.chatTimer); S.chatTimer = null; S.onData = null; (S.rtOff || []).forEach(f => { try { f(); } catch { /* ignore */ } }); S.rtOff = []; }
 function markNav() {
   const hash = location.hash || '#/feed';
   document.querySelectorAll('[data-route]').forEach(a => {
@@ -1058,6 +1064,7 @@ async function groupView(id, tok) {
   const G = window.TWG;   // roles / moderation / requests UI from js/groups.js
   const actions = h('div', { class: 'row group-actions', style: 'flex:none;gap:8px;flex-wrap:wrap' });
   if (isMember) {
+    if (window.TWVoice) actions.append(TWVoice.button(g));   // join / leave the group's voice chat
     actions.append(btn('Invite friend', { cls: 'small', icon: 'plus', onclick: () => openInvite(g, members) }),
       ...(G ? G.headerButtons(g, route) : []),
       btn('Leave', { cls: 'small ghost', onclick: (e) => leaveGroup(g, e.currentTarget) }));
@@ -1093,7 +1100,8 @@ async function groupView(id, tok) {
   showPage();
   chat.log.scrollTo({ top: chat.log.scrollHeight, behavior: 'instant' });
   chat.done();
-  S.chatTimer = setInterval(() => { if (!document.hidden) chat.poll(); }, POLL_MS);
+  S.chatTimer = every(() => { if (!document.hidden) chat.poll(); }, POLL_MS);
+  if (window.TWRT) (S.rtOff = S.rtOff || []).push(TWRT.pokes('chat', () => { if (!document.hidden) chat.poll(); }, m => m.k === 'g' && String(m.id) === String(g.id)));
   if (matchMedia('(min-width:900px)').matches) chat.input.focus();
 }
 function leaveGroup(g, b) {
@@ -1156,7 +1164,7 @@ async function openProfile(id, opts) {
       h('div', { class: 'profile-names' }, h('h2', { text: nm(p) }), h('p', { class: 'muted', text: '@' + T(p.username) }),
         h('p', { class: 'status-line' + (p.playing ? ' playing' : '') }, p.playing ? gameThumb(p.playing) : null, h('span', { class: 'status-txt', text: p.playing ? playingStatusText(p) : STATUS[sk] }))), more),
     h('div', { class: 'prows' }, row('Region', T(p.region)), row('Age', p.ageRange), row('Member since', isNaN(joined) ? '' : joined.toLocaleDateString(undefined, { month: 'long', year: 'numeric' }))),
-    games.length ? h('div', { class: 'section' }, h('div', { class: 'section-title', text: 'Favorite games' }), h('div', { class: 'chips favgames' }, games.map(g => h('span', { class: 'chip', style: 'display:inline-flex;align-items:center;gap:4px;' }, gameThumb(g), h('span', { class: 'chip-txt', text: T(g) }))))) : null,
+    games.length ? h('div', { class: 'section', 'data-sec': 'games' }, h('div', { class: 'section-title', text: 'Favorite games' }), h('div', { class: 'chips favgames' }, games.map(g => h('span', { class: 'chip', style: 'display:inline-flex;align-items:center;gap:4px;' }, gameThumb(g), h('span', { class: 'chip-txt', text: T(g) }))))) : null,
     extra, actions);
   if (window.TWProfile) TWProfile.profileDetails(extra, p.id);   // bio, play style, ranks/roles, availability (profile.js)
   close = openSheet('Profile', body);
@@ -1236,7 +1244,8 @@ async function dmView(id, tok) {
   show(page);
   chat.log.scrollTo({ top: chat.log.scrollHeight, behavior: 'instant' });
   chat.done();
-  S.chatTimer = setInterval(() => { if (!document.hidden) { chat.poll(); paintSub(); } }, POLL_MS);
+  S.chatTimer = every(() => { if (!document.hidden) { chat.poll(); paintSub(); } }, POLL_MS);
+  if (window.TWRT) (S.rtOff = S.rtOff || []).push(TWRT.pokes('chat', () => { if (!document.hidden) { chat.poll(); paintSub(); } }, m => m.k === 'd' && String(m.id) === String(p.id)));
   if (matchMedia('(min-width:900px)').matches) chat.input.focus();
 }
 
@@ -1960,7 +1969,7 @@ async function poll() {
 }
 function loggedOut() {
   S.maint = false; S.feedCache = null; S.adminTab = null;
-  clearTimers(); clearInterval(S.pollTimer); S.pollTimer = null; S.me = null; S.sig = {}; S.el = {}; renderResults = null;
+  clearTimers(); clearInterval(S.pollTimer); S.pollTimer = null; if (window.TWRT) TWRT.stop(); S.me = null; S.sig = {}; S.el = {}; renderResults = null;
   S.friends = []; S.mine = []; S.invites = []; S.reqs = { incoming: [], outgoing: [] };
   renderAuth();
 }
@@ -1968,15 +1977,17 @@ async function start() {
   try { const m = await api('GET', '/api/meta'); S.meta = { games: m.games || [], regions: m.regions || [] }; } catch (e) { toast(e.message, 'error'); }
   try { S.site = await api('GET', '/api/site'); S.closedSig = JSON.stringify(S.site.closed); } catch { /* assume open */ }
   if (S.site.maintenance.on && !S.me.isAdmin) {
-    clearInterval(S.pollTimer); S.pollTimer = setInterval(poll, POLL_MS);
+    clearInterval(S.pollTimer); S.pollTimer = every(poll, POLL_MS);
     showMaintenance(); return;
   }
   S.maint = false;
   if (window.TWPrefs) await TWPrefs.load();   // accent colour, text size, language: applied before the first screen is built
   if (!S.me.onboarded) { renderOnboarding(); return; }
   buildShell();
+  if (window.TWRT && !S.rtOn) { S.rtOn = true; TWRT.on('social', () => { if (S.me && !document.hidden) poll(); }); TWRT.on('rt.up', () => { if (S.me) poll(); }); }
+  if (window.TWRT) TWRT.start();
   try { await Promise.all([loadSocial(), refreshMine()]); } catch (e) { toast(e.message, 'error'); }
-  clearInterval(S.pollTimer); S.pollTimer = setInterval(poll, POLL_MS);
+  clearInterval(S.pollTimer); S.pollTimer = every(poll, POLL_MS);
   if (!location.hash || location.hash === '#/') location.hash = '#/feed';
   route();
   applyAutoGame();

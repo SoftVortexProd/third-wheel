@@ -31,3 +31,28 @@
 .nav-badge { min-width: 18px; height: 18px; padding: 0 5px; border-radius: 999px; background: var(--color-danger); color: #fff; font-size: 11px; line-height: 18px; font-weight: 700; text-align: center; flex: none; }
 
 [data-theme=light] .att-video, [data-theme=light] .att-video video { background: #000; }
+
+/* voice chat bar + button */
+.vc-btn.vc-live { border-color: var(--color-ok-line); color: var(--color-ok-text); }
+.vc-bar { position: fixed; z-index: 60; left: 50%; bottom: 16px; transform: translateX(-50%); display: flex; align-items: center; gap: var(--space-4); max-width: calc(100vw - 24px); padding: 8px 12px; background: var(--color-pop); border: 1px solid var(--color-line-2); border-radius: 999px; box-shadow: var(--shadow-2); }
+.vc-name { display: flex; flex-direction: column; min-width: 0; line-height: 16px; max-width: 160px; }
+.vc-name b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.vc-faces { display: flex; gap: 6px; }
+.vc-face { position: relative; line-height: 0; border-radius: 50%; box-shadow: 0 0 0 2px transparent; transition: box-shadow .15s; }
+.vc-face.speaking { box-shadow: 0 0 0 2px var(--color-ok); }
+.vc-face.muted { opacity: .6; }
+.vc-face.connecting { opacity: .45; }
+.vc-mute { position: absolute; right: -3px; bottom: -3px; width: 14px; height: 14px; display: grid; place-items: center; border-radius: 50%; background: var(--color-danger); color: #fff; }
+.vc-actions { display: flex; align-items: center; gap: 4px; }
+.vc-ctl.off { background: var(--color-bad-bg); color: var(--color-danger-text); }
+@media (max-width: 899px) { .vc-bar { bottom: calc(var(--nav-h) + var(--safe-b) + 10px); border-radius: 18px; flex-wrap: wrap; justify-content: center; } .vc-name { max-width: 110px; } }
+
+/* history */
+.hist-card { padding: var(--space-5); display: flex; flex-direction: column; gap: var(--space-4); }
+.hist-top { display: flex; align-items: center; gap: var(--space-4); }
+.hist-top .gp-thumb { width: 44px; height: 44px; border-radius: 10px; flex: none; }
+.hist-title { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.hist-person { display: flex; align-items: center; gap: var(--space-3); flex-wrap: wrap; }
+.hist-who { display: inline-flex; align-items: center; gap: var(--space-3); flex: 1; min-width: 0; background: none; border: 0; padding: 0; color: inherit; font: inherit; font-weight: 600; cursor: pointer; text-align: left; }
+.hist-who span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hist-thumb[aria-pressed="true"], .hist-thumb.on { background: var(--color-ok-bg); color: var(--color-ok-text); }

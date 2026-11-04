@@ -55,7 +55,10 @@ if ($SetupKey) {
 function Deploy {
     $stamp = Get-Date -Format "HH:mm:ss"
     Write-Host "[$stamp] Building package ..."
-    & (Join-Path $PSScriptRoot "publish.ps1") | Out-Null
+    # ffmpeg is about 100 MB: only send it when the server does not have it yet
+    $hasFfmpeg = $false
+    if (-not $DryRun) { try { $hasFfmpeg = ((& ssh @opts $target "powershell -NoProfile -ExecutionPolicy Bypass -EncodedCommand $(ConvertTo-Encoded 'Test-Path C:\ThirdWheel\app\ffmpeg\ffmpeg.exe')") -join '').Trim() -eq 'True' } catch { } }
+    & (Join-Path $PSScriptRoot "publish.ps1") -NoFfmpeg:$hasFfmpeg | Out-Null
     $zip = Join-Path $root "dist\ThirdWheel-server.zip"
     $installArgs = "-Port $($cfg.port)" + $(if ($cfg.domain) { " -Domain $($cfg.domain)" } else { "" }) + $(if ($KlipyKey) { " -KlipyKey $KlipyKey" } else { "" }) + $(if ($DiscordClientId -and $DiscordSecret) { " -DiscordClientId $DiscordClientId -DiscordSecret $DiscordSecret" } else { "" })
     $remote = @"

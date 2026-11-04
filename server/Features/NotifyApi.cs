@@ -1,4 +1,4 @@
-﻿using System.Text.RegularExpressions;
+using System.Text.RegularExpressions;
 using static Core;
 
 /// <summary>
@@ -105,6 +105,7 @@ CREATE INDEX IF NOT EXISTS ix_notif_user ON notifications(userId, readAt, id);")
                 if (b.Key == me || b.Key <= 0) return Err("Bad conversation.");
                 SetCursor(me, "dm", b.Key, Convert.ToInt64(Db.Scalar("SELECT COALESCE(MAX(id),0) FROM dms WHERE a=@a AND b=@b", ("@a", Math.Min(me, b.Key)), ("@b", Math.Max(me, b.Key)))));
                 Db.Exec("UPDATE notifications SET readAt=@n WHERE userId=@u AND peerId=@p AND readAt IS NULL", ("@n", now), ("@u", me), ("@p", b.Key));
+                Realtime.Chat("d", b.Key, me);
             }
             else return Err("Kind must be 'dm' or 'group'.");
             return Results.Json(new { ok = true });

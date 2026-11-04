@@ -47,3 +47,9 @@ From then on:
 Without the SSH setup, update manually by repeating steps 1–3 above (data is kept).
 
 **Use HTTPS.** Over plain HTTP, passwords and login cookies cross the internet unencrypted. HTTPS needs a domain name pointing at the server (a free DuckDNS name works).
+
+## Optional features and their settings
+- **Video conversion (ffmpeg):** `publish.ps1` downloads ffmpeg (checked against its published checksum) and puts it next to the server. Uploaded videos are converted to WebM in the background so they play in every client. `sync.ps1` only re-sends ffmpeg when the server doesn't have it yet. Override the location with the `TW_FFMPEG` service variable.
+- **Live updates:** the app opens one WebSocket (`/ws`). If you use Caddy (`-Domain`), it forwards WebSockets automatically.
+- **Voice chat:** peer-to-peer WebRTC, up to 6 people per group. Browsers only allow the microphone over HTTPS (or in the desktop app), so use `-Domain` for web users. People behind strict networks need a TURN relay: install coturn and set `TW_TURN_URL` (for example `turn:your.domain:3478`), `TW_TURN_USER` and `TW_TURN_PASS` as service variables.
+- **Verify Discord:** `-DiscordClientId` / `-DiscordSecret` (see install-server.ps1). **Steam library import** works from a verified Steam account with a public game list; set `TW_STEAM_API_KEY` to use the official Steam API instead of the public profile page.

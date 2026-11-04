@@ -70,6 +70,8 @@ public static class Core
     }
     public static bool IsRcktUser(long uid) => IsRckt(Db.Scalar("SELECT rcktUntil FROM users WHERE id=@i", ("@i", uid)));
     static object? Col(Dictionary<string, object?> r, string key) => r.TryGetValue(key, out var v) ? v : null;
+    /// <summary>The avatar frame to show for a user row: only while they have RCKT (frames are an RCKT perk) and only a frame that exists.</summary>
+    public static string? FrameOf(Dictionary<string, object?> r) => Col(r, "frame") is string f && IsRckt(Col(r, "rcktUntil")) && CosmeticsApi.Valid(f) ? f : null;
 
     public static object? UserDto(long id)
     {
@@ -82,7 +84,7 @@ public static class Core
         return new
         {
             id = (long)u["id"]!, username = (string)u["username"]!, displayName = u["display"] as string, avatar = AvatarUrl((long)u["id"]!, u["avatarVer"]),
-            avatarColor = (string)u["color"]!, isAdmin = Convert.ToInt32(u["isAdmin"]) == 1,
+            avatarColor = (string)u["color"]!, frame = FrameOf(u), isAdmin = Convert.ToInt32(u["isAdmin"]) == 1,
             rckt = IsRckt(Col(u, "rcktUntil")), rcktUntil = Col(u, "rcktUntil") as string,
             region = (string)u["region"]!, age, ageRange = AgeRange(age),
             favoriteGames = JsonSerializer.Deserialize<string[]>((string)u["games"]!) ?? Array.Empty<string>(),
@@ -122,7 +124,7 @@ public static class Core
     public static object PersonObj(Dictionary<string, object?> r, bool isFriend) => new
     {
         id = (long)r["id"]!, username = (string)r["username"]!, displayName = r["display"] as string, avatar = AvatarUrl((long)r["id"]!, r["avatarVer"]),
-        avatarColor = (string)r["color"]!, rckt = IsRckt(Col(r, "rcktUntil")),
+        avatarColor = (string)r["color"]!, frame = FrameOf(r), rckt = IsRckt(Col(r, "rcktUntil")),
         status = (string)r["status"]!, playing = r["playing"] as string,
         playingWith = PlayingPartyCount((long)r["id"]!, r["playing"] as string),
         banner = BannerUrl((long)r["id"]!, Col(r, "bannerVer")),
@@ -149,7 +151,7 @@ public static class Core
     public static object MsgObj(Dictionary<string, object?> r) => new
     {
         id = (long)r["id"]!, userId = (long)r["userId"]!, username = (string)r["username"]!, displayName = r["display"] as string,
-        avatar = AvatarUrl((long)r["userId"]!, r["avatarVer"]), avatarColor = (string)r["avatarColor"]!, rckt = IsRckt(Col(r, "rcktUntil")),
+        avatar = AvatarUrl((long)r["userId"]!, r["avatarVer"]), avatarColor = (string)r["avatarColor"]!, frame = FrameOf(r), rckt = IsRckt(Col(r, "rcktUntil")),
         text = (string)r["text"]!, createdAt = (string)r["createdAt"]!
     };
     public static bool AreFriends(long a, long b) => Db.Scalar("SELECT 1 FROM friends WHERE a=@a AND b=@b", ("@a", Math.Min(a, b)), ("@b", Math.Max(a, b))) != null;

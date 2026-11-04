@@ -51,6 +51,42 @@ CREATE UNIQUE INDEX IF NOT EXISTS ux_verified_ext ON verified_tags(platform, ext
         return CryptographicOperations.FixedTimeEquals(Encoding.ASCII.GetBytes(want), Encoding.ASCII.GetBytes(p[2])) ? uid : null;
     }
 
+    public record ImportIn(string[]? Games);
+    static string SteamKey => Environment.GetEnvironmentVariable("TW_STEAM_API_KEY") ?? "";
+    static readonly Dictionary<string, (DateTime At, List<(long, string, int)> Games)> LibCache = new();
+
+    /// <summary>The games a Steam account owns, with hours played. Uses the Steam Web API when a key is set (TW_STEAM_API_KEY), otherwise the public profile page.
+    /// Throws InvalidOperationException when the profile's game list is private. Cached for 10 minutes.</summary>
+    static async Task<List<(long App, string Name, int Hours)>> FetchOwned(string steamId)
+    {
+        lock (LibCache) if (LibCache.TryGetValue(steamId, out var hit) && DateTime.UtcNow - hit.At < TimeSpan.FromMinutes(10)) return hit.Games.Select(x => (x.Item1, x.Item2, x.Item3)).ToList();
+        var list = new List<(long, string, int)>();
+        if (SteamKey.Length > 0 && Regex.IsMatch(SteamKey, @"^[A-Za-z0-9]{16,64}$"))
+        {
+            var json = await Http.GetStringAsync($"https://api.steampowered.com/IPlayerService/GetOwnedGames/v1/?key={SteamKey}&steamid={steamId}&include_appinfo=1&format=json");
+            var root = JsonDocument.Parse(json).RootElement.GetProperty("response");
+            if (!root.TryGetProperty("games", out var gs)) throw new InvalidOperationException("private");
+            foreach (var g in gs.EnumerateArray())
+                list.Add((g.GetProperty("appid").GetInt64(), g.TryGetProperty("name", out var n) ? n.GetString() ?? "" : "", g.TryGetProperty("playtime_forever", out var pt) ? pt.GetInt32() / 60 : 0));
+        }
+        else
+        {
+            var xml = await Http.GetStringAsync($"https://steamcommunity.com/profiles/{steamId}/games?tab=all&xml=1");
+            if (xml.Contains("<error>", StringComparison.OrdinalIgnoreCase) || !xml.Contains("<game>", StringComparison.OrdinalIgnoreCase)) throw new InvalidOperationException("private");
+            foreach (Match m in Regex.Matches(xml, @"<game>(.*?)</game>", RegexOptions.Singleline))
+            {
+                var b = m.Groups[1].Value;
+                var app = Regex.Match(b, @"<appID>(\d+)</appID>"); var nm = Regex.Match(b, @"<name><!\[CDATA\[(.*?)\]\]></name>", RegexOptions.Singleline);
+                var hrs = Regex.Match(b, @"<hoursOnRecord>([\d,\.]+)</hoursOnRecord>");
+                if (!app.Success) continue;
+                var h = hrs.Success && double.TryParse(hrs.Groups[1].Value.Replace(",", ""), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var hv) ? (int)hv : 0;
+                list.Add((long.Parse(app.Groups[1].Value), nm.Success ? WebUtility.HtmlDecode(nm.Groups[1].Value) : "", h));
+            }
+        }
+        lock (LibCache) LibCache[steamId] = (DateTime.UtcNow, list);
+        return list.Select(x => (x.Item1, x.Item2, x.Item3)).ToList();
+    }
+
     static IResult Page(string title, string message, bool ok)
     {
         var t = WebUtility.HtmlEncode(title); var m = WebUtility.HtmlEncode(message);
@@ -80,6 +116,57 @@ CREATE UNIQUE INDEX IF NOT EXISTS ux_verified_ext ON verified_tags(platform, ext
             Db.Exec("DELETE FROM verified_tags WHERE userId=@u AND platform=@p COLLATE NOCASE", ("@u", me), ("@p", platform));
             return Results.Json(new { ok = true });
         }));
+
+        // ---------- Steam library import: the games you own (only ones that exist in our catalog) with hours played ----------
+        api.MapGet("verify/steam/library", async (HttpContext c) =>
+        {
+            var me = CurrentUser(c); if (me == null) return Err("Not signed in.", 401);
+            var steamId = Db.Scalar("SELECT extId FROM verified_tags WHERE userId=@u AND platform='Steam'", ("@u", me)) as string;
+            if (steamId == null) return Err("Verify your Steam account first.", 409);
+            if (Limited($"lib:{me}", 8, TimeSpan.FromHours(1), true)) return Err("Try again in a little while.", 429);
+            List<(long App, string Name, int Hours)> owned;
+            try { owned = await FetchOwned(steamId); }
+            catch (InvalidOperationException) { return Results.Json(new { isPrivate = true, games = Array.Empty<object>(), unmatched = 0 }); }
+            catch { return Err("Couldn't reach Steam. Try again in a moment.", 502); }
+            var catalog = Db.Rows("SELECT name, steamAppId FROM games WHERE COALESCE(hidden,0)=0");
+            var byApp = catalog.Where(r => r["steamAppId"] != null).GroupBy(r => Convert.ToInt64(r["steamAppId"])).ToDictionary(g => g.Key, g => (string)g.First()["name"]!);
+            var byName = catalog.GroupBy(r => ((string)r["name"]!).ToLowerInvariant()).ToDictionary(g => g.Key, g => (string)g.First()["name"]!);
+            var favs = JsonSerializer.Deserialize<string[]>(Db.Scalar("SELECT games FROM users WHERE id=@i", ("@i", me)) as string ?? "[]") ?? Array.Empty<string>();
+            var list = new List<object>(); int matched = 0;
+            foreach (var g in owned.OrderByDescending(x => x.Hours))
+            {
+                var name = byApp.GetValueOrDefault(g.App) ?? byName.GetValueOrDefault(g.Name.ToLowerInvariant());
+                if (name == null) continue;
+                matched++;
+                list.Add(new { name, hours = g.Hours, inFavorites = favs.Contains(name, StringComparer.OrdinalIgnoreCase) });
+            }
+            return Results.Json(new { isPrivate = false, games = list.Take(60).ToList(), unmatched = owned.Count - matched, max = 12 });
+        });
+
+        api.MapPost("verify/steam/import", async (HttpContext c, ImportIn b) =>
+        {
+            var me = CurrentUser(c); if (me == null) return Err("Not signed in.", 401);
+            var steamId = Db.Scalar("SELECT extId FROM verified_tags WHERE userId=@u AND platform='Steam'", ("@u", me)) as string;
+            if (steamId == null) return Err("Verify your Steam account first.", 409);
+            if (Limited($"imp:{me}", 10, TimeSpan.FromHours(1), true)) return Err("Try again in a little while.", 429);
+            var want = (b.Games ?? Array.Empty<string>()).Select(GamesApi.Canonical).Where(x => x != null).Cast<string>().Distinct(StringComparer.OrdinalIgnoreCase).Take(12).ToList();
+            if (want.Count == 0) return Err("Pick at least one game.");
+            List<(long App, string Name, int Hours)> owned;
+            try { owned = await FetchOwned(steamId); } catch { return Err("Couldn't reach Steam. Try again in a moment.", 502); }   // hours come from Steam, never from the browser
+            var hours = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            foreach (var r in Db.Rows("SELECT name, steamAppId FROM games WHERE COALESCE(hidden,0)=0"))
+            {
+                var n = (string)r["name"]!;
+                var m = owned.FirstOrDefault(o => (r["steamAppId"] != null && o.App == Convert.ToInt64(r["steamAppId"])) || o.Name.Equals(n, StringComparison.OrdinalIgnoreCase));
+                if (m.Name != null) hours[n] = m.Hours;
+            }
+            var cur = (JsonSerializer.Deserialize<string[]>(Db.Scalar("SELECT games FROM users WHERE id=@i", ("@i", me)) as string ?? "[]") ?? Array.Empty<string>()).ToList();
+            foreach (var g in want) { if (!cur.Contains(g, StringComparer.OrdinalIgnoreCase)) { if (cur.Count >= 12) break; cur.Add(g); } }
+            Db.Exec("UPDATE users SET games=@g WHERE id=@i", ("@g", JsonSerializer.Serialize(cur)), ("@i", me));
+            foreach (var g in want.Where(g => cur.Contains(g, StringComparer.OrdinalIgnoreCase)))
+                Db.Exec("INSERT INTO user_games(userId,game,rank,role,hours) VALUES(@u,@g,'','',@h) ON CONFLICT(userId,game) DO UPDATE SET hours=@h", ("@u", me), ("@g", g), ("@h", hours.GetValueOrDefault(g)));
+            return Results.Json(new { favoriteGames = cur });
+        });
 
         // ---------- Steam ----------
         api.MapPost("verify/steam/start", (HttpContext c) => WithUser(c, me =>

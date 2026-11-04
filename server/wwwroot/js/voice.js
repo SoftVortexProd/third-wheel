@@ -1,0 +1,185 @@
+/* Group voice chat. Peer-to-peer WebRTC audio (everyone connects to everyone, up to 6 people); the server only introduces people and relays the setup messages
+   over the live connection (js/rt.js). Needs a secure page for the microphone (https, localhost, or the desktop app). */
+(() => {
+'use strict';
+const TW = window.TW;
+if (!TW || !window.TWRT) return;
+const { h, icon, api, toast, T, nm, avatar } = TW;
+const t = TW.t;
+
+TWPrefs.addStrings('sv', {
+  'Voice': 'Röst', 'Join voice': 'Gå med i röstchatt', 'Leave voice': 'Lämna röstchatt', 'In voice: {n}': 'I röstchatt: {n}', 'Voice chat': 'Röstchatt', 'Mute': 'Stäng av mikrofon', 'Unmute': 'Slå på mikrofon',
+  'Leave': 'Lämna', 'Connecting…': 'Ansluter…', 'Voice chat needs a secure connection (https) or the desktop app.': 'Röstchatt kräver en säker anslutning (https) eller skrivbordsappen.',
+  'Couldn’t use the microphone. Check that it is allowed.': 'Kunde inte använda mikrofonen. Kontrollera att den är tillåten.', 'You': 'Du', 'Muted': 'Avstängd',
+  'Live connection is down. Voice chat needs it.': 'Den levande anslutningen är nere. Röstchatt behöver den.', '{name} joined the voice chat': '{name} gick med i röstchatten', '{name} left the voice chat': '{name} lämnade röstchatten',
+  'Deafen': 'Stäng av ljud', 'Undeafen': 'Slå på ljud'
+});
+
+let ice = null, room = null;                      // room: { gid, name, stream, peers: Map(uid -> peer), muted, deaf, bar }
+const present = new Map();                         // gid -> [uid]   who is in each group's voice chat (from the server)
+const btns = new Set();                            // "Voice" buttons on screen
+
+async function iceServers() {
+  if (ice) return ice;
+  try { ice = (await api('GET', '/api/voice/ice')).iceServers; } catch { ice = [{ urls: ['stun:stun.l.google.com:19302'] }]; }
+  return ice;
+}
+
+/* ---------- UI ---------- */
+function paintOne(b) {
+  const gid = Number(b.dataset.gid), n = (present.get(gid) || []).length, inRoom = room && room.gid === gid;
+  b.classList.toggle('vc-live', n > 0);
+  b.replaceChildren(icon('mic', 16), inRoom ? t('Leave voice') : (n ? t('In voice: {n}', { n }) : t('Join voice')));
+  b.setAttribute('aria-pressed', String(!!inRoom));
+}
+function paintButtons() {
+  for (const b of [...btns]) {
+    if (b.isConnected) b.dataset.mounted = '1'; else if (b.dataset.mounted) { btns.delete(b); continue; }   // forget buttons whose page is gone
+    paintOne(b);
+  }
+}
+function button(g) {
+  const b = h('button', { class: 'btn small vc-btn', type: 'button', 'data-gid': g.id });
+  b.addEventListener('click', () => { if (room && room.gid === g.id) leave(); else join(g.id, T(g.name)); });
+  btns.add(b); paintOne(b);
+  api('GET', `/api/groups/${g.id}/voice`).then(r => { present.set(g.id, r.people.map(p => p.id)); paintButtons(); }).catch(() => {});
+  return b;
+}
+
+function drawBar() {
+  if (!room) return;
+  if (!room.bar) { room.bar = h('div', { class: 'vc-bar', role: 'region', 'aria-label': t('Voice chat') }); document.body.append(room.bar); }
+  const peers = [...room.peers.values()];
+  const me = TW.me;
+  const people = [{ uid: me.id, u: me, muted: room.muted, self: true }, ...peers.map(p => ({ uid: p.uid, u: p.person || { id: p.uid, username: p.name, displayName: p.name }, muted: p.muted, speaking: p.speaking, state: p.state }))];
+  const face = (x) => {
+    const el = h('div', { class: 'vc-face' + (x.muted ? ' muted' : '') + (x.self ? (room.speaking ? ' speaking' : '') : (x.speaking ? ' speaking' : '')), title: nm(x.u) + (x.muted ? ' · ' + t('Muted') : '') }, avatar(x.u, 'sm'));
+    if (x.muted) el.append(h('span', { class: 'vc-mute' }, icon('mic', 10)));
+    if (!x.self && x.state && x.state !== 'connected') el.classList.add('connecting');
+    return el;
+  };
+  const mute = h('button', { class: 'icon-btn vc-ctl' + (room.muted ? ' off' : ''), type: 'button', 'aria-label': room.muted ? t('Unmute') : t('Mute'), title: room.muted ? t('Unmute') : t('Mute'), onclick: () => setMuted(!room.muted) }, icon('mic', 18));
+  const deaf = h('button', { class: 'icon-btn vc-ctl' + (room.deaf ? ' off' : ''), type: 'button', 'aria-label': room.deaf ? t('Undeafen') : t('Deafen'), title: room.deaf ? t('Undeafen') : t('Deafen'), onclick: () => setDeaf(!room.deaf) }, icon('speaker', 18));
+  const leaveBtn = h('button', { class: 'btn small danger', type: 'button', onclick: leave }, t('Leave'));
+  room.bar.replaceChildren(h('a', { class: 'vc-name', href: '#/group/' + TW.enc(room.gid) }, h('b', { text: room.name }), h('span', { class: 'muted small', text: room.joined ? t('Voice chat') : t('Connecting…') })),
+    h('div', { class: 'vc-faces' }, ...people.map(face)), h('div', { class: 'vc-actions' }, mute, deaf, leaveBtn));
+}
+
+/* ---------- audio level (shows who is talking) ---------- */
+let actx = null;
+function meter(stream, onLevel) {
+  try {
+    actx = actx || new (window.AudioContext || window.webkitAudioContext)();
+    const src = actx.createMediaStreamSource(stream), an = actx.createAnalyser(); an.fftSize = 512; src.connect(an);
+    const buf = new Uint8Array(an.frequencyBinCount); let on = false, alive = true;
+    const loop = () => {
+      if (!alive) return;
+      an.getByteTimeDomainData(buf); let peak = 0; for (let i = 0; i < buf.length; i++) peak = Math.max(peak, Math.abs(buf[i] - 128));
+      const now = peak > 9; if (now !== on) { on = now; onLevel(now); }
+      setTimeout(loop, 160);
+    };
+    loop();
+    return () => { alive = false; try { src.disconnect(); } catch { /* ignore */ } };
+  } catch { return () => {}; }
+}
+
+/* ---------- peers ---------- */
+async function makePeer(uid, name, initiator) {
+  if (!room || room.peers.has(uid)) return room && room.peers.get(uid);
+  const pc = new RTCPeerConnection({ iceServers: await iceServers() });
+  const peer = { uid, name, pc, audio: null, muted: false, speaking: false, state: 'new', stopMeter: null, pending: [] };
+  room.peers.set(uid, peer);
+  api('GET', '/api/users/' + uid).then(p => { peer.person = p; peer.name = nm(p); drawBar(); }).catch(() => {});
+  room.stream.getTracks().forEach(tr => pc.addTrack(tr, room.stream));
+  pc.onicecandidate = (e) => { if (e.candidate) TWRT.send({ t: 'vc.signal', gid: room.gid, to: uid, data: { ice: e.candidate } }); };
+  pc.onconnectionstatechange = () => { peer.state = pc.connectionState; drawBar(); if (pc.connectionState === 'failed') { try { pc.restartIce(); } catch { /* ignore */ } } };
+  pc.ontrack = (e) => {
+    if (!peer.audio) { peer.audio = h('audio', { autoplay: true, playsinline: true }); peer.audio.style.display = 'none'; document.body.append(peer.audio); }
+    peer.audio.srcObject = e.streams[0]; peer.audio.muted = !!room.deaf;
+    peer.audio.play().catch(() => {});
+    if (!peer.stopMeter) peer.stopMeter = meter(e.streams[0], (on) => { peer.speaking = on; drawBar(); });
+  };
+  if (initiator) {
+    const offer = await pc.createOffer(); await pc.setLocalDescription(offer);
+    TWRT.send({ t: 'vc.signal', gid: room.gid, to: uid, data: { sdp: pc.localDescription } });
+  }
+  drawBar();
+  return peer;
+}
+function dropPeer(uid) {
+  const p = room && room.peers.get(uid); if (!p) return;
+  try { p.pc.close(); } catch { /* ignore */ }
+  if (p.stopMeter) p.stopMeter();
+  if (p.audio) p.audio.remove();
+  room.peers.delete(uid); drawBar();
+}
+
+async function onSignal(m) {
+  if (!room || m.gid !== room.gid) return;
+  const uid = m.from, d = m.data || {};
+  let peer = room.peers.get(uid) || await makePeer(uid, 'Someone', false);   // the other side called us first
+  if (!peer) return;
+  const pc = peer.pc;
+  try {
+    if (d.sdp) {
+      await pc.setRemoteDescription(d.sdp);
+      for (const c of peer.pending.splice(0)) await pc.addIceCandidate(c).catch(() => {});
+      if (d.sdp.type === 'offer') { const ans = await pc.createAnswer(); await pc.setLocalDescription(ans); TWRT.send({ t: 'vc.signal', gid: room.gid, to: uid, data: { sdp: pc.localDescription } }); }
+    } else if (d.ice) {
+      if (pc.remoteDescription) await pc.addIceCandidate(d.ice).catch(() => {}); else peer.pending.push(d.ice);
+    }
+  } catch (e) { console.warn('voice signal', e); }
+}
+
+/* ---------- join / leave ---------- */
+async function join(gid, name) {
+  if (room) { if (room.gid === gid) return; await leave(); }
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia || !window.RTCPeerConnection) { toast(t('Voice chat needs a secure connection (https) or the desktop app.'), 'error'); return; }
+  if (!TWRT.connected()) { toast(t('Live connection is down. Voice chat needs it.'), 'error'); return; }
+  let stream;
+  try { stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }, video: false }); }
+  catch { toast(t('Couldn’t use the microphone. Check that it is allowed.'), 'error'); return; }
+  room = { gid, name, stream, peers: new Map(), muted: false, deaf: false, joined: false, speaking: false, bar: null, stopMeter: null };
+  room.stopMeter = meter(stream, (on) => { if (room) { room.speaking = on && !room.muted; drawBar(); } });
+  drawBar(); paintButtons();
+  TWRT.send({ t: 'vc.join', gid });
+}
+async function leave() {
+  if (!room) return;
+  const r = room; room = null;
+  TWRT.send({ t: 'vc.leave', gid: r.gid });
+  for (const p of r.peers.values()) { try { p.pc.close(); } catch { /* ignore */ } if (p.stopMeter) p.stopMeter(); if (p.audio) p.audio.remove(); }
+  if (r.stopMeter) r.stopMeter();
+  r.stream.getTracks().forEach(x => x.stop());
+  if (r.bar) r.bar.remove();
+  paintButtons();
+}
+function setMuted(on) {
+  if (!room) return; room.muted = on;
+  room.stream.getAudioTracks().forEach(x => { x.enabled = !on; });
+  TWRT.send({ t: 'vc.state', gid: room.gid, muted: on }); drawBar();
+}
+function setDeaf(on) {
+  if (!room) return; room.deaf = on;
+  for (const p of room.peers.values()) if (p.audio) p.audio.muted = on;
+  drawBar();
+}
+
+/* ---------- messages from the server ---------- */
+TWRT.on('vc.joined', async (m) => {
+  if (!room || m.gid !== room.gid) return;
+  room.joined = true; drawBar();
+  for (const p of m.peers || []) await makePeer(p.uid, p.name, true);   // the newcomer calls everyone already there
+  setMuted(room.muted);
+});
+TWRT.on('vc.peer', (m) => { if (room && m.gid === room.gid) { toast(t('{name} joined the voice chat', { name: m.name })); } });   // they will call us: nothing to do until their offer arrives
+TWRT.on('vc.left', (m) => { if (room && m.gid === room.gid) { const p = room.peers.get(m.uid); if (p) toast(t('{name} left the voice chat', { name: p.name })); dropPeer(m.uid); } });
+TWRT.on('vc.signal', onSignal);
+TWRT.on('vc.state', (m) => { if (room && m.gid === room.gid) { const p = room.peers.get(m.uid); if (p) { p.muted = !!m.muted; drawBar(); } } });
+TWRT.on('vc.update', (m) => { present.set(m.gid, m.who || []); paintButtons(); });
+TWRT.on('vc.error', (m) => { toast(m.error || 'Voice chat error.', 'error'); if (room && room.gid === m.gid && !room.joined) leave(); });
+TWRT.on('rt.down', () => { if (room) { toast(t('Live connection is down. Voice chat needs it.'), 'error'); leave(); } });
+addEventListener('beforeunload', () => { if (room) TWRT.send({ t: 'vc.leave', gid: room.gid }); });
+
+window.TWVoice = { button, join, leave, active: () => (room ? room.gid : null) };
+})();

@@ -115,3 +115,18 @@ h3 { line-height: calc(20px * var(--ts, 1)); }
 .verify-row .btn { margin-left: auto; }
 .tag-chip.verified { border-color: var(--color-ok-line); }
 .tag-chip.verified svg { color: var(--color-ok-text); }
+
+/* profile layout editor + steam import */
+.layout-row { display: flex; align-items: center; gap: var(--space-3); padding: 8px 10px; border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-raised); cursor: grab; }
+.layout-row.off .layout-name { opacity: .5; text-decoration: line-through; }
+.layout-row.drag { opacity: .5; }
+.layout-grip { color: var(--color-text-3); letter-spacing: -2px; user-select: none; }
+.layout-name { flex: 1; min-width: 0; font-weight: 600; }
+.layout-row .icon-btn { width: 32px; height: 32px; }
+.layout-row .icon-btn:first-of-type svg { transform: rotate(180deg); }
+.steam-row { display: flex; align-items: center; gap: var(--space-3); width: 100%; padding: 8px 10px; border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-raised); color: var(--color-text); font: inherit; cursor: pointer; text-align: left; }
+.steam-row .steam-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.steam-row svg:last-child { opacity: 0; color: var(--color-accent); }
+.steam-row[aria-checked="true"] { border-color: var(--color-accent); }
+.steam-row[aria-checked="true"] svg:last-child { opacity: 1; }
+.steam-list { max-height: 50vh; overflow-y: auto; }

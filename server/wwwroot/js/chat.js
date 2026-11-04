@@ -343,6 +343,11 @@ function make(cfg) {
             h('img', { src: f.url, alt: T(f.name), loading: 'lazy', decoding: 'async' })));
         } else if (f.kind === 'audio') {
           body.append(h('div', { class: 'att-audio' }, ico('mic', 16), h('audio', { src: f.url, controls: true, preload: 'metadata', 'aria-label': TW.t('Voice message') })));
+        } else if (f.kind === 'video' && f.processing) {
+          // the server is converting it to WebM so it plays in every client; the chat refreshes the moment it is ready
+          body.append(h('div', { class: 'att-video att-video-wait' }, h('div', { class: 'att-video-fallback' }, ico('file', 22),
+            h('div', { class: 'fmeta' }, h('b', { text: T(f.name) }), h('span', { class: 'muted small', text: TW.t('This video is being converted so it plays everywhere. It will appear here in a moment.') })),
+            h('span', { class: 'spinner', role: 'status', 'aria-label': TW.t('Processing video…') }))));
         } else if (f.kind === 'video') {
           // plays right in the chat; the player has its own fullscreen button
           const vid = h('video', { src: f.url, controls: true, preload: 'metadata', playsinline: true, 'aria-label': T(f.name) });
@@ -757,8 +762,11 @@ function make(cfg) {
     if (input.value && now - lastTyping > 3000) { lastTyping = now; api('POST', base + '/typing').catch(() => {}); }
   });
 
+  let typingT = 0;
   function paintTyping(names) {
     const n = (names || []).map(T);
+    clearTimeout(typingT);
+    if (n.length) typingT = setTimeout(() => { if (typingEl.isConnected && !document.hidden) poll(); }, 3000);   // while someone types, look again soon so the dots disappear on time (polling is slow when the live connection is up)
     typingEl.textContent = !n.length ? '' : n.length === 1 ? `${n[0]} is typing…` : n.length === 2 ? `${n[0]} and ${n[1]} are typing…` : 'Several people are typing…';
   }
 

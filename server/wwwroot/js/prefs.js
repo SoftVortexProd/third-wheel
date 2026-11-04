@@ -38,7 +38,7 @@ function applyScale(s) {
   const n = Math.min(1.4, Math.max(.85, Number(s) || 1));
   if (Math.abs(n - 1) < .001) root.style.removeProperty('--ts'); else root.style.setProperty('--ts', String(n));
 }
-function applyAll() { applyAccent(prefs.accentColor); applyScale(prefs.fontScale); root.lang = prefs.language; }
+function applyAll() { applyAccent(prefs.accentColor); applyScale(prefs.fontScale); root.lang = prefs.language; root.classList.toggle("no-pfp-anim", !!prefs.disablePfpAnimation); }
 applyAll();
 
 /* ---------------- i18n: English text is the key; unknown keys fall back to English ---------------- */
@@ -178,6 +178,7 @@ function save(patch) {
   if (lang !== undefined) { prefs.language = LANGS.includes(lang) ? lang : prefs.language; }
   persist();
   if ('accentColor' in patch) applyAccent(prefs.accentColor);
+  if ('disablePfpAnimation' in patch) root.classList.toggle('no-pfp-anim', !!prefs.disablePfpAnimation);
   if ('fontScale' in patch) applyScale(prefs.fontScale);
   const body = { ...patch }; if (lang !== undefined) body.language = prefs.language;
   // One request at a time, in order, so a quick series of changes (e.g. holding an arrow key on the slider) can't land out of order.

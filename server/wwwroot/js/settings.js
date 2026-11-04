@@ -183,7 +183,7 @@ function profileTab(panel, ctx) {
   const extras = h('div', { class: 'stack', style: 'gap:16px' });
   if (window.TWProfile) TWProfile.settings(extras);
 
-  panel.append(pic, bannerCard, idCard, general, extras, gamerTagsCard());
+  panel.append(pic, framesCard(), bannerCard, idCard, general, extras, layoutCard(), gamerTagsCard());
 }
 
 /* gamer tags: platform -> handle, saved with the preferences */
@@ -215,6 +215,85 @@ function gamerTagsCard() {
     h('div', { class: 'row tag-form' }, field(t('Platform'), platform), fh), h('div', {}, add));
 }
 
+/* Avatar frames: animated rings around your picture. Exclusive to RCKT (everyone can look; only RCKT can wear one). */
+function framesCard() {
+  const grid = h('div', { class: 'frame-grid', role: 'radiogroup', 'aria-label': t('Avatar frame') });
+  const note = h('div');
+  let current = TW.me.frame || '';
+  const build = async () => {
+    let r; try { r = await api('GET', '/api/frames'); } catch { return; }
+    current = r.mine || '';
+    const mk = (id, name) => {
+      const sample = { ...TW.me, frame: id || null };
+      const b = h('button', { type: 'button', class: 'frame-tile', role: 'radio', 'aria-checked': String(current === id), 'aria-label': name, disabled: !r.rckt && !!id }, TW.avatar(sample, 'lg'), h('span', { text: name }));
+      b.addEventListener('click', () => busy(b, async () => {
+        await api('PUT', '/api/me/frame', { frame: id });
+        TW.me = await api('GET', '/api/me'); TW.renderUserPanel(); toast(t(id ? 'Frame applied' : 'Frame removed')); build();
+      }));
+      return b;
+    };
+    grid.replaceChildren(mk('', t('None')), ...r.frames.map(f => mk(f.id, t(f.name))));
+    note.replaceChildren(...(r.rckt ? [] : [h('div', { class: 'frame-lock' }, h('b', { text: 'RCKT ' }), t('Avatar frames are exclusive to RCKT. Ask an admin for RCKT to wear one.'))]));
+    grid.querySelectorAll('.frame-tile[disabled]').forEach(b => { b.style.opacity = '.75'; });
+  };
+  build();
+  return card(cardHead(t('Avatar frame'), t('Animated rings around your profile picture. Shown next to your name everywhere.')), note, grid);
+}
+
+/* Profile layout: the order of the sections on your profile, and which ones everybody else can see. */
+const SECTION_NAMES = { bio: 'About me', games: 'Favorite games', tags: 'Gamer tags', play: 'How you play', when: 'When you play', reputation: 'Good teammate badge' };
+function layoutCard() {
+  const list = h('div', { class: 'stack layout-list', style: 'gap:8px' });
+  let order = [], hidden = new Set(), saveT = 0, dragging = null;
+  const save = () => { clearTimeout(saveT); saveT = setTimeout(() => api('PUT', '/api/me/profile-layout', { order, hidden: [...hidden] }).catch(errToast), 400); };
+  const move = (id, d) => { const i = order.indexOf(id), j = i + d; if (i < 0 || j < 0 || j >= order.length) return; [order[i], order[j]] = [order[j], order[i]]; draw(true); save(); };
+  function draw(flip) {
+    const paint = () => list.replaceChildren(...order.map((id, i) => {
+      const row = h('div', { class: 'layout-row' + (hidden.has(id) ? ' off' : ''), draggable: 'true', 'data-key': 'l' + id, 'data-id': id },
+        h('span', { class: 'layout-grip', 'aria-hidden': 'true', text: '⋮⋮' }), h('b', { class: 'layout-name', text: t(SECTION_NAMES[id] || id) }),
+        h('button', { type: 'button', class: 'icon-btn', 'aria-label': t('Move up'), disabled: i === 0, onclick: () => move(id, -1) }, TW.icon('chev', 16)),
+        h('button', { type: 'button', class: 'icon-btn flip', 'aria-label': t('Move down'), disabled: i === order.length - 1, onclick: () => move(id, 1) }, TW.icon('chev', 16)),
+        TW.switchEl(!hidden.has(id), (on) => { if (on) hidden.delete(id); else hidden.add(id); row.classList.toggle('off', !on); save(); }, t('Show {name}', { name: t(SECTION_NAMES[id] || id) })));
+      row.addEventListener('dragstart', (e) => { dragging = id; row.classList.add('drag'); e.dataTransfer.effectAllowed = 'move'; try { e.dataTransfer.setData('text/plain', id); } catch { /* ignore */ } });
+      row.addEventListener('dragend', () => { dragging = null; row.classList.remove('drag'); });
+      row.addEventListener('dragover', (e) => { if (dragging && dragging !== id) e.preventDefault(); });
+      row.addEventListener('drop', (e) => { e.preventDefault(); if (!dragging || dragging === id) return; order.splice(order.indexOf(dragging), 1); order.splice(order.indexOf(id), 0, dragging); draw(true); save(); });
+      return row;
+    }));
+    flip && window.TWM ? TWM.flip(list, '.layout-row', paint) : paint();
+  }
+  api('GET', '/api/me/profile-layout').then(r => { order = r.order; hidden = new Set(r.hidden); draw(); }).catch(() => {});
+  return card(cardHead(t('Profile layout'), t('Drag sections (or use the arrows) to reorder them. Turn a section off to hide it from everyone else.')), list);
+}
+
+/* Steam: import the games you own (only ones we have in the catalog), with hours played. */
+function steamImport(box) {
+  const go = btn(t('Import my Steam games'), { cls: 'small', icon: 'plus' });
+  go.addEventListener('click', () => busy(go, async () => {
+    const r = await api('GET', '/api/verify/steam/library');
+    if (r.isPrivate) { toast(t('Your Steam game list is private. Set “Game details” to Public in Steam’s privacy settings, then try again.'), 'error'); return; }
+    if (!r.games.length) { toast(t('None of your Steam games are in our catalog yet.'), 'error'); return; }
+    const picked = new Set(r.games.filter(g => g.inFavorites).map(g => g.name));
+    let close = () => {};
+    const count = h('span', { class: 'muted small' });
+    const paint = () => { count.textContent = t('{n} of {m} selected', { n: picked.size, m: r.max }); };
+    const rows = r.games.map(g => {
+      const b = h('button', { type: 'button', class: 'steam-row', role: 'checkbox', 'aria-checked': String(picked.has(g.name)) }, TW.gameThumb(g.name), h('span', { class: 'steam-name', text: T(g.name) }), h('span', { class: 'muted small', text: g.hours + ' h' }), TW.icon('check', 16));
+      b.addEventListener('click', () => { if (picked.has(g.name)) picked.delete(g.name); else if (picked.size < r.max) picked.add(g.name); else { toast(t('You can have up to {m} favorite games.', { m: r.max }), 'error'); return; } b.setAttribute('aria-checked', String(picked.has(g.name))); paint(); });
+      return b;
+    });
+    const save = btn(t('Add to my games'), { cls: 'primary' });
+    save.addEventListener('click', () => busy(save, async () => {
+      await api('POST', '/api/verify/steam/import', { games: [...picked] });
+      TW.me = await api('GET', '/api/me'); toast(t('Games imported')); close();
+    }));
+    paint();
+    close = TW.openSheet(t('Import from Steam'), h('div', { class: 'stack', style: 'gap:10px' }, h('p', { class: 'muted small', text: t('Pick up to 12. Hours played come from Steam and show on your profile.') }), count,
+      h('div', { class: 'stack steam-list', style: 'gap:6px' }, rows), h('div', { class: 'sheet-actions' }, save)));
+  }));
+  box.append(h('div', { class: 'verify-row' }, h('b', { text: 'Steam' }), h('span', { class: 'muted small', text: t('Bring in the games you own, with hours played.') }), go));
+}
+
 /* Verified tags: sign in through Steam / Discord to prove the account is yours (a check mark on your profile). */
 function verifyBlock() {
   const box = h('div', { class: 'stack verify-box', style: 'gap:10px' });
@@ -241,6 +320,7 @@ function verifyBlock() {
     };
     box.replaceChildren(h('div', { class: 'section-title', text: t('Verified accounts') }), row('Steam', prov.steam), row('Discord', prov.discord),
       h('p', { class: 'muted small', text: t('You sign in on Steam’s or Discord’s own site. We never see your password, only your public name.') }));
+    if (have.has('Steam')) steamImport(box);
   }
   load();
   addEventListener('focus', () => { if (box.isConnected) load(); });   // coming back from the browser: show the new check mark

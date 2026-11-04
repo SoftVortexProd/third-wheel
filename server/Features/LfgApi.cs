@@ -1,4 +1,4 @@
-﻿using System.Net;
+using System.Net;
 using static Core;
 
 /// <summary>
@@ -53,7 +53,7 @@ CREATE INDEX IF NOT EXISTS ix_lfg_open ON lfg_posts(closed, expiresAt);");
 
     static object Lite(Dictionary<string, object?> u) => new
     {
-        id = (long)u["id"]!, username = (string)u["username"]!, displayName = u["display"] as string, avatar = AvatarUrl((long)u["id"]!, u["avatarVer"]), avatarColor = (string)u["color"]!
+        id = (long)u["id"]!, username = (string)u["username"]!, displayName = u["display"] as string, avatar = AvatarUrl((long)u["id"]!, u["avatarVer"]), avatarColor = (string)u["color"]!, frame = FrameOf(u)
     };
 
     static object PostObj(Dictionary<string, object?> p, Dictionary<string, object?> poster, long me, List<Dictionary<string, object?>> responders)
@@ -160,6 +160,9 @@ CREATE INDEX IF NOT EXISTS ix_lfg_open ON lfg_posts(closed, expiresAt);");
             {
                 Db.Exec("UPDATE lfg_posts SET closed=2 WHERE id=@i", ("@i", id));   // 2 = filled up
                 FillGroup(p);
+                // the group that formed goes into everyone's session history ("who I played with")
+                var team = Db.Rows("SELECT userId FROM lfg_responses WHERE postId=@p", ("@p", id)).Select(r => (long)r["userId"]!).ToList(); team.Add((long)p["userId"]!);
+                SessionsApi.Record("lfg", p["groupId"] as long? ?? 0, DateTime.UtcNow, DateTime.UtcNow, team, (string)p["game"]!);
             }
             Db.Exec("INSERT INTO notifications(userId,type,fromId,snippet,createdAt) VALUES(@to,'lfg',@f,@s,@t)", ("@to", p["userId"]), ("@f", me), ("@s", Enc((string)p["game"]!)), ("@t", Now()));
             PushApi.Notify((long)p["userId"]!, "Looking for group", $"{Who(me)} is in for your {p["game"]} post.", "/#/lfg", $"lfg:{id}");

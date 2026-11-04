@@ -106,7 +106,8 @@ TWPages.lfg = async (_, tok) => {
     if (s !== sig || true) { sig = s; draw(); }
   }
   await load();
-  TW.S.chatTimer = setInterval(() => { if (!document.hidden && !document.querySelector('.overlay')) load().catch(() => {}); }, 3000);
+  TW.S.chatTimer = (window.TWRT ? TWRT.every : setInterval)(() => { if (!document.hidden && !document.querySelector('.overlay')) load().catch(() => {}); }, 3000);
+  if (window.TWRT) (TW.S.rtOff = TW.S.rtOff || []).push(TWRT.pokes('lfg', () => { if (!document.querySelector('.overlay')) load().catch(() => {}); }));
 
   function openPost() {
     let close = () => {};

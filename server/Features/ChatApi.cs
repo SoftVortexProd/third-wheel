@@ -37,6 +37,7 @@ public static class ChatApi
         Db.Exec(@"CREATE TABLE IF NOT EXISTS reactions(kind TEXT NOT NULL, msgId INTEGER NOT NULL, userId INTEGER NOT NULL, emoji TEXT NOT NULL, PRIMARY KEY(kind,msgId,userId,emoji));
 CREATE TABLE IF NOT EXISTS files(id INTEGER PRIMARY KEY, ownerId INTEGER, name TEXT, mime TEXT, size INTEGER, kind TEXT, path TEXT, convKind TEXT, convKey TEXT, msgId INTEGER, createdAt TEXT, deletedAt TEXT);");
         Directory.CreateDirectory(UploadDir);
+        if (!Db.Rows("PRAGMA table_info(files)").Any(r => (string)r["name"]! == "conv")) Db.Exec("ALTER TABLE files ADD COLUMN conv TEXT");   // video conversion: null / pending / done / failed
         // Clean up reactions that no longer belong to a message (ids get reused after deletes, so a new message could inherit them),
         // and ones from people who aren't in that conversation.
         Db.Exec(@"DELETE FROM reactions WHERE kind='g' AND (msgId NOT IN (SELECT id FROM messages)
@@ -89,11 +90,11 @@ DELETE FROM reactions WHERE kind='d' AND (msgId NOT IN (SELECT id FROM dms)
 
         var replies = replyIds.Count == 0 ? new() : Db.Rows($"SELECT m.id, m.{c.Author} uid, m.text, m.deletedAt FROM {c.Table} m WHERE {c.Where} AND m.id IN ({Ids(replyIds)})", c.P)
             .ToDictionary(r => (long)r["id"]!);
-        var files = fileIds.Count == 0 ? new() : Db.Rows($"SELECT id,name,size,kind FROM files WHERE id IN ({Ids(fileIds)}) AND deletedAt IS NULL").ToDictionary(r => (long)r["id"]!);
+        var files = fileIds.Count == 0 ? new() : Db.Rows($"SELECT id,name,size,kind,conv FROM files WHERE id IN ({Ids(fileIds)}) AND deletedAt IS NULL").ToDictionary(r => (long)r["id"]!);
         var reacts = Db.Rows($"SELECT msgId, emoji, userId FROM reactions WHERE kind=@k AND msgId IN ({Ids(msgIds)})", ("@k", c.K));
 
         var uids = rows.Select(r => (long)r["uid"]!).Concat(replies.Values.Select(r => (long)r["uid"]!)).Concat(reacts.Select(r => (long)r["userId"]!)).ToList();
-        var users = Db.Rows($"SELECT id,username,display,avatarVer,color,rcktUntil FROM users WHERE id IN ({Ids(uids)})").ToDictionary(r => (long)r["id"]!);
+        var users = Db.Rows($"SELECT id,username,display,avatarVer,color,rcktUntil,frame FROM users WHERE id IN ({Ids(uids)})").ToDictionary(r => (long)r["id"]!);
         string NameOf(long id) => users.TryGetValue(id, out var u) ? ((u["display"] as string) ?? (string)u["username"]!) : "someone";
 
         foreach (var r in rows)
@@ -110,7 +111,7 @@ DELETE FROM reactions WHERE kind='d' AND (msgId NOT IN (SELECT id FROM dms)
             }
             object? file = null;
             if (!deleted && r["fileId"] != null && files.TryGetValue(Convert.ToInt64(r["fileId"]), out var f))
-                file = new { id = (long)f["id"]!, name = (string)f["name"]!, size = Convert.ToInt64(f["size"]), kind = (string)f["kind"]!, url = $"/api/files/{(long)f["id"]!}" };
+                file = new { id = (long)f["id"]!, name = (string)f["name"]!, size = Convert.ToInt64(f["size"]), kind = (string)f["kind"]!, url = $"/api/files/{(long)f["id"]!}", processing = (f["conv"] as string) == "pending" };
             var rx = deleted ? new List<object>() : Emoji.Select(e =>
             {
                 var who = reacts.Where(x => (long)x["msgId"]! == id && (string)x["emoji"]! == e).Select(x => (long)x["userId"]!).ToList();
@@ -119,7 +120,7 @@ DELETE FROM reactions WHERE kind='d' AND (msgId NOT IN (SELECT id FROM dms)
             result.Add(new
             {
                 id, userId = uid, username = (string?)u?["username"] ?? "deleted", displayName = u?["display"] as string,
-                avatar = u == null ? null : AvatarUrl(uid, u["avatarVer"]), avatarColor = (string?)u?["color"] ?? "#6b6b75", rckt = u != null && IsRckt(u["rcktUntil"]),
+                avatar = u == null ? null : AvatarUrl(uid, u["avatarVer"]), avatarColor = (string?)u?["color"] ?? "#6b6b75", frame = u == null ? null : FrameOf(u), rckt = u != null && IsRckt(u["rcktUntil"]),
                 text = deleted ? "" : (string)r["text"]!, createdAt = (string)r["createdAt"]!, editedAt = r["editedAt"] as string, updatedAt = (string)r["updatedAt"]!,
                 deleted, replyTo = reply, file, reactions = rx, pinned = !deleted && r["pinnedAt"] != null
             });
@@ -200,6 +201,7 @@ DELETE FROM reactions WHERE kind='d' AND (msgId NOT IN (SELECT id FROM dms)
                 if (b.FileId != null) Db.Exec("UPDATE files SET msgId=@m WHERE id=@f", ("@m", mid), ("@f", b.FileId));
                 if (Typing.TryGetValue(cv.K + ":" + cv.Key, out var ty)) ty.TryRemove(cv.Me, out _);
                 if (cv.G) Hooks.GroupMessage(cv.Id, mid, cv.Me, Enc(text)); else Hooks.DirectMessage(cv.Id, mid, cv.Me, Enc(text));
+                Realtime.Chat(cv.K, cv.Id, cv.Me);
                 return Results.Json(One(cv, mid));
             }));
 
@@ -231,6 +233,7 @@ DELETE FROM reactions WHERE kind='d' AND (msgId NOT IN (SELECT id FROM dms)
                         return Err("You can pin up to 20 messages. Unpin one first.", 409);
                     Db.Exec($"UPDATE {cv.Table} SET pinnedAt=@n, updatedAt=@n WHERE id=@i", ("@n", Now()), ("@i", mid));
                 }
+                Realtime.Chat(cv.K, cv.Id, cv.Me);
                 return Results.Json(One(cv, mid));
             }));
             api.MapDelete(root + "/messages/{mid:long}/pin", (HttpContext c, long id, long mid) => WithConv(c, k, id, cv =>
@@ -238,6 +241,7 @@ DELETE FROM reactions WHERE kind='d' AND (msgId NOT IN (SELECT id FROM dms)
                 if (cv.G && !CanModerateGroup(cv.Id, cv.Me)) return Err("Only group owners and moderators can unpin messages.", 403);
                 if (Fetch(cv, " AND m.id=@mid", ("@mid", mid)).Count == 0) return Err("Message not found.", 404);
                 Db.Exec($"UPDATE {cv.Table} SET pinnedAt=NULL, updatedAt=@n WHERE id=@i", ("@n", Now()), ("@i", mid));
+                Realtime.Chat(cv.K, cv.Id, cv.Me);
                 return Results.Json(One(cv, mid));
             }));
 
@@ -254,6 +258,7 @@ DELETE FROM reactions WHERE kind='d' AND (msgId NOT IN (SELECT id FROM dms)
                 if (Limited($"edit:{cv.Me}", 30, TimeSpan.FromMinutes(1), true)) return Err("Slow down a little.", 429);
                 var now = Now();
                 Db.Exec($"UPDATE {cv.Table} SET text=@t, editedAt=@n, updatedAt=@n WHERE id=@i", ("@t", Enc(text)), ("@n", now), ("@i", mid));
+                Realtime.Chat(cv.K, cv.Id, cv.Me);
                 return Results.Json(One(cv, mid));
             }));
 
@@ -264,7 +269,7 @@ DELETE FROM reactions WHERE kind='d' AND (msgId NOT IN (SELECT id FROM dms)
                 if (row == null) return Err("Message not found.", 404);
                 bool own = (long)row["uid"]! == cv.Me;
                 if (!own && !(cv.G && CanModerateGroup(cv.Id, cv.Me))) return Err("You can't delete that message.", 403);
-                if (row["deletedAt"] != null) return Results.Json(One(cv, mid));
+                if (row["deletedAt"] != null) return Results.Json(One(cv, mid)); /*no-op*/
                 var now = Now();
                 Db.Exec($"UPDATE {cv.Table} SET text='', deletedAt=@n, updatedAt=@n, fileId=NULL WHERE id=@i", ("@n", now), ("@i", mid));
                 if (row["fileId"] != null)
@@ -274,6 +279,7 @@ DELETE FROM reactions WHERE kind='d' AND (msgId NOT IN (SELECT id FROM dms)
                     try { if (f != null) File.Delete((string)f["path"]!); } catch { /* disk cleanup is best effort */ }
                 }
                 Db.Exec("DELETE FROM reactions WHERE kind=@k AND msgId=@m", ("@k", cv.K), ("@m", mid));
+                Realtime.Chat(cv.K, cv.Id, cv.Me);
                 return Results.Json(One(cv, mid));
             }));
 
@@ -289,6 +295,7 @@ DELETE FROM reactions WHERE kind='d' AND (msgId NOT IN (SELECT id FROM dms)
                 if (had) Db.Exec("DELETE FROM reactions WHERE kind=@k AND msgId=@m AND userId=@u AND emoji=@e", ("@k", cv.K), ("@m", mid), ("@u", cv.Me), ("@e", b.Emoji));
                 else Db.Exec("INSERT OR IGNORE INTO reactions(kind,msgId,userId,emoji) VALUES(@k,@m,@u,@e)", ("@k", cv.K), ("@m", mid), ("@u", cv.Me), ("@e", b.Emoji));
                 Db.Exec($"UPDATE {cv.Table} SET updatedAt=@n WHERE id=@i", ("@n", Now()), ("@i", mid));
+                Realtime.Chat(cv.K, cv.Id, cv.Me);
                 return Results.Json(One(cv, mid));
             }));
 
@@ -298,6 +305,7 @@ DELETE FROM reactions WHERE kind='d' AND (msgId NOT IN (SELECT id FROM dms)
                 if (Limited($"typing:{cv.Me}", 90, TimeSpan.FromMinutes(1), true)) return Results.Json(new { ok = true });
                 var u = Db.Row("SELECT username,display FROM users WHERE id=@i", ("@i", cv.Me))!;
                 Typing.GetOrAdd(cv.K + ":" + cv.Key, _ => new())[cv.Me] = (DateTime.UtcNow, (u["display"] as string) ?? (string)u["username"]!);
+                Realtime.Chat(cv.K, cv.Id, cv.Me);
                 return Results.Json(new { ok = true });
             }));
         }
@@ -374,6 +382,7 @@ DELETE FROM reactions WHERE kind='d' AND (msgId NOT IN (SELECT id FROM dms)
             string name;
             try { name = SafeName(Uri.UnescapeDataString(c.Request.Headers["X-Filename"].ToString())); } catch { name = "file"; }
             Directory.CreateDirectory(UploadDir);
+        if (!Db.Rows("PRAGMA table_info(files)").Any(r => (string)r["name"]! == "conv")) Db.Exec("ALTER TABLE files ADD COLUMN conv TEXT");   // video conversion: null / pending / done / failed
             var path = Path.Combine(UploadDir, Guid.NewGuid().ToString("N"));
             long size = 0; var head = new byte[16]; int headLen = 0;
             try
@@ -398,6 +407,7 @@ DELETE FROM reactions WHERE kind='d' AND (msgId NOT IN (SELECT id FROM dms)
             if (fkind == "gif" && !rckt) { File.Delete(path); return Err("GIFs need RCKT. Ask an admin for RCKT.", 403); }
             var fid = Db.Insert("INSERT INTO files(ownerId,name,mime,size,kind,path,convKind,convKey,createdAt) VALUES(@o,@n,@m,@s,@k,@p,@ck,@cy,@c)",
                 ("@o", uid.Value), ("@n", name), ("@m", mime), ("@s", size), ("@k", fkind), ("@p", path), ("@ck", cv.K), ("@cy", cv.Key), ("@c", Now()));
+            if (fkind == "video") VideoConvert.Enqueue(fid);   // converted to WebM in the background (needs ffmpeg on the server)
             return Results.Json(new { id = fid, name, size, kind = fkind, url = $"/api/files/{fid}" });
         });
 

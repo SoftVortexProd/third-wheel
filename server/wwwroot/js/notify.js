@@ -1,4 +1,4 @@
-﻿/* Notifications: unread badges, the bell's notification center, @mentions, page title count, and alerts (browser + desktop app).
+/* Notifications: unread badges, the bell's notification center, @mentions, page title count, and alerts (browser + desktop app).
    Loads after app.js and works through window.TW plus DOM observers, so app.js needs no changes. No innerHTML anywhere. */
 (() => {
 'use strict';
@@ -98,7 +98,9 @@ function announceAdded() {
   N.sum.added = [];
 }
 function refresh() { decorate(); if (center) renderCenter(false); }
-setInterval(tick, 3000);
+const everyN = (fn, ms) => window.TWRT ? TWRT.every(fn, ms) : setInterval(fn, ms);
+everyN(tick, 3000);
+if (window.TWRT) { TWRT.on("chat", () => { if (!document.hidden) tick(); }); TWRT.on("notify", () => tick()); TWRT.on("rt.up", () => tick()); }
 addEventListener('hashchange', () => { refresh(); setTimeout(tick, 150); });
 addEventListener('focus', () => { refresh(); tick(); });
 document.addEventListener('visibilitychange', () => { refresh(); if (!document.hidden) tick(); });
