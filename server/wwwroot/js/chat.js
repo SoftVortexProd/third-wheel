@@ -333,6 +333,11 @@ function make(cfg) {
         if (f.kind === 'image' || f.kind === 'gif') {
           body.append(h('button', { class: 'att-img', type: 'button', 'aria-label': 'Open picture ' + T(f.name), onclick: () => lightbox(f) },
             h('img', { src: f.url, alt: T(f.name), loading: 'lazy', decoding: 'async' })));
+        } else if (f.kind === 'video') {
+          // plays right in the chat; the player has its own fullscreen button
+          body.append(h('div', { class: 'att-video' },
+            h('video', { src: f.url, controls: true, preload: 'metadata', playsinline: true, 'aria-label': T(f.name) }),
+            h('a', { class: 'att-dl', href: f.url, download: T(f.name), rel: 'noopener', title: 'Download ' + T(f.name) + ' (' + fmtSize(f.size) + ')', 'aria-label': 'Download ' + T(f.name) }, ico('download', 16))));
         } else {
           body.append(h('a', { class: 'att-file', href: f.url, download: T(f.name), rel: 'noopener', 'aria-label': `Download ${T(f.name)} (${fmtSize(f.size)})` },
             ico('file', 22), h('span', { class: 'fmeta' }, h('b', { text: T(f.name) }), h('span', { text: fmtSize(f.size) })), ico('download', 18)));
@@ -388,9 +393,22 @@ function make(cfg) {
       }
       els.set(m.id, el);
     }
+    paintSeen();
     if (made.length && near) log.scrollTo({ top: log.scrollHeight, behavior: fromRect || initial ? 'instant' : 'smooth' });
     if (fromRect && made.length) TWM.flyFrom(made[made.length - 1], fromRect);
     return made;
+  }
+
+  /** DMs: a small "Seen" / "Sent" note under my newest message. */
+  let seenId = 0;
+  function paintSeen() {
+    if (k !== 'd') return;
+    log.querySelectorAll('.seen-note').forEach(x => x.remove());
+    let last = null;
+    for (const m of data.values()) if (m.userId === TW.me.id && !m.deleted && (!last || m.id > last.id)) last = m;
+    const el = last && els.get(last.id); if (!el) return;
+    const seen = seenId >= last.id;
+    el.querySelector('.body').append(h('div', { class: 'seen-note' + (seen ? ' seen' : ''), text: seen ? TW.t('Seen') : TW.t('Sent') }));
   }
 
   function jumpTo(id) {
@@ -576,6 +594,7 @@ function make(cfg) {
       if (r.messages && r.messages.length) upsert(r.messages);
       if (r.serverTime && r.serverTime > since) since = r.serverTime;
       paintTyping(r.typing);
+      if (k === 'd' && typeof r.seen === 'number' && r.seen !== seenId) { seenId = r.seen; paintSeen(); }
     } catch { /* retry on the next tick */ }
   }
 

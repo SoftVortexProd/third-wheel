@@ -159,6 +159,9 @@ public static class Core
     /// <summary>Removes a group and everything attached to it.</summary>
     public static void DeleteGroup(long id)
     {
+        // message ids are reused after deletes (no AUTOINCREMENT), so reactions/files must go with the messages or a new message would inherit them
+        Db.Exec("DELETE FROM reactions WHERE kind='g' AND msgId IN (SELECT id FROM messages WHERE groupId=@g)", ("@g", id));
+        Db.Exec("UPDATE files SET deletedAt=COALESCE(deletedAt,@n) WHERE convKind='g' AND msgId IN (SELECT id FROM messages WHERE groupId=@g)", ("@g", id), ("@n", Now()));
         Db.Exec("DELETE FROM messages WHERE groupId=@g", ("@g", id));
         Db.Exec("DELETE FROM invites WHERE groupId=@g", ("@g", id));
         Db.Exec("DELETE FROM members WHERE groupId=@g", ("@g", id));

@@ -32,9 +32,16 @@ public static class ChatApi
         }
         var ucols = Db.Rows("PRAGMA table_info(users)").Select(r => (string)r["name"]!).ToHashSet(StringComparer.OrdinalIgnoreCase);
         if (!ucols.Contains("rcktUntil")) Db.Exec("ALTER TABLE users ADD COLUMN rcktUntil TEXT");
+        if (!ucols.Contains("hideReceipts")) Db.Exec("ALTER TABLE users ADD COLUMN hideReceipts INTEGER DEFAULT 0");
         Db.Exec(@"CREATE TABLE IF NOT EXISTS reactions(kind TEXT NOT NULL, msgId INTEGER NOT NULL, userId INTEGER NOT NULL, emoji TEXT NOT NULL, PRIMARY KEY(kind,msgId,userId,emoji));
 CREATE TABLE IF NOT EXISTS files(id INTEGER PRIMARY KEY, ownerId INTEGER, name TEXT, mime TEXT, size INTEGER, kind TEXT, path TEXT, convKind TEXT, convKey TEXT, msgId INTEGER, createdAt TEXT, deletedAt TEXT);");
         Directory.CreateDirectory(UploadDir);
+        // Clean up reactions that no longer belong to a message (ids get reused after deletes, so a new message could inherit them),
+        // and ones from people who aren't in that conversation.
+        Db.Exec(@"DELETE FROM reactions WHERE kind='g' AND (msgId NOT IN (SELECT id FROM messages)
+                    OR NOT EXISTS (SELECT 1 FROM messages m JOIN members x ON x.groupId=m.groupId WHERE m.id=reactions.msgId AND x.userId=reactions.userId));
+DELETE FROM reactions WHERE kind='d' AND (msgId NOT IN (SELECT id FROM dms)
+                    OR NOT EXISTS (SELECT 1 FROM dms d WHERE d.id=reactions.msgId AND (d.a=reactions.userId OR d.b=reactions.userId)));");
     }
 
     // ---------------- conversations ----------------
@@ -64,6 +71,9 @@ CREATE TABLE IF NOT EXISTS files(id INTEGER PRIMARY KEY, ownerId INTEGER, name T
         var cv = new Conv(k, id, uid);
         return cv.Allowed || (cv.G && IsAdmin(uid)) ? f(cv) : Err(k == "g" ? "Join the group to chat." : "You can only message friends.", 403);
     });
+
+    static bool Receipts(long uid) => Convert.ToInt32(Db.Scalar("SELECT COALESCE(hideReceipts,0) FROM users WHERE id=@i", ("@i", uid)) ?? 0) == 0;
+    public record ReceiptsIn(bool On);
 
     static string Ids(IEnumerable<long> ids) => string.Join(",", ids.Distinct());   // ids come from our own DB (longs), never from the request text
 
@@ -159,7 +169,11 @@ CREATE TABLE IF NOT EXISTS files(id INTEGER PRIMARY KEY, ownerId INTEGER, name T
                 var fresh = Fetch(cv, " AND m.id>@after ORDER BY m.id ASC LIMIT 200", ("@after", after ?? 0));
                 var changed = string.IsNullOrEmpty(since) || since.Length > 40 ? new() :
                     Fetch(cv, " AND m.id<=@after AND m.updatedAt>@since ORDER BY m.updatedAt ASC LIMIT 100", ("@after", after ?? 0), ("@since", since));
-                return Results.Json(new { messages = Build(cv, fresh), changed = Build(cv, changed), typing = TypingNames(cv), serverTime = t0 });
+                // "Seen": the id of the newest message of mine the other person has read (DMs only; hidden when either of you turned read receipts off)
+                long seen = 0;
+                if (!cv.G && Receipts(cv.Me) && Receipts(cv.Id))
+                    seen = Convert.ToInt64(Db.Scalar("SELECT COALESCE(lastId,0) FROM reads WHERE userId=@p AND kind='dm' AND key=@me", ("@p", cv.Id), ("@me", cv.Me)) ?? 0L);
+                return Results.Json(new { messages = Build(cv, fresh), changed = Build(cv, changed), typing = TypingNames(cv), serverTime = t0, seen });
             }));
 
             api.MapPost(list, (HttpContext c, long id, ChatIn b) => WithConv(c, k, id, cv =>
@@ -249,6 +263,14 @@ CREATE TABLE IF NOT EXISTS files(id INTEGER PRIMARY KEY, ownerId INTEGER, name T
         }
 
         MapFiles(api);
+
+        // read receipts ("Seen"): on by default; turning it off hides yours and lets you see nobody else's
+        api.MapGet("me/receipts", (HttpContext c) => WithUser(c, me => Results.Json(new { on = Receipts(me) })));
+        api.MapPut("me/receipts", (HttpContext c, ReceiptsIn b) => WithUser(c, me =>
+        {
+            Db.Exec("UPDATE users SET hideReceipts=@h WHERE id=@i", ("@h", b.On ? 0 : 1), ("@i", me));
+            return Results.Json(new { on = b.On });
+        }));
         MapRckt(api);
     }
 

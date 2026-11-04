@@ -20,6 +20,9 @@ const ICONS = {
   check: 'M20 6L9 17l-5-5',
   chev: 'M6 9l6 6 6-6',
   menu: 'M4 6h16M4 12h16M4 18h16',
+  full: 'M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5',
+  fullexit: 'M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5',
+  eye: 'M1 12s4-7 11-7 11 7 11 7-4 7-11 7S1 12 1 12zM12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z',
   mic: 'M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3zM19 11a7 7 0 0 1-14 0M12 18v3',
   compass: 'M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20zM16 8l-2 6-6 2 2-6z',
   msg: 'M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z',
@@ -768,10 +771,16 @@ const NAV = () => [
 /* Phones: the bottom bar only has three buttons, so every tab is reachable from this menu in the top bar. */
 function openMenu() {
   let close = () => {};
-  const body = h('div', { class: 'stack', style: 'gap:6px' }, NAV().flatMap(([sec, links]) => [
-    h('div', { class: 'nav-label', text: tr(sec) }),
-    ...links.map(([href, ico, label]) => { const a = navLink(href, ico, tr(label)); a.addEventListener('click', () => close()); return a; })
-  ]));
+  const link = (href, ico, label) => { const a = navLink(href, ico, label, 'nav-link menu-link'); a.addEventListener('click', () => close()); return a; };
+  const groups = (S.mine || []).map(g => { const a = h('a', { class: 'nav-link menu-link', href: '#/group/' + enc(g.id) }, groupTile(g), h('span', { class: 't', text: T(g.name) })); a.addEventListener('click', () => close()); return a; });
+  const body = h('div', { class: 'stack menu-sheet', style: 'gap:4px' },
+    ...NAV().flatMap(([sec, links]) => [h('div', { class: 'nav-label', text: tr(sec) }), ...links.map(([href, ico, label]) => link(href, ico, tr(label)))]),
+    h('div', { class: 'nav-label', text: tr('My groups') }),
+    ...(groups.length ? groups : [h('p', { class: 'muted small', style: 'padding:4px 12px', text: tr('You haven’t joined any groups yet.') })]),
+    h('button', { class: 'nav-link menu-link', type: 'button', onclick: () => { openCreate(); close(); } }, icon('plus', 20), h('span', { class: 't', text: tr('Create a group') })),
+    h('div', { class: 'nav-label', text: tr('Account') }),
+    link('#/settings', 'gear', tr('Settings')),
+    ...(document.documentElement.requestFullscreen ? [h('button', { class: 'nav-link menu-link', type: 'button', onclick: () => { close(); toggleFullscreen(); } }, icon('full', 20), h('span', { class: 't', text: tr('Fullscreen') }))] : []));
   close = openSheet(tr('Menu'), body);
 }
 function buildShell() {
@@ -801,6 +810,7 @@ function buildShell() {
     h('div', { class: 'searchbox', role: 'search' }, h('span', { class: 'ico' }, icon('search', 18)), E.q),
     h('div', { class: 'actions' },
       S.me.isAdmin ? h('a', { class: 'icon-btn', href: '#/admin', 'aria-label': tr('Admin panel') }, icon('shield')) : null,
+      document.documentElement.requestFullscreen ? E.fs = h('button', { class: 'icon-btn', type: 'button', 'aria-label': tr('Fullscreen'), title: tr('Fullscreen') + ' (F11)', onclick: toggleFullscreen }, icon('full')) : null,
       h('a', { class: 'icon-btn', href: '#/friends', 'aria-label': tr('Friend requests and invites') }, icon('bell'), E.badge),
       h('a', { class: 'icon-btn', href: '#/settings', 'aria-label': tr('Settings') }, icon('gear'))));
 
@@ -810,14 +820,25 @@ function buildShell() {
   const bnItem = (href, ico, label) => h('a', { class: 'bn-item', href, 'data-route': href }, h('span', { class: 'bn-ico' }, icon(ico, 24)), label);
   const bottom = h('nav', { class: 'bottom-nav', 'aria-label': 'Main' },
     bnItem('#/feed', 'feed', tr('Feed')),
+    bnItem('#/messages', 'msg', tr('Messages')),
     h('a', { class: 'bn-search', href: '#/search', 'data-route': '#/search', 'aria-label': tr('Search') }, icon('search', 28)),
-    bnItem('#/friends', 'user', tr('Friends')));
+    bnItem('#/friends', 'user', tr('Friends')),
+    h('button', { class: 'bn-item', type: 'button', 'aria-label': tr('Menu'), onclick: openMenu }, h('span', { class: 'bn-ico' }, icon('menu', 24)), tr('More')));
 
   const shell = h('div', { class: 'shell enter' }, rail, h('div', { class: 'main' }, topbar, E.view), panel, bottom);
   $('#app').replaceChildren(shell);
   setTimeout(() => shell.classList.remove('enter'), 1200);
   renderUserPanel(); renderRail(); renderFriends(); renderBadge();
 }
+function toggleFullscreen() {
+  if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+  else document.documentElement.requestFullscreen().catch(() => toast(tr('Fullscreen isn’t available here. Try F11.'), 'error'));
+}
+document.addEventListener('fullscreenchange', () => {
+  const b = S.el && S.el.fs; if (!b) return;
+  const on = !!document.fullscreenElement;
+  b.replaceChildren(icon(on ? 'fullexit' : 'full')); b.setAttribute('aria-label', tr(on ? 'Exit fullscreen' : 'Fullscreen'));
+});
 function renderUserPanel() {
   const me = S.me; if (!me || !S.el.user) return;
   const av = avatar(me, 'sm', false);
@@ -1234,7 +1255,7 @@ async function adminView(_, tok) {
   if (!S.me.isAdmin) { show(h('div', { class: 'page' }, emptyState('Admins only', 'You don’t have access to this page.'))); return; }
   const body = h('div', { class: 'section' });
   let seq = 0;
-  const tb = tabs([['overview', 'Overview'], ['users', 'Users'], ['groups', 'Groups']], S.adminTab || 'overview', (k) => { S.adminTab = k; draw(); TWM.slide(body, 1); }, 'Admin sections');
+  const tb = tabs([['overview', 'Overview'], ['reports', 'Reports'], ['users', 'Users'], ['groups', 'Groups']], S.adminTab || 'overview', (k) => { S.adminTab = k; draw(); TWM.slide(body, 1); }, 'Admin sections');
   show(h('div', { class: 'page' }, h('div', { class: 'page-head' }, h('div', {}, h('h1', { text: 'Admin' }), h('p', { class: 'muted', text: 'Manage people, groups and the whole site.' }))), tb, body));
   draw();
 
@@ -1242,7 +1263,7 @@ async function adminView(_, tok) {
     const mine = ++seq, tab = S.adminTab || 'overview';
     tb.set(tab);
     body.replaceChildren(h('span', { class: 'spinner', role: 'status', 'aria-label': 'Loading' }));
-    const run = tab === 'users' ? usersTab : tab === 'groups' ? groupsTab : overviewTab;
+    const run = tab === 'users' ? usersTab : tab === 'groups' ? groupsTab : tab === 'reports' ? reportsTab : overviewTab;
     run(() => mine !== seq || stale(tok)).catch(e => { if (mine === seq) body.replaceChildren(emptyState('That didn’t load', e.message || 'Please try again.')); });
   }
 
@@ -1279,6 +1300,40 @@ async function adminView(_, tok) {
         st.recent.length ? h('div', { class: 'stack', style: 'gap:6px' }, st.recent.map(r => h('div', { class: 'arow small-row' },
           h('span', {}, h('b', { text: T(r.admin || 'admin') }), ' ' + r.action + ' ', h('span', { class: 'muted', text: T(r.target) })), h('span', { class: 'muted small', text: when(r.at) }))))
           : h('p', { class: 'muted', text: 'Nothing yet.' })));
+  }
+
+  /* Reports from users: pending first. Shows what was said (a snapshot, so it survives a delete), who reported it and where. */
+  async function reportsTab(dead) {
+    const REASON = { spam: 'Spam or scam', harassment: 'Harassment or bullying', hate: 'Hate speech', sexual: 'Sexual content', other: 'Something else' };
+    let rows = await api('GET', '/api/admin/reports'); if (dead()) return;
+    let showAll = false;
+    const list = h('div', { class: 'stack', style: 'gap:10px' });
+    const filter = h('button', { type: 'button', class: 'chip', 'aria-pressed': 'false', onclick: () => { showAll = !showAll; filter.setAttribute('aria-pressed', String(showAll)); paint(); } }, 'Show resolved');
+    const head = h('div', { class: 'row', style: 'align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap' }, h('div', { class: 'section-title', text: 'Reports' }), filter);
+    function card(r) {
+      const done = r.status !== 'pending';
+      const who = (name, id) => name ? h('button', { class: 'linklike', type: 'button', onclick: () => id && openProfile(id) }, '@' + T(name)) : h('span', { class: 'muted', text: 'deleted user' });
+      const resolve = btn('Resolve', { cls: 'small', icon: 'check' });
+      resolve.addEventListener('click', () => busy(resolve, async () => { await api('POST', '/api/admin/reports/' + enc(r.id) + '/resolve'); r.status = 'resolved'; paint(); }));
+      const where = r.groupName ? 'in ' + T(r.groupName) : r.messageKind === 'd' ? 'in a direct message' : '';
+      return h('article', { class: 'card report' + (done ? ' done' : ''), 'data-key': 'r' + r.id, style: 'padding:16px;display:flex;flex-direction:column;gap:10px' },
+        h('div', { class: 'row', style: 'gap:8px;flex-wrap:wrap;align-items:center' },
+          h('span', { class: 'chip ' + (done ? '' : 'accent'), text: done ? 'Resolved' : 'Pending' }), h('span', { class: 'chip', text: REASON[T(r.reason)] || T(r.reason) || 'Report' }),
+          h('span', { class: 'muted small', style: 'margin-left:auto', text: when(r.at) })),
+        h('div', { class: 'small' }, who(r.reporterName, r.reporterId), ' reported ', who(r.reportedName, r.reportedUserId), where ? ' ' + where : ''),
+        r.snippet ? h('blockquote', { class: 'quote-block', style: 'margin:0;padding:8px 12px;border-left:3px solid var(--color-border);color:var(--color-text-2);overflow-wrap:anywhere', text: T(r.snippet) }) : null,
+        r.details ? h('p', { class: 'muted small', style: 'overflow-wrap:anywhere', text: 'Note: ' + T(r.details) }) : null,
+        done ? null : h('div', { class: 'row', style: 'gap:8px;justify-content:flex-end;flex-wrap:wrap' },
+          r.reportedUserId ? btn('View profile', { cls: 'small ghost', onclick: () => openProfile(r.reportedUserId) }) : null, resolve));
+    }
+    function paint() {
+      const shown = rows.filter(r => showAll || r.status === 'pending');
+      const pending = rows.filter(r => r.status === 'pending').length;
+      head.firstChild.textContent = pending ? `Reports (${pending} pending)` : 'Reports';
+      list.replaceChildren(...(shown.length ? shown.map(card) : [emptyState(showAll ? 'No reports yet' : 'No pending reports', 'Reports from the message menu show up here.')]));
+    }
+    paint();
+    body.replaceChildren(head, list);
   }
 
   function searchTab(placeholder, load, dead) {

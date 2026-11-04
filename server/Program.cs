@@ -110,7 +110,8 @@ app.Use(async (ctx, next) =>
 });
 
 app.UseDefaultFiles();
-app.UseStaticFiles();
+// Always revalidate (ETag makes it a cheap 304) so an updated server never serves stale scripts/styles from the browser cache.
+app.UseStaticFiles(new StaticFileOptions { OnPrepareResponse = ctx => ctx.Context.Response.Headers["Cache-Control"] = "no-cache" });
 
 var api = app.MapGroup("/api");
 
@@ -464,6 +465,8 @@ api.MapDelete("admin/users/{id:long}", (HttpContext c, long id) => WithAdmin(c, 
     foreach (var gm in Db.Rows("SELECT groupId FROM members WHERE userId=@i", ps)) GroupsApi.RemoveMember((long)gm["groupId"]!, id);
     Db.Exec("DELETE FROM group_bans WHERE userId=@i", ps); Db.Exec("DELETE FROM group_mutes WHERE userId=@i", ps); Db.Exec("DELETE FROM join_requests WHERE userId=@i", ps);
     foreach (var sql in new[] {
+        "DELETE FROM reactions WHERE kind='g' AND msgId IN (SELECT id FROM messages WHERE userId=@i)",
+        "DELETE FROM reactions WHERE kind='d' AND msgId IN (SELECT id FROM dms WHERE a=@i OR b=@i)",
         "DELETE FROM sessions WHERE userId=@i", "DELETE FROM messages WHERE userId=@i", "DELETE FROM dms WHERE a=@i OR b=@i",
         "DELETE FROM friends WHERE a=@i OR b=@i", "DELETE FROM frequests WHERE fromId=@i OR toId=@i", "DELETE FROM invites WHERE fromId=@i OR toId=@i",
         "DELETE FROM members WHERE userId=@i", "DELETE FROM avatars WHERE userId=@i", "DELETE FROM reactions WHERE userId=@i", "DELETE FROM users WHERE id=@i" })

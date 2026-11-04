@@ -1,4 +1,4 @@
-"""Third Wheel desktop shell: starts the bundled C# server and shows the web UI."""
+﻿"""Third Wheel desktop shell: starts the bundled C# server and shows the web UI."""
 import atexit
 import ctypes
 import json
@@ -13,7 +13,7 @@ import zipfile
 from pathlib import Path
 
 from PySide6.QtCore import QObject, QSettings, QTimer, QUrl, Qt, Signal, QThread
-from PySide6.QtGui import QColor, QDesktopServices, QIcon, QPalette
+from PySide6.QtGui import QColor, QDesktopServices, QIcon, QPalette, QKeySequence, QShortcut
 import re
 
 from PySide6.QtWebEngineCore import QWebEnginePage, QWebEngineProfile, QWebEngineScript, QWebEngineSettings
@@ -30,7 +30,7 @@ except ImportError:  # pragma: no cover
 ROUTE_RE = re.compile(r"^#/(dm|group)/\d{1,12}$")
 
 # ---- update check: compares this version with the latest GitHub release (bump APP_VERSION when you publish a release) ----
-APP_VERSION = os.environ.get("TW_APP_VERSION", "0.6.0")
+APP_VERSION = os.environ.get("TW_APP_VERSION", "0.6.1")
 UPDATE_REPO = "SoftVortexProd/third-wheel"
 
 
@@ -79,7 +79,7 @@ class UpdateInstaller(QThread):
 
     def run(self):
         try:
-            self.progress.emit(5, "Connecting…")
+            self.progress.emit(5, "Connectingâ€¦")
             tmp_dir = Path(tempfile.gettempdir()) / "ThirdWheel_update"
             if tmp_dir.exists():
                 shutil.rmtree(tmp_dir, ignore_errors=True)
@@ -104,9 +104,9 @@ class UpdateInstaller(QThread):
                             mb_total = total_size / (1024 * 1024)
                             self.progress.emit(pct, f"{mb_done:.1f} / {mb_total:.1f} MB")
                         else:
-                            self.progress.emit(50, "Downloading…")
+                            self.progress.emit(50, "Downloadingâ€¦")
 
-            self.progress.emit(88, "Extracting files…")
+            self.progress.emit(88, "Extracting filesâ€¦")
             extract_dir = tmp_dir / "extracted"
             with zipfile.ZipFile(zip_path, "r") as zf:
                 zf.extractall(extract_dir)
@@ -420,7 +420,7 @@ class Main(QMainWindow):
         col.addWidget(self.update_bar)
         col.addWidget(self.stack, 1)
         self.setCentralWidget(holder)
-        self.splash = QLabel("Third Wheel\n\nStarting…")
+        self.splash = QLabel("Third Wheel\n\nStartingâ€¦")
         self.splash.setAlignment(Qt.AlignCenter)
         self.splash.setStyleSheet(f"background:{BG};color:{MUTED};font:600 18px 'Segoe UI';")
         self.stack.addWidget(self.splash)
@@ -451,6 +451,10 @@ class Main(QMainWindow):
         s = self.page.settings()
         s.setAttribute(QWebEngineSettings.WebAttribute.JavascriptCanOpenWindows, False)
         s.setAttribute(QWebEngineSettings.WebAttribute.LocalStorageEnabled, True)
+        s.setAttribute(QWebEngineSettings.WebAttribute.FullScreenSupportEnabled, True)
+        # Fullscreen: the page's own button (and videos) ask for it; F11 / Esc work from the keyboard too.
+        self.page.fullScreenRequested.connect(self.on_fullscreen)
+        QShortcut(QKeySequence("F11"), self, activated=self.toggle_fullscreen)
         if getattr(sys, "frozen", False):
             self.view.setContextMenuPolicy(Qt.NoContextMenu)
         self.stack.addWidget(self.view)
@@ -497,7 +501,7 @@ class Main(QMainWindow):
 
     def start_server(self):
         if REMOTE_URL:  # hosted server: nothing to launch locally
-            self.splash.setText("Third Wheel\n\nConnecting…")
+            self.splash.setText("Third Wheel\n\nConnectingâ€¦")
             return
         if server_up():
             return
@@ -522,7 +526,7 @@ class Main(QMainWindow):
             self.splash.setText(f"Third Wheel\n\nServer exited (code {self.proc.returncode}).")
         elif REMOTE_URL:
             # keep retrying: the hosted server may be restarting or the network briefly down
-            self.splash.setText(f"Third Wheel\n\nCan't reach {REMOTE_URL}\nRetrying…")
+            self.splash.setText(f"Third Wheel\n\nCan't reach {REMOTE_URL}\nRetryingâ€¦")
         elif self.tries > 100:
             self.timer.stop()
             self.splash.setText("Third Wheel\n\nServer did not respond.")
@@ -562,6 +566,20 @@ class Main(QMainWindow):
         self.tray_route = None
         self.tray.showMessage(note.title()[:80], note.message()[:220], self.windowIcon(), 8000)
         QApplication.alert(self, 0)
+
+    def toggle_fullscreen(self):
+        if self.isFullScreen():
+            self.showNormal()
+            if getattr(self, "_was_max", False):
+                self.showMaximized()
+        else:
+            self._was_max = self.isMaximized()
+            self.showFullScreen()
+
+    def on_fullscreen(self, request):
+        request.accept()
+        if request.toggleOn() != self.isFullScreen():
+            self.toggle_fullscreen()
 
     def on_permission(self, perm):
         if perm.permissionType() == QWebEnginePermission.PermissionType.Notifications and same_origin(perm.origin()):
@@ -606,7 +624,7 @@ class Main(QMainWindow):
             return
 
         self.btn_update.setEnabled(False)
-        self.btn_update.setText("Connecting…")
+        self.btn_update.setText("Connectingâ€¦")
         self.btn_skip.hide()
         self.btn_later.hide()
 
@@ -617,12 +635,12 @@ class Main(QMainWindow):
         self.update_installer.start()
 
     def _on_update_progress(self, pct: int, msg: str):
-        self.update_label.setText(f"Updating to {self.update_version}… {msg}")
+        self.update_label.setText(f"Updating to {self.update_version}â€¦ {msg}")
         self.btn_update.setText(f"{pct}%")
 
     def _on_update_ready(self, src_dir: str):
-        self.update_label.setText("Update ready! Restarting Third Wheel…")
-        self.btn_update.setText("Restarting…")
+        self.update_label.setText("Update ready! Restarting Third Wheelâ€¦")
+        self.btn_update.setText("Restartingâ€¦")
         QTimer.singleShot(500, lambda: apply_update_and_restart(src_dir))
 
     def _on_update_failed(self, err: str):

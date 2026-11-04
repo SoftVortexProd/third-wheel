@@ -267,7 +267,10 @@ function appearanceTab(panel) {
   panel.append(
     card(cardHead(t('Accent colour'), t('Used for buttons, highlights and links across the app.')), grid, custom),
     card(cardHead(t('Text size'), t('Make text larger or smaller everywhere in the app.')), size.el, h('div', {}, reset), sample),
-    card(cardHead(t('Motion')), field(t('Animations'), motion, t('Use “Always on” if your system turns animations off.')), detect));
+    card(cardHead(t('Motion')), field(t('Animations'), motion, t('Use “Always on” if your system turns animations off.')),
+      switchRow(t('Static profile pictures'), t('Show animated profile pictures as a still image. Helps on slower computers and phones.'), !!P.get().disablePfpAnimation,
+        (v) => P.save({ disablePfpAnimation: v }).then(() => { toast(t('Saved')); setTimeout(() => location.reload(), 500); }).catch(errToast)),
+      detect));
 }
 
 /* ---- Content & safety ---- */
@@ -279,6 +282,12 @@ function safetyTab(panel) {
     switchRow(t('Hide 18+ / NSFW content'), minor ? t('Always on for accounts under 18.') : t('Blur or hide mature content in chats and profiles.'), minor ? true : prefs.nsfwFilter !== false,
       (v) => P.save({ nsfwFilter: v }).catch(errToast), minor),
     switchRow(t('Chat safety filter'), t('Mask profanity in messages you receive.'), prefs.profanityFilter !== false, (v) => P.save({ profanityFilter: v }).catch(errToast)));
+
+  // Read receipts: shared both ways, so turning it off also hides other people's "Seen" from you.
+  const receiptRow = h('div');
+  api('GET', '/api/me/receipts').then(r => receiptRow.replaceChildren(switchRow(t('Read receipts'), t('Let friends see when you’ve read their message. If you turn this off, you won’t see their “Seen” either.'), r.on,
+    (v) => api('PUT', '/api/me/receipts', { on: v }).catch(errToast)))).catch(() => {});
+  filters.append(receiptRow);
 
   const list = h('div', { class: 'stack', style: 'gap:8px' });
   const draw = (rows) => {

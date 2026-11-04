@@ -4,7 +4,7 @@
 'use strict';
 const TW = window.TW;
 if (!TW) return;
-const { h, icon, api, toast, T, nm, avatar, openSheet, confirmSheet, btn, busy, field, selectEl, emptyState, openProfile, personRow, stagger } = TW;
+const { h, icon, api, enc, toast, T, nm, avatar, openSheet, confirmSheet, btn, busy, field, selectEl, emptyState, openProfile, personRow, stagger } = TW;
 
 const base = (g) => `/api/groups/${encodeURIComponent(g.id)}`;
 const roleLabel = { owner: 'Owner', mod: 'Mod' };

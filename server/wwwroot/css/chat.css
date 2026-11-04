@@ -137,3 +137,12 @@
 
 /* Embedded video player */
 .att-video { max-width: 100%; max-height: 380px; border-radius: var(--radius-md); background: #000; display: block; margin-top: 6px; box-shadow: var(--shadow-1); }
+/* video attachments + read receipts */
+.att-video { position: relative; display: block; margin-top: 6px; max-width: min(420px, 100%); border: 1px solid var(--color-border); border-radius: var(--radius-md); background: #000; overflow: hidden; }
+.att-video video { display: block; width: 100%; max-height: 340px; background: #000; }
+.att-video .att-dl { position: absolute; top: 8px; right: 8px; width: 30px; height: 30px; display: grid; place-items: center; border-radius: 8px; background: rgba(0,0,0,.55); color: #fff; opacity: 0; transition: opacity .2s; }
+.att-video:hover .att-dl, .att-video:focus-within .att-dl { opacity: 1; }
+@media (hover: none) { .att-video .att-dl { opacity: 1; } }
+.seen-note { margin-top: 2px; font-size: var(--fs-xs); color: var(--color-text-2); }
+.seen-note.seen { color: var(--color-accent); }
+.msg.own .seen-note { text-align: right; }

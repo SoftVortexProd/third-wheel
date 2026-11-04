@@ -27,3 +27,5 @@
 .mg-pal { background: none; border: 0; padding: 0; border-radius: 50%; line-height: 0; transition: transform .35s var(--spring, ease); }
 .mg-pal:hover { transform: translateY(-3px) scale(1.08); }
 @media (max-width: 899px) { .mg-grid { grid-template-columns: 1fr; } }
+
+.nav-badge { min-width: 18px; height: 18px; padding: 0 5px; border-radius: 999px; background: var(--color-danger); color: #fff; font-size: 11px; line-height: 18px; font-weight: 700; text-align: center; flex: none; }

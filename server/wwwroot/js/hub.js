@@ -1,4 +1,4 @@
-﻿/* Sidebar pages: Messages, Discover, My games. Loaded after app.js; uses window.TW and registers routes in TWPages. */
+/* Sidebar pages: Messages, Discover, My games. Loaded after app.js; uses window.TW and registers routes in TWPages. */
 (() => {
 'use strict';
 const TW = window.TW, TWPages = window.TWPages;
@@ -13,6 +13,10 @@ TWPrefs.addStrings('sv', {
   'Discover': 'Upptäck', 'Groups and players picked for you.': 'Grupper och spelare utvalda för dig.', 'Trending now': 'Populärt just nu',
   'Busy groups you aren’t in yet.': 'Aktiva grupper du inte är med i än.', '{n} messages this week': '{n} meddelanden den här veckan',
   'Nothing to discover yet': 'Inget att upptäcka än', 'Add a few games and join a group, and we’ll start suggesting people and groups.': 'Lägg till några spel och gå med i en grupp så börjar vi föreslå människor och grupper.',
+  'Fullscreen': 'Helskärm', 'Exit fullscreen': 'Avsluta helskärm', 'Fullscreen isn’t available here. Try F11.': 'Helskärm är inte tillgängligt här. Testa F11.', 'Seen': 'Sedd', 'Sent': 'Skickat',
+  'Static profile pictures': 'Stillbilder som profilbild', 'Show animated profile pictures as a still image. Helps on slower computers and phones.': 'Visa animerade profilbilder som stillbild. Hjälper på långsammare datorer och telefoner.',
+  'Read receipts': 'Läskvitton', 'Let friends see when you’ve read their message. If you turn this off, you won’t see their “Seen” either.': 'Låt vänner se när du har läst deras meddelande. Stänger du av det ser du inte heller deras “Sedd”.',
+  'More': 'Mer', 'Account': 'Konto', 'You haven’t joined any groups yet.': 'Du har inte gått med i några grupper än.', 'Reports': 'Rapporter',
   'My games': 'Mina spel', 'The games you play, your ranks, your groups and the friends who play with you.': 'Spelen du spelar, dina rank, dina grupper och vännerna som spelar med dig.',
   'Add a game': 'Lägg till ett spel', 'Remove {game}': 'Ta bort {game}', 'Edit ranks': 'Redigera rank', 'No groups for this game yet': 'Inga grupper för det här spelet än',
   'Find groups': 'Hitta grupper', 'Your groups': 'Dina grupper', 'Friends who play this': 'Vänner som spelar det här', 'No friends play this yet': 'Inga vänner spelar det här än',
@@ -81,14 +85,17 @@ TWPages.messages = async (_, tok) => {
   let last = -1;
   async function refresh() {
     if (!TW.me || document.hidden) return;
-    const link = document.querySelector('.nav-main a[href="#/messages"]'); if (!link) return;
+    const targets = [...document.querySelectorAll('.nav-main a[href="#/messages"], .bn-item[href="#/messages"] .bn-ico')]; if (!targets.length) return;
     let s; try { s = await api('GET', '/api/notifications/summary'); } catch { return; }
     const n = Object.values(s.dm || {}).reduce((a, x) => a + (x.n || 0), 0);
-    let b = link.querySelector('.nav-badge');
-    if (!n) { if (b) b.remove(); last = 0; return; }
-    if (!b) { b = h('span', { class: 'nav-badge' }); link.append(b); }
-    b.textContent = n > 9 ? '9+' : String(n);
-    if (n !== last) { b.classList.remove('pop'); void b.offsetWidth; b.classList.add('pop'); last = n; }
+    for (const link of targets) {
+      let b = link.querySelector('.nav-badge');
+      if (!n) { if (b) b.remove(); continue; }
+      if (!b) { b = h('span', { class: 'nav-badge' }); link.append(b); }
+      b.textContent = n > 9 ? '9+' : String(n);
+      if (n !== last) { b.classList.remove('pop'); void b.offsetWidth; b.classList.add('pop'); }
+    }
+    last = n;
   }
   setInterval(refresh, 4000); document.addEventListener('visibilitychange', refresh); setTimeout(refresh, 1500);
 })();
