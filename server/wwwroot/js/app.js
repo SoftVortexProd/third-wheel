@@ -1089,7 +1089,7 @@ async function groupView(id, tok) {
     post: (text) => api('POST', `/api/groups/${enc(g.id)}/messages`, { text })
   });
   chat.fill(first, 'Say hi 👋', 'Be the first to message the group.');
-  page.replaceChildren(head, chat.log, chat.composer);
+  page.replaceChildren(head, ...(chat.tools ? [chat.tools] : []), chat.log, chat.composer);
   showPage();
   chat.log.scrollTo({ top: chat.log.scrollHeight, behavior: 'instant' });
   chat.done();
@@ -1232,7 +1232,7 @@ async function dmView(id, tok) {
     post: (text) => api('POST', `/api/dms/${enc(p.id)}`, { text })
   });
   chat.fill(first, 'Say hi 👋', 'This is the start of your chat with ' + nm(p) + '.');
-  const page = h('div', { class: 'chat-page' }, head, chat.log, chat.composer);
+  const page = h('div', { class: 'chat-page' }, head, ...(chat.tools ? [chat.tools] : []), chat.log, chat.composer);
   show(page);
   chat.log.scrollTo({ top: chat.log.scrollHeight, behavior: 'instant' });
   chat.done();

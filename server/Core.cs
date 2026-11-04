@@ -49,6 +49,12 @@ public static class Core
         var uid = CurrentUser(c);
         return uid is null ? Err("Not signed in.", 401) : f(uid.Value);
     }
+    /// <summary>A person's display name (or username) as plain text, for notifications.</summary>
+    public static string Who(long uid)
+    {
+        var r = Db.Row("SELECT display, username FROM users WHERE id=@i", ("@i", uid));
+        return r == null ? "Someone" : WebUtility.HtmlDecode((r["display"] as string) is { Length: > 0 } d ? d : (string)r["username"]!);
+    }
     public static bool IsAdmin(long uid) => Convert.ToInt32(Db.Scalar("SELECT isAdmin FROM users WHERE id=@i", ("@i", uid))) == 1;
     public static IResult WithAdmin(HttpContext c, Func<long, IResult> f) => WithUser(c, uid => IsAdmin(uid) ? f(uid) : Err("Admins only.", 403));
     public static void Audit(long admin, string action, string target) =>

@@ -127,7 +127,7 @@ CREATE TABLE IF NOT EXISTS activity(userId INTEGER, hour INTEGER, n INTEGER DEFA
         var gamerTags = prefRow != null ? (JsonSerializer.Deserialize<Dictionary<string, string>>(prefRow["gamerTags"] as string ?? "{}") ?? new()) : new();
         return new
         {
-            bio = x.Bio, playMode = x.Mode, tags = x.Tags, languages = x.Langs, games, gamerTags,
+            bio = x.Bio, playMode = x.Mode, tags = x.Tags, languages = x.Langs, games, gamerTags, verified = VerifyApi.For(id),
             availability = new { tz = x.Tz, weekdays = x.Wd, weekends = x.We, set = x.HasAvail },
             online = new { blocks = OnlineBlocks(act) }
         };

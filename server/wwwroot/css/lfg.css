@@ -29,3 +29,6 @@
 .lfg-faces button:first-child { margin-left: 0; }
 .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-3); }
 .sheet-actions { display: flex; justify-content: flex-end; gap: var(--space-3); }
+.lfg-added { color: var(--color-accent); }
+.att-video-fallback { display: flex; align-items: center; gap: var(--space-3); flex-wrap: wrap; padding: var(--space-4); background: var(--color-raised); }
+.att-video-fallback .fmeta { flex: 1; min-width: 140px; display: flex; flex-direction: column; }

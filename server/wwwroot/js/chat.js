@@ -25,7 +25,12 @@ const PATHS = {
   send: 'M22 2L11 13M22 2l-7 20-4-9-9-4z',
   heart: 'M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z',
   globe: 'M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20zM2 12h20M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z',
-  flag: 'M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1zM4 22v-7'
+  flag: 'M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1zM4 22v-7',
+  play: 'M6 4l14 8-14 8z',
+  mic: 'M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3zM19 11a7 7 0 0 1-14 0M12 18v3',
+  search: 'M11 4a7 7 0 1 0 0 14 7 7 0 0 0 0-14zM21 21l-4.3-4.3',
+  pin: 'M12 17v5M9 3h6l-1 7 4 3v2H6v-2l4-3z',
+  stop: 'M6 6h12v12H6z'
 };
 function ico(name, size = 18) {
   const s = document.createElementNS(SVGNS, 'svg');
@@ -54,9 +59,9 @@ const PROFANITIES = [
   'dick', 'dicks', 'dickhead', 'cock', 'cocks', 'pussy', 'pussies',
   'whore', 'whores', 'slut', 'sluts', 'nigger', 'niggers', 'nigga', 'niggas',
   'faggot', 'faggots', 'retard', 'retarded',
-  'fan', 'jÃ¤vlar', 'jÃ¤vla', 'jÃ¤vel', 'helvete', 'helvetes',
+  'fan', 'jävlar', 'jävla', 'jävel', 'helvete', 'helvetes',
   'fitta', 'fittor', 'fittig', 'kuk', 'kukar', 'skit', 'skitig',
-  'hora', 'horor', 'bÃ¶g', 'bÃ¶gar', 'mongo'
+  'hora', 'horor', 'bög', 'bögar', 'mongo'
 ];
 const PROFANITY_REGEX = new RegExp('\\b(' + PROFANITIES.join('|') + ')\\b', 'gi');
 function maskProfanity(str) {
@@ -284,8 +289,10 @@ function make(cfg) {
   const fileInput = h('input', { type: 'file', class: 'sr-only', tabindex: '-1', 'aria-label': 'Choose a file to share' });
   const attach = h('button', { class: 'icon-btn attach', type: 'button', 'aria-label': 'Attach a file', title: 'Attach a file' }, ico('clip', 20));
   const gifBtn = h('button', { class: 'icon-btn gif-btn', type: 'button', 'aria-label': 'Send a GIF', title: 'GIFs', 'aria-haspopup': 'dialog', 'aria-expanded': 'false' }, h('span', { class: 'gif-glyph', 'aria-hidden': 'true', text: 'GIF' }));
-  const form = h('form', { class: 'composer' }, attach, gifBtn, input, send);
-  const wrap = h('div', { class: 'composer-wrap' }, typingEl, replyBar, chip, form, fileInput);
+  const micBtn = h('button', { class: 'icon-btn mic-btn', type: 'button', 'aria-label': TW.t('Record a voice message'), title: TW.t('Record a voice message') }, ico('mic', 20));
+  const form = h('form', { class: 'composer' }, attach, gifBtn, micBtn, input, send);
+  const recBar = h('div', { class: 'rec-bar', hidden: true, role: 'group', 'aria-label': TW.t('Recording a voice message') });
+  const wrap = h('div', { class: 'composer-wrap' }, typingEl, replyBar, chip, recBar, form, fileInput);
 
   const els = new Map(), data = new Map();
   let lastId = 0, since = '', initial = true, replying = null, pending = null, editingId = null, lastTyping = 0;
@@ -303,7 +310,8 @@ function make(cfg) {
     author.addEventListener('click', (e) => { e.stopPropagation(); TW.openProfile(m.userId); });
     const head = h('div', { class: 'head' }, author, m.rckt ? rcktBadge() : null,
       h('time', { text: isNaN(when) ? '' : when.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }), datetime: isNaN(when) ? null : when.toISOString() }),
-      m.editedAt ? h('span', { class: 'edited', text: '(edited)', title: 'Edited ' + new Date(m.editedAt).toLocaleString() }) : null);
+      m.editedAt ? h('span', { class: 'edited', text: '(edited)', title: 'Edited ' + new Date(m.editedAt).toLocaleString() }) : null,
+      m.pinned ? h('span', { class: 'pin-flag', title: TW.t('Pinned') }, ico('pin', 12), TW.t('Pinned')) : null);
     const body = h('div', { class: 'body' }, head);
     if (m.replyTo) {
       const r = m.replyTo;
@@ -333,11 +341,21 @@ function make(cfg) {
         if (f.kind === 'image' || f.kind === 'gif') {
           body.append(h('button', { class: 'att-img', type: 'button', 'aria-label': 'Open picture ' + T(f.name), onclick: () => lightbox(f) },
             h('img', { src: f.url, alt: T(f.name), loading: 'lazy', decoding: 'async' })));
+        } else if (f.kind === 'audio') {
+          body.append(h('div', { class: 'att-audio' }, ico('mic', 16), h('audio', { src: f.url, controls: true, preload: 'metadata', 'aria-label': TW.t('Voice message') })));
         } else if (f.kind === 'video') {
           // plays right in the chat; the player has its own fullscreen button
-          body.append(h('div', { class: 'att-video' },
-            h('video', { src: f.url, controls: true, preload: 'metadata', playsinline: true, 'aria-label': T(f.name) }),
-            h('a', { class: 'att-dl', href: f.url, download: T(f.name), rel: 'noopener', title: 'Download ' + T(f.name) + ' (' + fmtSize(f.size) + ')', 'aria-label': 'Download ' + T(f.name) }, ico('download', 16))));
+          const vid = h('video', { src: f.url, controls: true, preload: 'metadata', playsinline: true, 'aria-label': T(f.name) });
+          const box = h('div', { class: 'att-video' }, vid,
+            h('a', { class: 'att-dl', href: f.url, download: T(f.name), rel: 'noopener', title: 'Download ' + T(f.name) + ' (' + fmtSize(f.size) + ')', 'aria-label': 'Download ' + T(f.name) }, ico('download', 16)));
+          // The desktop app's built-in player can't decode H.264 (most phone / screen-recorder mp4 files). Offer to open it in the system browser instead.
+          vid.addEventListener('error', () => {
+            const open = h('a', { class: 'btn small', target: '_blank', rel: 'noopener', hidden: true }, ico('play', 16), TW.t('Open in browser'));
+            api('GET', f.url + '/link').then(r => { open.href = r.url; open.hidden = false; }).catch(() => {});
+            box.replaceChildren(h('div', { class: 'att-video-fallback' }, ico('file', 22), h('div', { class: 'fmeta' }, h('b', { text: T(f.name) }), h('span', { class: 'muted small', text: TW.t('This video can’t play inside the app.') + ' · ' + fmtSize(f.size) })),
+              open, h('a', { class: 'btn small ghost', href: f.url, download: T(f.name), rel: 'noopener' }, ico('download', 16), TW.t('Download'))));
+          }, { once: true });
+          body.append(box);
         } else {
           body.append(h('a', { class: 'att-file', href: f.url, download: T(f.name), rel: 'noopener', 'aria-label': `Download ${T(f.name)} (${fmtSize(f.size)})` },
             ico('file', 22), h('span', { class: 'fmeta' }, h('b', { text: T(f.name) }), h('span', { text: fmtSize(f.size) })), ico('download', 18)));
@@ -359,6 +377,7 @@ function make(cfg) {
       const acts = h('div', { class: 'actions', role: 'toolbar', 'aria-label': 'Message actions' });
       const reactBtn = iconBtn('smile', 'Add a reaction', () => pickEmoji(reactBtn, (e) => react(m, e)));
       acts.append(reactBtn, iconBtn('reply', 'Reply', () => setReply(m)));
+      if (canPin()) acts.append(iconBtn('pin', m.pinned ? TW.t('Unpin message') : TW.t('Pin message'), () => togglePin(m)));
       const isGif = !!gifOf(m.text);
       if (!own && m.text && !isGif) { const trBtn = iconBtn('globe', trState.get(m.id)?.shown ? 'Show original' : 'Translate this message', () => translate(m, trBtn)); acts.append(trBtn); }
       if (own && !isGif) acts.append(iconBtn('edit', 'Edit message', () => startEdit(m)));
@@ -383,7 +402,8 @@ function make(cfg) {
       if (m.updatedAt && m.updatedAt > since) since = m.updatedAt;
       const old = els.get(m.id);
       if (old && editingId === m.id) { data.set(m.id, m); continue; }   // don't yank the text out from under someone who is editing it
-      data.set(m.id, m);
+      data.set(m.id, m); trackPin(m);
+      if (!oldestId || m.id < oldestId) oldestId = m.id;
       const el = render(m);
       if (old) { el.style.animation = 'none'; old.replaceWith(el); }
       else {
@@ -416,6 +436,88 @@ function make(cfg) {
     if (!t) { toast('That message is further up than what is loaded.'); return; }
     t.scrollIntoView({ block: 'center', behavior: reduce() ? 'auto' : 'smooth' });
     t.classList.add('flash'); setTimeout(() => t.classList.remove('flash'), 1500);
+  }
+
+  /* ----- older history, search and pins (a slim toolbar pinned to the top of the log) ----- */
+  let oldestId = 0, hasOlder = false, loadingOlder = false;
+  const pins = new Map();   // id -> message (pinned ones, including old ones that aren't loaded)
+  const canPin = () => k === 'd' || (typeof cfg.canModerate === 'function' && cfg.canModerate()) || !!TW.me.isAdmin;
+  const pinCount = h('span', { class: 'tool-count', hidden: true });
+  const searchBtn = h('button', { class: 'chat-tool', type: 'button', 'aria-label': TW.t('Search messages'), title: TW.t('Search messages'), onclick: () => openSearch() }, ico('search', 16), h('span', { text: TW.t('Search') }));
+  const pinsBtn = h('button', { class: 'chat-tool', type: 'button', 'aria-label': TW.t('Pinned messages'), title: TW.t('Pinned messages'), onclick: () => openPins() }, ico('pin', 16), h('span', { text: TW.t('Pinned') }), pinCount);
+  const olderBtn = h('button', { class: 'chat-tool older', type: 'button', hidden: true, onclick: () => loadOlder() }, TW.t('Load earlier messages'));
+  const tools = h('div', { class: 'chat-tools' }, searchBtn, pinsBtn, olderBtn);
+  const paintPins = () => { pinCount.hidden = !pins.size; pinCount.textContent = String(pins.size); };
+  function trackPin(m) { if (m.pinned) pins.set(m.id, m); else pins.delete(m.id); paintPins(); }
+  api('GET', base + '/pins').then(list => { list.forEach(m => pins.set(m.id, m)); paintPins(); }).catch(() => {});
+
+  async function loadOlder() {
+    if (loadingOlder || !oldestId) return false;
+    loadingOlder = true; olderBtn.disabled = true;
+    try {
+      const list = await api('GET', listUrl + TW.qs({ before: oldestId }));
+      hasOlder = list.length >= 50; olderBtn.hidden = !hasOlder;
+      if (!list.length) return false;
+      const anchor = els.get(oldestId), before = log.scrollHeight - log.scrollTop;
+      for (const m of list) {
+        if (els.has(m.id)) continue;
+        data.set(m.id, m); const el = render(m); el.style.animation = 'none';
+        if (anchor) anchor.before(el); else log.append(el);
+        els.set(m.id, el); trackPin(m);
+        if (!oldestId || m.id < oldestId) oldestId = m.id;
+      }
+      log.scrollTop = log.scrollHeight - before;   // keep what you were reading where it was
+      return true;
+    } catch (e) { toast(e.message, 'error'); return false; }
+    finally { loadingOlder = false; olderBtn.disabled = false; }
+  }
+  /** Scroll to a message, loading earlier history first when it isn't on screen yet. */
+  async function goTo(id) {
+    for (let i = 0; i < 20 && !els.has(id) && oldestId && id < oldestId; i++) if (!(await loadOlder())) break;
+    jumpTo(id);
+  }
+
+  function messageLine(m, onPick) {
+    const when = new Date(m.createdAt);
+    const txt = gifOf(m.text) ? 'GIF' : (T(m.text) || (m.file ? (m.file.kind === 'audio' ? TW.t('Voice message') : T(m.file.name)) : ''));
+    return h('button', { class: 'found', type: 'button', onclick: () => onPick(m) },
+      h('div', { class: 'found-top' }, h('b', { text: nm(m) }), h('time', { class: 'muted small', text: isNaN(when) ? '' : when.toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }) })),
+      h('p', { class: 'found-txt', text: shouldMask() ? maskProfanity(txt) : txt }));
+  }
+  function openSearch() {
+    const q = h('input', { class: 'input', type: 'search', placeholder: TW.t('Search this conversation'), 'aria-label': TW.t('Search this conversation'), autocomplete: 'off', maxlength: 60 });
+    const out = h('div', { class: 'stack', style: 'gap:6px' }, h('p', { class: 'muted small', text: TW.t('Type at least 2 letters.') }));
+    let close = () => {}, timer = 0, n = 0;
+    q.addEventListener('input', () => {
+      clearTimeout(timer);
+      const term = q.value.trim();
+      if (term.length < 2) { out.replaceChildren(h('p', { class: 'muted small', text: TW.t('Type at least 2 letters.') })); return; }
+      timer = setTimeout(async () => {
+        const my = ++n;
+        try {
+          const r = await api('GET', base + '/search' + TW.qs({ q: term }));
+          if (my !== n) return;
+          out.replaceChildren(...(r.length ? r.map(m => messageLine(m, (x) => { close(); goTo(x.id); })) : [h('p', { class: 'muted small', text: TW.t('No messages found.') })]));
+        } catch (e) { if (my === n) out.replaceChildren(h('p', { class: 'muted small', text: e.message })); }
+      }, 300);
+    });
+    close = openSheet(TW.t('Search messages'), h('div', { class: 'stack', style: 'gap:12px' }, q, out));
+    q.focus();
+  }
+  function openPins() {
+    let close = () => {};
+    const list = [...pins.values()].sort((a, b) => (b.pinnedAt || '').localeCompare(a.pinnedAt || '') || b.id - a.id);
+    const body = h('div', { class: 'stack', style: 'gap:6px' }, ...(list.length ? list.map(m => {
+      const row = messageLine(m, (x) => { close(); goTo(x.id); });
+      return row;
+    }) : [h('p', { class: 'muted', text: TW.t('Nothing is pinned yet.') + (canPin() ? ' ' + TW.t('Use the pin button on a message.') : '') })]));
+    close = openSheet(TW.t('Pinned messages'), body);
+  }
+  async function togglePin(m) {
+    try {
+      const r = await api(m.pinned ? 'DELETE' : 'POST', msgUrl(m.id) + '/pin');
+      upsert([r]); toast(TW.t(r.pinned ? 'Message pinned' : 'Message unpinned'));
+    } catch (e) { toast(e.message, 'error'); }
   }
 
   /* ----- actions ----- */
@@ -469,6 +571,81 @@ function make(cfg) {
     } catch (ex) { toast(ex.message, 'error'); return false; }
   }
   gifBtn.addEventListener('click', () => openGifPicker({ anchor: gifBtn, onPick: sendGif }));
+
+  /* ----- voice messages: record in the browser (opus), upload as a "voice-…" file, send as a normal message ----- */
+  let recording = false;
+  async function startRecording() {
+    if (recording) return;
+    if (!navigator.mediaDevices || !window.MediaRecorder) { toast(TW.t('Voice messages need a secure connection (https) or the desktop app.'), 'error'); return; }
+    let stream;
+    try { stream = await navigator.mediaDevices.getUserMedia({ audio: true }); }
+    catch { toast(TW.t('Couldn’t use the microphone. Check that it is allowed.'), 'error'); return; }
+    const mime = ['audio/webm;codecs=opus', 'audio/webm', 'audio/ogg;codecs=opus', 'audio/mp4'].find(x => MediaRecorder.isTypeSupported(x)) || '';
+    const mr = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
+    const chunks = []; const t0 = Date.now(); let cancelled = false, tick = 0;
+    recording = true;
+    mr.ondataavailable = (e) => { if (e.data && e.data.size) chunks.push(e.data); };
+    mr.onstop = async () => {
+      clearInterval(tick); stream.getTracks().forEach(x => x.stop());
+      recBar.hidden = true; form.hidden = false; recording = false;
+      if (cancelled) return;
+      const type = (mr.mimeType || mime || 'audio/webm').split(';')[0];
+      const blob = new Blob(chunks, { type });
+      if (Date.now() - t0 < 800 || blob.size < 500) { toast(TW.t('That was too short.'), 'error'); return; }
+      await sendVoice(blob, type);
+    };
+    const time = h('span', { class: 'rec-time', text: '0:00' });
+    const cancel = h('button', { class: 'icon-btn', type: 'button', 'aria-label': TW.t('Cancel'), onclick: () => { cancelled = true; mr.stop(); } }, ico('trash', 18));
+    const done = h('button', { class: 'btn', type: 'button', 'aria-label': TW.t('Send voice message'), onclick: () => mr.stop() }, ico('send', 18));
+    recBar.replaceChildren(h('span', { class: 'rec-dot', 'aria-hidden': 'true' }), h('span', { class: 'rec-label', text: TW.t('Recording…') }), time, cancel, done);
+    form.hidden = true; recBar.hidden = false;
+    mr.start();
+    tick = setInterval(() => {
+      const s = Math.floor((Date.now() - t0) / 1000);
+      time.textContent = Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0');
+      if (s >= 180) mr.stop();   // 3 minutes max
+    }, 250);
+  }
+  async function sendVoice(blob, type) {
+    const ext = /ogg/.test(type) ? 'ogg' : /mp4/.test(type) ? 'm4a' : 'webm';
+    const name = `voice-${Date.now()}.${ext}`;
+    const limit = ((TW.me.rckt ? 250 : 20) * MB); if (blob.size > limit) { toast(TW.t('That recording is too large.'), 'error'); return; }
+    try {
+      const up = await fetch(`/api/uploads?kind=${k}&id=${encodeURIComponent(cid)}`, { method: 'POST', headers: { 'X-TW': '1', 'X-Filename': encodeURIComponent(name), 'Content-Type': type || 'application/octet-stream' }, body: blob });
+      const r = await up.json().catch(() => ({}));
+      if (!up.ok || !r.id) throw new Error(r.error || 'Upload failed.');
+      const m = await api('POST', listUrl, { text: '', fileId: r.id, replyTo: replying ? replying.id : undefined });
+      clearReply(); upsert([m], true);
+    } catch (ex) { toast(ex.message, 'error'); }
+  }
+  micBtn.addEventListener('click', startRecording);
+
+  /* ----- touch: swipe a message to the right to reply ----- */
+  (() => {
+    let el = null, sx = 0, sy = 0, dx = 0, live = false, hit = false;
+    log.addEventListener('touchstart', (e) => {
+      const t = e.touches[0]; el = e.target.closest && e.target.closest('.msg:not(.deleted)');
+      if (!el || e.touches.length > 1 || e.target.closest('audio, video, input, a, button')) { el = null; return; }
+      sx = t.clientX; sy = t.clientY; dx = 0; live = false; hit = false;
+    }, { passive: true });
+    log.addEventListener('touchmove', (e) => {
+      if (!el) return;
+      const t = e.touches[0], mx = t.clientX - sx, my = t.clientY - sy;
+      if (!live) { if (Math.abs(my) > 12 && Math.abs(my) > Math.abs(mx)) { el = null; return; } if (mx > 10 && mx > Math.abs(my) * 1.5) live = true; else return; }
+      dx = Math.max(0, Math.min(mx, 90));
+      el.style.transition = 'none'; el.style.transform = `translateX(${dx}px)`;
+      const past = dx > 60; if (past && !hit && navigator.vibrate) { try { navigator.vibrate(12); } catch { /* ignore */ } }
+      hit = past; el.classList.toggle('swipe-ready', past);
+    }, { passive: true });
+    const end = () => {
+      if (!el) return;
+      const m = data.get(Number(el.dataset.mid));
+      el.style.transition = 'transform .25s var(--ease, ease)'; el.style.transform = ''; el.classList.remove('swipe-ready');
+      if (live && hit && m) setReply(m);
+      el = null; live = false;
+    };
+    log.addEventListener('touchend', end); log.addEventListener('touchcancel', end);
+  })();
 
   /* ----- translate (replaces the text in place; click again to go back to the original) ----- */
   function redraw(id) {
@@ -599,10 +776,11 @@ function make(cfg) {
   }
 
   return {
-    log, composer: wrap, form, input, poll,
+    log, tools, composer: wrap, form, input, poll,
     fill(first, emptyTitle, emptyText) {
       if (!first.length) log.append(h('div', { class: 'empty', 'data-empty': '' }, h('b', { text: emptyTitle }), h('p', { text: emptyText })));
       upsert(first, true);
+      hasOlder = first.length >= 100; olderBtn.hidden = !hasOlder;   // the first load is the newest 100: there may be more above
     },
     done() { setTimeout(() => { initial = false; }, 0); }
   };

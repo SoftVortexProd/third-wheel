@@ -26,6 +26,25 @@ CREATE INDEX IF NOT EXISTS ix_lfg_open ON lfg_posts(closed, expiresAt);");
         Db.Exec("DELETE FROM lfg_posts WHERE expiresAt<@o", ("@o", old));
     }
 
+    /// <summary>When a post that names a group fills up, everyone who joined (and the poster, if somehow not in it) is added to that group so they can start playing.</summary>
+    static void FillGroup(Dictionary<string, object?> p)
+    {
+        if (p["groupId"] is not long gid || gid <= 0) return;
+        var poster = (long)p["userId"]!;
+        if (!IsMember(gid, poster)) return;   // the poster left the group since posting: nothing to add people to
+        foreach (var r in Db.Rows("SELECT userId FROM lfg_responses WHERE postId=@p ORDER BY at", ("@p", p["id"])))
+        {
+            var uid = (long)r["userId"]!;
+            if (IsBlocked(poster, uid)) continue;
+            if (GroupsApi.TryAddMember(gid, uid))
+            {
+                PushApi.Notify(uid, "You're in!", $"You were added to {WebUtility.HtmlDecode(Convert.ToString(Db.Scalar("SELECT name FROM grps WHERE id=@g", ("@g", gid))) ?? "the group")} so you can start playing.", $"/#/group/{gid}", $"lfgadd:{gid}");
+                Db.Exec("INSERT INTO notifications(userId,type,fromId,groupId,snippet,createdAt) VALUES(@u,'lfg_added',@f,@g,@s,@t)",
+                    ("@u", uid), ("@f", poster), ("@g", gid), ("@s", Enc((string)p["game"]!)), ("@t", Now()));
+            }
+        }
+    }
+
     static bool Open(Dictionary<string, object?> p) => Convert.ToInt32(p["closed"]) == 0 && string.CompareOrdinal((string)p["expiresAt"]!, Now()) > 0;
 
     /// <summary>Can `me` see (and answer) a post by this poster? Age separation, blocks and suspensions apply.</summary>
@@ -53,6 +72,7 @@ CREATE INDEX IF NOT EXISTS ix_lfg_open ON lfg_posts(closed, expiresAt);");
             slots, filled = responders.Count, note = (string)(p["note"] ?? ""), mic = Convert.ToInt32(p["mic"]) == 1, group,
             createdAt = (string)p["createdAt"]!, expiresAt = (string)p["expiresAt"]!, open = Open(p), mine,
             responded = responders.Any(r => (long)r["id"]! == me),
+            inGroup = group != null && p["groupId"] is long gj && IsMember(gj, me),
             responders = responders.Take(mine ? 9 : 3).Select(Lite).ToList()
         };
     }
@@ -136,8 +156,13 @@ CREATE INDEX IF NOT EXISTS ix_lfg_open ON lfg_posts(closed, expiresAt);");
             var filled = Convert.ToInt32(Db.Scalar("SELECT COUNT(*) FROM lfg_responses WHERE postId=@p", ("@p", id)));
             if (filled >= Convert.ToInt32(p["slots"])) return Err("This group is already full.", 409);
             Db.Exec("INSERT INTO lfg_responses(postId,userId,at) VALUES(@p,@u,@t)", ("@p", id), ("@u", me), ("@t", Now()));
-            if (filled + 1 >= Convert.ToInt32(p["slots"])) Db.Exec("UPDATE lfg_posts SET closed=2 WHERE id=@i", ("@i", id));   // 2 = filled up
+            if (filled + 1 >= Convert.ToInt32(p["slots"]))
+            {
+                Db.Exec("UPDATE lfg_posts SET closed=2 WHERE id=@i", ("@i", id));   // 2 = filled up
+                FillGroup(p);
+            }
             Db.Exec("INSERT INTO notifications(userId,type,fromId,snippet,createdAt) VALUES(@to,'lfg',@f,@s,@t)", ("@to", p["userId"]), ("@f", me), ("@s", Enc((string)p["game"]!)), ("@t", Now()));
+            PushApi.Notify((long)p["userId"]!, "Looking for group", $"{Who(me)} is in for your {p["game"]} post.", "/#/lfg", $"lfg:{id}");
             return Results.Json(new { ok = true });
         }));
 

@@ -18,7 +18,11 @@ TWPrefs.addStrings('sv', {
   'Nobody is looking for a group': 'Ingen söker lag', 'Be the first: post what you want to play and when.': 'Bli först: skriv vad du vill spela och när.',
   'Nothing matches those filters.': 'Inget matchar de filtren.', 'Delete this post?': 'Radera det här inlägget?', 'People who joined will no longer see it.': 'De som gått med kommer inte längre att se det.',
   'Close this post?': 'Stänga det här inlägget?', 'It will be hidden from the board.': 'Det döljs från tavlan.', 'Joined': 'Gick med', 'Nobody yet': 'Ingen än',
-  'You said you’re in. {name} can see it and message you.': 'Du har sagt att du är med. {name} kan se det och skriva till dig.', 'Group': 'Grupp'
+  'You said you’re in. {name} can see it and message you.': 'Du har sagt att du är med. {name} kan se det och skriva till dig.', 'Group': 'Grupp',
+  'Attach one of your groups: everyone who joins is added to it automatically once all spots are taken.': 'Bifoga en av dina grupper: alla som går med läggs till i den automatiskt när alla platser är tagna.',
+  'You were added to {name} so you can start playing.': 'Du lades till i {name} så att du kan börja spela.',
+  'Everyone who joined was added to the group.': 'Alla som gick med lades till i gruppen.', 'You’re in the group now. Say hi!': 'Du är med i gruppen nu. Säg hej!',
+  'This group will take everyone who joins once it’s full.': 'Gruppen tar emot alla som går med när den är full.'
 });
 
 const MODES = () => [['casual', t('Casual')], ['competitive', t('Competitive')]];
@@ -63,6 +67,8 @@ TWPages.lfg = async (_, tok) => {
     const who = h('button', { class: 'lfg-who', type: 'button', onclick: () => TW.openProfile(p.poster.id) }, avatar(p.poster, 'sm', true), h('span', { text: p.mine ? t('Your post') : nm(p.poster) }));
     const note = p.note ? h('p', { class: 'lfg-note', text: T(p.note) }) : null;
     const group = p.group ? h('a', { class: 'chip accent lfg-group', href: '#/group/' + enc(p.group.id), text: T(p.group.name) }) : null;
+    const addedNote = p.group && free === 0
+      ? h('p', { class: 'lfg-added small', text: p.inGroup ? (p.mine ? t('Everyone who joined was added to the group.') : t('You’re in the group now. Say hi!')) : t('This group will take everyone who joins once it’s full.') }) : null;
     const joined = h('div', { class: 'lfg-joined' },
       p.responders.length ? h('div', { class: 'lfg-faces' }, p.responders.map(r => h('button', { type: 'button', onclick: () => TW.openProfile(r.id), title: nm(r), 'aria-label': nm(r) }, avatar(r, 'sm', true)))) : null,
       h('span', { class: 'muted small', text: p.mine && !p.responders.length ? t('Nobody yet') : t('{n} of {m} joined', { n: filled, m: p.slots }) }));
@@ -82,7 +88,7 @@ TWPages.lfg = async (_, tok) => {
       actions.append(b);
     }
     return h('article', { class: 'card lfg-card' + (p.mine ? ' mine' : ''), 'data-key': 'p' + p.id },
-      head, note, h('div', { class: 'lfg-meta' }, who, group, h('span', { class: 'muted small lfg-time', text: t('ends in {x}', { x: left(p.expiresAt) }) })), joined, actions);
+      head, note, h('div', { class: 'lfg-meta' }, who, group, h('span', { class: 'muted small lfg-time', text: t('ends in {x}', { x: left(p.expiresAt) }) })), joined, addedNote, actions);
   }
 
   function draw() {
@@ -118,7 +124,7 @@ TWPages.lfg = async (_, tok) => {
     const body = h('form', { class: 'stack', style: 'gap:14px', onsubmit: (e) => e.preventDefault() },
       field(t('Game'), gp), h('div', { class: 'row2' }, field(t('Mode'), mode), field(t('Region'), region)),
       h('div', { class: 'row2' }, field(t('Players needed'), slots), field(t('Open for'), hours)),
-      field(t('Note'), note), micRow, mine.length ? field(t('Attach one of your groups (optional)'), grp) : null,
+      field(t('Note'), note), micRow, mine.length ? field(t('Attach one of your groups (optional)'), grp, t('Attach one of your groups: everyone who joins is added to it automatically once all spots are taken.')) : null,
       h('div', { class: 'sheet-actions' }, go));
     go.onclick = () => busy(go, async () => {
       if (!gp.value) return toast(t('Pick a game first.'), 'error');

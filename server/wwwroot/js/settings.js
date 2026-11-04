@@ -211,8 +211,40 @@ function gamerTagsCard() {
   add.addEventListener('click', submit);
   handle.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); submit(); } });
   draw();
-  return card(cardHead(t('Gamer tags'), t('Show friends where to find you: Steam, Discord, Xbox and more.')), list,
+  return card(cardHead(t('Gamer tags'), t('Show friends where to find you: Steam, Discord, Xbox and more.')), verifyBlock(), list,
     h('div', { class: 'row tag-form' }, field(t('Platform'), platform), fh), h('div', {}, add));
+}
+
+/* Verified tags: sign in through Steam / Discord to prove the account is yours (a check mark on your profile). */
+function verifyBlock() {
+  const box = h('div', { class: 'stack verify-box', style: 'gap:10px' });
+  const NAMES = { Steam: 'Steam', Discord: 'Discord' };
+  async function load() {
+    let prov, mine;
+    try { [prov, mine] = await Promise.all([api('GET', '/api/verify/providers'), api('GET', '/api/verify/mine')]); } catch { return; }
+    const have = new Map(mine.map(v => [v.platform, v]));
+    const row = (platform, enabled) => {
+      const v = have.get(platform);
+      if (v) {
+        const rm = btn(t('Unlink'), { cls: 'small ghost' });
+        rm.addEventListener('click', () => busy(rm, async () => { await api('DELETE', '/api/verify/' + enc(platform)); toast(t('Unlinked')); load(); }));
+        return h('div', { class: 'verify-row' }, h('span', { class: 'chip ok' }, TW.icon('check', 12), t('Verified')), h('b', { text: platform }), h('span', { class: 'tag-val muted', text: T(v.handle) }), rm);
+      }
+      if (!enabled) return h('div', { class: 'verify-row muted small' }, h('b', { text: platform }), h('span', { text: t('Not set up on this server.') }));
+      const go = btn(t('Verify {name}', { name: platform }), { cls: 'small', icon: 'check' });
+      go.addEventListener('click', () => busy(go, async () => {
+        const r = await api('POST', `/api/verify/${platform.toLowerCase()}/start`);
+        toast(t('Finish signing in in your browser, then come back here.'));
+        location.href = r.url;
+      }));
+      return h('div', { class: 'verify-row' }, h('b', { text: platform }), h('span', { class: 'muted small', text: t('Prove it’s really your account.') }), go);
+    };
+    box.replaceChildren(h('div', { class: 'section-title', text: t('Verified accounts') }), row('Steam', prov.steam), row('Discord', prov.discord),
+      h('p', { class: 'muted small', text: t('You sign in on Steam’s or Discord’s own site. We never see your password, only your public name.') }));
+  }
+  load();
+  addEventListener('focus', () => { if (box.isConnected) load(); });   // coming back from the browser: show the new check mark
+  return box;
 }
 
 /* ---- Appearance & theme ---- */
@@ -221,6 +253,43 @@ const SWATCHES = [   // [saved value, label, shown colour]; the first is the app
   ['#7aa21a', 'Lime', '#7aa21a'], ['#e0a100', 'Amber', '#e0a100'], ['#e8590c', 'Orange', '#e8590c'], ['#d63a45', 'Red', '#d63a45'],
   ['#d6409f', 'Pink', '#d6409f'], ['#9b51e0', 'Purple', '#9b51e0'], ['#6e56cf', 'Violet', '#6e56cf'], ['#8a8f9c', 'Slate', '#8a8f9c']
 ];
+/* Theme: colour preset or custom background, roundness, density, font. Saved on this device (js/theme.js). */
+function themeCard() {
+  const T = window.TWTheme; if (!T) return null;
+  const tiles = h('div', { class: 'theme-tiles', role: 'radiogroup', 'aria-label': t('Theme') });
+  const hexIn = h('input', { class: 'input', type: 'text', maxlength: 7, 'aria-label': t('Custom background colour'), placeholder: '#101820', autocomplete: 'off', spellcheck: 'false' });
+  const pick = h('input', { type: 'color', class: 'color-pick', 'aria-label': t('Pick a background colour') });
+  const radius = selectEl(Object.keys(T.RADII).map(k => [k, t({ square: 'Square', sharp: 'Sharp', default: 'Default', round: 'Round' }[k])]), T.get().radius);
+  const density = selectEl(Object.keys(T.DENSITY).map(k => [k, t({ compact: 'Compact', default: 'Default', roomy: 'Roomy' }[k])]), T.get().density);
+  const font = selectEl(Object.keys(T.FONTS).map(k => [k, t(T.FONTS[k].label)]), T.get().font);
+  const entries = [...Object.keys(T.PRESETS).map(k => [k, t(T.PRESETS[k].label), T.swatch(k)]), ['custom', t('Custom'), null]];
+  const buttons = entries.map(([key, label, sw]) => {
+    const b = h('button', { type: 'button', class: 'theme-tile', role: 'radio', 'aria-label': label, onclick: () => T.set({ preset: key }) },
+      h('span', { class: 'theme-prev', style: sw ? `background:${sw[0]}` : '' }, sw ? [h('i', { style: `background:${sw[1]}` }), h('i', { style: `background:${sw[2]}` })] : h('i', { class: 'custom-i', text: '+' })),
+      h('span', { text: label }));
+    b.dataset.key = key; tiles.append(b); return b;
+  });
+  const paint = () => {
+    const s = T.get();
+    buttons.forEach(b => b.setAttribute('aria-checked', String(b.dataset.key === s.preset)));
+    const c = /^#[0-9a-f]{6}$/i.test(s.custom) ? s.custom : '#101820';
+    pick.value = c; if (document.activeElement !== hexIn) hexIn.value = c;
+    customRow.hidden = s.preset !== 'custom';
+  };
+  const setCustom = (v) => { v = v.trim().toLowerCase(); if (v && v[0] !== '#') v = '#' + v; if (/^#[0-9a-f]{6}$/.test(v)) T.set({ preset: 'custom', custom: v }); };
+  pick.addEventListener('input', () => setCustom(pick.value));
+  hexIn.addEventListener('change', () => setCustom(hexIn.value));
+  const customRow = h('div', { class: 'hex-row' }, pick, hexIn);
+  radius.addEventListener('change', () => T.set({ radius: radius.value }));
+  density.addEventListener('change', () => T.set({ density: density.value }));
+  font.addEventListener('change', () => T.set({ font: font.value }));
+  const reset = btn(t('Reset theme'), { cls: 'ghost small', onclick: () => { T.reset(); radius.value = 'default'; density.value = 'default'; font.value = 'system'; paint(); toast(t('Theme reset')); } });
+  document.addEventListener('tw:theme', paint);
+  paint();
+  return card(cardHead(t('Theme'), t('Pick a look. Accent colour (below) works with every theme. Saved on this device.')), tiles, customRow,
+    h('div', { class: 'row2' }, field(t('Corners'), radius), field(t('Spacing'), density)), field(t('Font'), font), h('div', {}, reset));
+}
+
 function appearanceTab(panel) {
   const cur = () => String(P.get().accentColor || '').toLowerCase();
   const grid = h('div', { class: 'swatches', role: 'radiogroup', 'aria-label': t('Accent colour') });
@@ -265,6 +334,7 @@ function appearanceTab(panel) {
     (v) => { try { localStorage.setItem('tw_autogame', v ? 'on' : 'off'); } catch { /* ignore */ } TW.applyAutoGame(); }) : null;
 
   panel.append(
+    themeCard(),
     card(cardHead(t('Accent colour'), t('Used for buttons, highlights and links across the app.')), grid, custom),
     card(cardHead(t('Text size'), t('Make text larger or smaller everywhere in the app.')), size.el, h('div', {}, reset), sample),
     card(cardHead(t('Motion')), field(t('Animations'), motion, t('Use “Always on” if your system turns animations off.')),

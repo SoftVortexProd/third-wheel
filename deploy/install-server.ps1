@@ -2,7 +2,8 @@
 #   .\install-server.ps1                      -> plain HTTP on port 1732 (no encryption!)  [-Port N to change]
 #   .\install-server.ps1 -Domain play.example.com  -> server listens on localhost, Caddy provides HTTPS
 #   Add -KlipyKey <key> once to enable the GIF picker (stored as a service setting; later updates keep it). -TenorKey is the old name and still works.
-param([string]$Domain = "", [int]$Port = 1732, [string]$KlipyKey = "", [string]$TenorKey = "")
+#   Add -DiscordClientId <id> -DiscordSecret <secret> once to enable "Verify Discord" (create an app at discord.com/developers, add the redirect https://YOUR-ADDRESS/api/verify/discord/callback).
+param([string]$Domain = "", [int]$Port = 1732, [string]$KlipyKey = "", [string]$TenorKey = "", [string]$DiscordClientId = "", [string]$DiscordSecret = "")
 $ErrorActionPreference = "Stop"
 
 $src = Join-Path $PSScriptRoot "app"
@@ -29,6 +30,11 @@ if (-not $KlipyKey -and $TenorKey) { $KlipyKey = $TenorKey }   # old parameter n
 if ($KlipyKey -and $KlipyKey -notmatch '^[A-Za-z0-9_\-]{10,120}$') { throw "That doesn't look like a Klipy API key (letters, numbers, - and _ only)." }
 if ($KlipyKey) { $vars += "TW_KLIPY_KEY=$KlipyKey" }
 else { $vars += @((Get-ItemProperty $svcKey -Name Environment -ErrorAction SilentlyContinue).Environment) | Where-Object { $_ -like "TW_KLIPY_KEY=*" -or $_ -like "TW_TENOR_KEY=*" } }   # keep a key set earlier
+# Discord verification (optional): set once, kept on later updates.
+if ($DiscordClientId -and $DiscordClientId -notmatch '^\d{5,25}$') { throw "The Discord client id should be only digits." }
+if ($DiscordSecret -and $DiscordSecret -notmatch '^[A-Za-z0-9_\-]{10,120}$') { throw "That doesn't look like a Discord client secret." }
+if ($DiscordClientId -and $DiscordSecret) { $vars += "TW_DISCORD_CLIENT_ID=$DiscordClientId", "TW_DISCORD_CLIENT_SECRET=$DiscordSecret" }
+else { $vars += @((Get-ItemProperty $svcKey -Name Environment -ErrorAction SilentlyContinue).Environment) | Where-Object { $_ -like "TW_DISCORD_*" } }
 Set-ItemProperty $svcKey -Name Environment -Type MultiString -Value $vars
 icacls $data /grant "NT AUTHORITY\LocalService:(OI)(CI)M" | Out-Null
 icacls $app /grant "NT AUTHORITY\LocalService:(OI)(CI)RX" | Out-Null

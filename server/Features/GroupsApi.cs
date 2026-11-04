@@ -59,6 +59,24 @@ CREATE TABLE IF NOT EXISTS join_requests(id INTEGER PRIMARY KEY, groupId INTEGER
 
     // ---------- small helpers ----------
     static string? RoleOf(long gid, long uid) => Db.Scalar("SELECT role FROM members WHERE groupId=@g AND userId=@u", ("@g", gid), ("@u", uid)) as string;
+    /// <summary>
+    /// Used by the LFG board: someone who said "I'm in" on a post that names this group is added once the post is full.
+    /// Still respects bans, the member cap and the group's age range (never overrides them). Returns true when the user is a member afterwards.
+    /// </summary>
+    public static bool TryAddMember(long gid, long uid)
+    {
+        if (IsMember(gid, uid)) return true;
+        var g = Db.Row("SELECT ageMin, ageMax, maxMembers FROM grps WHERE id=@g", ("@g", gid));
+        if (g == null || IsBanned(gid, uid)) return false;
+        var cap = Convert.ToInt32(g["maxMembers"] ?? 0);
+        if (cap > 0 && Convert.ToInt32(Db.Scalar("SELECT COUNT(*) FROM members WHERE groupId=@g", ("@g", gid))) >= cap) return false;
+        if (Age.On) { var age = Age.Of(uid); if (age < Convert.ToInt32(g["ageMin"]) || age > Convert.ToInt32(g["ageMax"])) return false; }
+        Db.Exec("INSERT OR IGNORE INTO members(groupId,userId,role) VALUES(@g,@u,'member')", ("@g", gid), ("@u", uid));
+        Db.Exec("DELETE FROM invites WHERE groupId=@g AND toId=@u", ("@g", gid), ("@u", uid));
+        Db.Exec("DELETE FROM join_requests WHERE groupId=@g AND userId=@u", ("@g", gid), ("@u", uid));
+        return true;
+    }
+
     static bool IsBanned(long gid, long uid) => Db.Scalar("SELECT 1 FROM group_bans WHERE groupId=@g AND userId=@u", ("@g", gid), ("@u", uid)) != null;
     static bool IsInvited(long gid, long uid) => Db.Scalar("SELECT 1 FROM invites WHERE groupId=@g AND toId=@u", ("@g", gid), ("@u", uid)) != null;
     static Dictionary<string, object?>? Extra(long gid) => Db.Row("SELECT privacy, rules, ownerId, joinCode, maxMembers, slowmode FROM grps WHERE id=@g", ("@g", gid));

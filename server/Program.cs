@@ -122,7 +122,7 @@ ProfileApi.Map(api);
 NotifyApi.Map(api);
 AccountApi.Map(api);
 HubApi.Map(api);
-LfgApi.Map(api);
+LfgApi.Map(api); PushApi.Map(api); VerifyApi.Map(api);
 GamesApi.Map(api);
 
 
@@ -611,7 +611,9 @@ api.MapPost("friends/request", (HttpContext c, FriendIn b) => WithUser(c, uid =>
     var reverse = Db.Row("SELECT id FROM frequests WHERE fromId=@t AND toId=@u", ("@t", tid), ("@u", uid));
     if (reverse != null) { AcceptRequest((long)reverse["id"]!, uid); return Results.Json(new { ok = true, accepted = true }); }
     if (Limited($"fr:{uid}", 20, TimeSpan.FromHours(1), true)) return Err("Too many requests.", 429);
+    var fresh = Db.Scalar("SELECT 1 FROM frequests WHERE fromId=@f AND toId=@t", ("@f", uid), ("@t", tid)) == null;
     Db.Exec("INSERT OR IGNORE INTO frequests(fromId,toId) VALUES(@f,@t)", ("@f", uid), ("@t", tid));
+    if (fresh) PushApi.Notify(tid, "Friend request", $"{Who(uid)} wants to be your friend.", "/#/friends", $"fr:{uid}");
     return Results.Json(new { ok = true });
 }));
 
@@ -844,6 +846,6 @@ CREATE TABLE IF NOT EXISTS group_icons(groupId INTEGER PRIMARY KEY, mime TEXT NO
             Exec("UPDATE members SET role='owner' WHERE EXISTS (SELECT 1 FROM grps g WHERE g.id=members.groupId AND g.ownerId=members.userId)");
         }
         // Feature modules add their own tables/columns here (each must be safe to run on every start).
-        ChatApi.Migrate(); GroupsApi.Migrate(); ProfileApi.Migrate(); NotifyApi.Migrate(); GamesApi.Migrate(); AccountApi.Migrate(); HubApi.Migrate(); LfgApi.Migrate();
+        ChatApi.Migrate(); GroupsApi.Migrate(); ProfileApi.Migrate(); NotifyApi.Migrate(); GamesApi.Migrate(); AccountApi.Migrate(); HubApi.Migrate(); LfgApi.Migrate(); PushApi.Migrate(); VerifyApi.Migrate();
     }
 }

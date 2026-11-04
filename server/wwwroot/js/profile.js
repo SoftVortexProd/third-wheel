@@ -200,11 +200,14 @@ async function profileDetails(slot, id) {
   const vibe = [MODE_LABEL[d.playMode] || null, ...(d.tags || []).map(t => TAG_LABEL[t] || t)].filter(Boolean);
   if (vibe.length) kids.push(section('How they play', h('div', { class: 'chips' }, vibe.map((t, i) => h('span', { class: 'chip' + (i === 0 ? ' accent' : ''), text: t })))));
   // Gamer tags (Steam, Discord, ...): tap one to copy the handle.
-  const tagList = Object.entries(d.gamerTags || {}).filter(([k, v]) => k && v);
-  if (tagList.length) kids.push(section(TW.t('Gamer tags'), h('div', { class: 'chips tag-list' }, tagList.map(([k, v]) =>
-    h('button', { class: 'chip tag-chip', type: 'button', title: TW.t('Copy'), 'aria-label': `${k}: ${v}. ${TW.t('Copy')}`, onclick: async () => {
+  // verified ones come first (with a check mark); a typed tag for the same platform is hidden so nobody can fake a verified one
+  const verified = (d.verified || []).filter(v => v.platform && v.handle);
+  const vp = new Set(verified.map(v => v.platform.toLowerCase()));
+  const tagList = [...verified.map(v => [v.platform, T(v.handle), true]), ...Object.entries(d.gamerTags || {}).filter(([k, v]) => k && v && !vp.has(k.toLowerCase())).map(([k, v]) => [k, v, false])];
+  if (tagList.length) kids.push(section(TW.t('Gamer tags'), h('div', { class: 'chips tag-list' }, tagList.map(([k, v, ok]) =>
+    h('button', { class: 'chip tag-chip' + (ok ? ' verified' : ''), type: 'button', title: ok ? TW.t('Verified') + ' · ' + TW.t('Copy') : TW.t('Copy'), 'aria-label': `${k}: ${v}${ok ? '. ' + TW.t('Verified') : ''}. ${TW.t('Copy')}`, onclick: async () => {
       try { await navigator.clipboard.writeText(String(v)); TW.toast(TW.t('Copied {name}', { name: k })); } catch { TW.toast(`${k}: ${v}`); }
-    } }, h('b', { text: k }), h('span', { class: 'tag-val', text: v }))))));
+    } }, ok ? TW.icon('check', 12) : null, h('b', { text: k }), h('span', { class: 'tag-val', text: v }))))));
   if ((d.languages || []).length) kids.push(h('p', { class: 'muted small', text: 'Speaks ' + words(d.languages) }));
   const seen = onlineSummary(d.online && d.online.blocks), free = declaredSummary(d.availability);
   if (seen || free) kids.push(section('When they play', ...[seen ? `Usually online in the ${seen} (your time)` : null, free ? `${free} (their time)` : null].filter(Boolean).map(t => h('p', { class: 'avail-line', text: t }))));

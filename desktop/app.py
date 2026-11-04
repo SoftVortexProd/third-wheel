@@ -1,4 +1,4 @@
-﻿"""Third Wheel desktop shell: starts the bundled C# server and shows the web UI."""
+"""Third Wheel desktop shell: starts the bundled C# server and shows the web UI."""
 import atexit
 import ctypes
 import json
@@ -31,7 +31,7 @@ except ImportError:  # pragma: no cover
 ROUTE_RE = re.compile(r"^#/(dm|group)/\d{1,12}$")
 
 # ---- update check: compares this version with the latest GitHub release (bump APP_VERSION when you publish a release) ----
-APP_VERSION = os.environ.get("TW_APP_VERSION", "0.6.2")
+APP_VERSION = os.environ.get("TW_APP_VERSION", "0.7.0")
 UPDATE_REPO = "SoftVortexProd/third-wheel"
 
 
@@ -594,7 +594,9 @@ class Main(QMainWindow):
             self.toggle_fullscreen()
 
     def on_permission(self, perm):
-        if perm.permissionType() == QWebEnginePermission.PermissionType.Notifications and same_origin(perm.origin()):
+        pt = perm.permissionType()
+        # notifications and the microphone (voice messages), only for the app's own server
+        if pt in (QWebEnginePermission.PermissionType.Notifications, QWebEnginePermission.PermissionType.MediaAudioCapture) and same_origin(perm.origin()):
             perm.grant()
 
     def focus_window(self, open_chat=True):
@@ -696,6 +698,11 @@ class Main(QMainWindow):
 def main():
     if os.name == "nt":
         ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("ThirdWheel.Desktop")
+    # The hosted server is often plain http (no certificate). Browsers only allow the microphone on secure pages, so treat the app's own
+    # server address as secure for voice messages. Only that one address; every other site keeps the normal rules.
+    if HOST_URL.startswith("http://"):
+        flag = "--unsafely-treat-insecure-origin-as-secure=" + HOST_URL.rstrip("/")
+        os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = (os.environ.get("QTWEBENGINE_CHROMIUM_FLAGS", "") + " " + flag).strip()
     app = QApplication(sys.argv)
     app.setStyle("Fusion")
     pal = QPalette()

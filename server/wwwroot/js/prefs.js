@@ -20,15 +20,18 @@ const contrast = (a, b) => { const x = lum(a), y = lum(b); return (Math.max(x, y
 const VARS = ['--color-accent', '--color-accent-hover', '--color-accent-soft', '--color-accent-text', '--color-accent-border', '--color-on-accent'];
 
 function applyAccent(hex) {
-  const v = String(hex || '').toLowerCase();
-  if (!/^#[0-9a-f]{6}$/.test(v) || v === DEFAULT_ACCENT) { VARS.forEach(p => root.style.removeProperty(p)); return; }
-  const a = hex2rgb(v), white = [255, 255, 255], surface = [9, 9, 11];
+  const T = window.TWTheme, light = !!(T && T.isLight());
+  let v = String(hex || '').toLowerCase();
+  const builtIn = !/^#[0-9a-f]{6}$/.test(v) || v === DEFAULT_ACCENT;
+  if (builtIn && !light) { VARS.forEach(p => root.style.removeProperty(p)); return; }
+  if (builtIn) v = '#4f5ee6';   // the built-in indigo, worked out for a light background
+  const a = hex2rgb(v), white = [255, 255, 255], surface = T ? T.surface() : [9, 9, 11];
   const set = (p, c) => root.style.setProperty(p, typeof c === 'string' ? c : rgb2hex(c));
   set('--color-accent', v);
-  set('--color-accent-hover', mix(a, white, .14));
-  set('--color-accent-soft', mix(surface, a, .3));
-  set('--color-accent-text', mix(a, white, .55));
-  set('--color-accent-border', mix(surface, a, .45));
+  set('--color-accent-hover', light ? mix(a, [0, 0, 0], .14) : mix(a, white, .14));
+  set('--color-accent-soft', mix(surface, a, light ? .16 : .3));
+  set('--color-accent-text', light ? mix(a, [0, 0, 0], .35) : mix(a, white, .55));
+  set('--color-accent-border', mix(surface, a, light ? .35 : .45));
   set('--color-on-accent', contrast(a, white) >= contrast(a, [11, 11, 15]) ? '#ffffff' : '#0b0b0f');   // readable text on top of the accent
 }
 function applyScale(s) {

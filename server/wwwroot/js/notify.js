@@ -86,6 +86,16 @@ async function tick() {
   collectAlerts();
   markOpenRead();
   refresh();
+  announceAdded();
+}
+/* The LFG board added you to a group (the post filled up): say so once, and make the group show up in the sidebar right away. */
+let ackBusy = false;
+function announceAdded() {
+  const list = (N.sum && N.sum.added) || []; if (!list.length || ackBusy) return;
+  ackBusy = true;
+  list.forEach(a => TW.toast(TW.t('You were added to {name} so you can start playing.', { name: TW.T(a.groupName) })));
+  api('POST', '/api/notifications/ack-added', { ids: list.map(a => a.id) }).then(() => TW.refreshMine && TW.refreshMine()).catch(() => {}).finally(() => { ackBusy = false; });
+  N.sum.added = [];
 }
 function refresh() { decorate(); if (center) renderCenter(false); }
 setInterval(tick, 3000);

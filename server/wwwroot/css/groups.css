@@ -4,15 +4,15 @@
 .group-actions > .btn { flex: none; white-space: nowrap; min-width: max-content; }
 
 .role-badge { display: inline-block; margin-left: 6px; padding: 1px 7px; border-radius: 999px; font-size: 10px; line-height: 16px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; vertical-align: 1px; }
-.role-badge.owner { background: var(--color-accent-soft); color: var(--color-accent-text); border: 1px solid #2d3270; }
-.role-badge.mod { background: #12251b; color: #7ddc9a; border: 1px solid #1f4a33; }
+.role-badge.owner { background: var(--color-accent-soft); color: var(--color-accent-text); border: 1px solid var(--color-accent-line); }
+.role-badge.mod { background: var(--color-ok-bg); color: var(--color-ok-text); border: 1px solid var(--color-ok-line); }
 
 /* ⋯ button in the mini-profile header (group moderation, block, report) */
 .profile-top { position: relative; }
 .profile-top.has-more .profile-names { padding-right: 44px; }
 .profile-more { position: absolute; top: -6px; right: -6px; width: 36px; height: 36px; font-size: 20px; line-height: 1; padding-bottom: 6px; color: var(--color-text-2); }
 .profile-more:hover { color: var(--color-text); }
-.profile-more[aria-expanded="true"] { background: var(--color-accent-soft); color: #fff; }
+.profile-more[aria-expanded="true"] { background: var(--color-accent-soft); color: var(--color-text); }
 
 /* join code, invite link, limits */
 .invite-row { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-3); }
@@ -27,11 +27,11 @@
 .join-desc { color: var(--color-text-2); overflow-wrap: anywhere; }
 .gtile.big { width: 56px; height: 56px; border-radius: 16px; font-size: 24px; flex: none; }
 
-.mute-flag { margin-left: 6px; padding: 1px 6px; border-radius: 999px; background: #2a1215; color: var(--color-danger-text); border: 1px solid #5a2328; font-size: 10px; line-height: 14px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; }
+.mute-flag { margin-left: 6px; padding: 1px 6px; border-radius: 999px; background: var(--color-bad-bg); color: var(--color-danger-text); border: 1px solid var(--color-bad-line); font-size: 10px; line-height: 14px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; }
 
 .count-badge { display: inline-block; min-width: 18px; height: 18px; margin-left: 8px; padding: 0 5px; border-radius: 999px; background: var(--color-danger); color: #fff; font-size: 11px; line-height: 18px; font-weight: 700; text-align: center; }
 
-.gmenu { position: fixed; z-index: 95; min-width: 220px; max-width: calc(100vw - 16px); max-height: calc(100dvh - 16px); overflow-y: auto; padding: 4px; background: #14141a; border: 1px solid #34343c; border-radius: var(--radius-md); box-shadow: 0 18px 40px -12px rgba(0, 0, 0, .85); }
+.gmenu { position: fixed; z-index: 95; min-width: 220px; max-width: calc(100vw - 16px); max-height: calc(100dvh - 16px); overflow-y: auto; padding: 4px; background: var(--color-pop); border: 1px solid var(--color-line-2); border-radius: var(--radius-md); box-shadow: 0 18px 40px -12px rgba(0, 0, 0, .85); }
 .gmenu-item { display: flex; align-items: center; justify-content: space-between; width: 100%; padding: 9px 12px; border: 0; border-radius: var(--radius-sm); background: none; color: var(--color-text); text-align: left; font-size: var(--fs-md); line-height: 20px; cursor: pointer; }
 .gmenu-item:hover, .gmenu-item:focus-visible { background: var(--color-strong); outline: none; }
 .gmenu-item:focus-visible { box-shadow: inset 0 0 0 2px var(--color-focus); }

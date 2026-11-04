@@ -27,6 +27,7 @@ public static class ChatApi
             if (!cols.Contains("editedAt")) Db.Exec($"ALTER TABLE {t} ADD COLUMN editedAt TEXT");
             if (!cols.Contains("deletedAt")) Db.Exec($"ALTER TABLE {t} ADD COLUMN deletedAt TEXT");
             if (!cols.Contains("fileId")) Db.Exec($"ALTER TABLE {t} ADD COLUMN fileId INTEGER");
+            if (!cols.Contains("pinnedAt")) Db.Exec($"ALTER TABLE {t} ADD COLUMN pinnedAt TEXT");
             if (!cols.Contains("updatedAt")) { Db.Exec($"ALTER TABLE {t} ADD COLUMN updatedAt TEXT"); }
             Db.Exec($"UPDATE {t} SET updatedAt=createdAt WHERE updatedAt IS NULL");
         }
@@ -55,7 +56,7 @@ DELETE FROM reactions WHERE kind='d' AND (msgId NOT IN (SELECT id FROM dms)
         public string Where => G ? "m.groupId=@k" : "m.a=@a AND m.b=@b";
         public string Key => G ? Id.ToString() : $"{Math.Min(Me, Id)}:{Math.Max(Me, Id)}";
         public (string, object?)[] P => G ? new (string, object?)[] { ("@k", Id) } : new (string, object?)[] { ("@a", Math.Min(Me, Id)), ("@b", Math.Max(Me, Id)) };
-        public string Sel => $"SELECT m.id, m.{Author} uid, m.text, m.createdAt, m.replyTo, m.editedAt, m.deletedAt, m.fileId, m.updatedAt FROM {Table} m WHERE {Where}";
+        public string Sel => $"SELECT m.id, m.{Author} uid, m.text, m.createdAt, m.replyTo, m.editedAt, m.deletedAt, m.fileId, m.updatedAt, m.pinnedAt FROM {Table} m WHERE {Where}";
     }
     static (string, object?)[] With(Conv c, params (string, object?)[] extra) => c.P.Concat(extra).ToArray();
 
@@ -120,7 +121,7 @@ DELETE FROM reactions WHERE kind='d' AND (msgId NOT IN (SELECT id FROM dms)
                 id, userId = uid, username = (string?)u?["username"] ?? "deleted", displayName = u?["display"] as string,
                 avatar = u == null ? null : AvatarUrl(uid, u["avatarVer"]), avatarColor = (string?)u?["color"] ?? "#6b6b75", rckt = u != null && IsRckt(u["rcktUntil"]),
                 text = deleted ? "" : (string)r["text"]!, createdAt = (string)r["createdAt"]!, editedAt = r["editedAt"] as string, updatedAt = (string)r["updatedAt"]!,
-                deleted, replyTo = reply, file, reactions = rx
+                deleted, replyTo = reply, file, reactions = rx, pinned = !deleted && r["pinnedAt"] != null
             });
         }
         return result;
@@ -154,10 +155,11 @@ DELETE FROM reactions WHERE kind='d' AND (msgId NOT IN (SELECT id FROM dms)
             var root = k == "g" ? "groups/{id:long}" : "dms/{id:long}";
 
             // history (array). Old clients and first load.
-            api.MapGet(list, (HttpContext c, long id, long? after) => WithConv(c, k, id, cv =>
+            api.MapGet(list, (HttpContext c, long id, long? after, long? before) => WithConv(c, k, id, cv =>
             {
                 List<Dictionary<string, object?>> rows;
-                if (after != null) rows = Fetch(cv, " AND m.id>@after ORDER BY m.id ASC LIMIT 200", ("@after", after));
+                if (before != null) { rows = Fetch(cv, " AND m.id<@before ORDER BY m.id DESC LIMIT 50", ("@before", before)); rows.Reverse(); }   // older history, 50 at a time
+                else if (after != null) rows = Fetch(cv, " AND m.id>@after ORDER BY m.id ASC LIMIT 200", ("@after", after));
                 else { rows = Fetch(cv, " ORDER BY m.id DESC LIMIT 100"); rows.Reverse(); }
                 return Results.Json(Build(cv, rows));
             }));
@@ -198,6 +200,44 @@ DELETE FROM reactions WHERE kind='d' AND (msgId NOT IN (SELECT id FROM dms)
                 if (b.FileId != null) Db.Exec("UPDATE files SET msgId=@m WHERE id=@f", ("@m", mid), ("@f", b.FileId));
                 if (Typing.TryGetValue(cv.K + ":" + cv.Key, out var ty)) ty.TryRemove(cv.Me, out _);
                 if (cv.G) Hooks.GroupMessage(cv.Id, mid, cv.Me, Enc(text)); else Hooks.DirectMessage(cv.Id, mid, cv.Me, Enc(text));
+                return Results.Json(One(cv, mid));
+            }));
+
+            // search inside this conversation (text of messages that aren't deleted); matches are returned newest first
+            api.MapGet(root + "/search", (HttpContext c, long id, string? q) => WithConv(c, k, id, cv =>
+            {
+                var term = (q ?? "").Trim();
+                if (term.Length < 2) return Results.Json(Array.Empty<object>());
+                if (term.Length > 60) term = term[..60];
+                if (Limited($"find:{cv.Me}", 60, TimeSpan.FromMinutes(1), true)) return Err("Slow down a little.", 429);
+                // stored text is HTML-encoded, so search for the encoded form; escape LIKE wildcards
+                var like = "%" + Enc(term).Replace("\\", "\\\\").Replace("%", "\\%").Replace("_", "\\_") + "%";
+                var rows = Fetch(cv, " AND m.deletedAt IS NULL AND m.text LIKE @like ESCAPE '\\' ORDER BY m.id DESC LIMIT 40", ("@like", like));
+                return Results.Json(Build(cv, rows));
+            }));
+
+            // pinned messages: group owners/mods (and site admins) pin in groups; either person pins in a DM. 20 per chat.
+            api.MapGet(root + "/pins", (HttpContext c, long id) => WithConv(c, k, id, cv =>
+                Results.Json(Build(cv, Fetch(cv, " AND m.deletedAt IS NULL AND m.pinnedAt IS NOT NULL ORDER BY m.pinnedAt DESC LIMIT 20")))));
+            api.MapPost(root + "/messages/{mid:long}/pin", (HttpContext c, long id, long mid) => WithConv(c, k, id, cv =>
+            {
+                if (cv.G && !CanModerateGroup(cv.Id, cv.Me)) return Err("Only group owners and moderators can pin messages.", 403);
+                var row = Fetch(cv, " AND m.id=@mid", ("@mid", mid)).FirstOrDefault();
+                if (row == null) return Err("Message not found.", 404);
+                if (row["deletedAt"] != null) return Err("That message was deleted.", 409);
+                if (row["pinnedAt"] == null)
+                {
+                    if (Convert.ToInt32(Db.Scalar($"SELECT COUNT(*) FROM {cv.Table} m WHERE {cv.Where} AND m.pinnedAt IS NOT NULL AND m.deletedAt IS NULL", cv.P)) >= 20)
+                        return Err("You can pin up to 20 messages. Unpin one first.", 409);
+                    Db.Exec($"UPDATE {cv.Table} SET pinnedAt=@n, updatedAt=@n WHERE id=@i", ("@n", Now()), ("@i", mid));
+                }
+                return Results.Json(One(cv, mid));
+            }));
+            api.MapDelete(root + "/messages/{mid:long}/pin", (HttpContext c, long id, long mid) => WithConv(c, k, id, cv =>
+            {
+                if (cv.G && !CanModerateGroup(cv.Id, cv.Me)) return Err("Only group owners and moderators can unpin messages.", 403);
+                if (Fetch(cv, " AND m.id=@mid", ("@mid", mid)).Count == 0) return Err("Message not found.", 404);
+                Db.Exec($"UPDATE {cv.Table} SET pinnedAt=NULL, updatedAt=@n WHERE id=@i", ("@n", Now()), ("@i", mid));
                 return Results.Json(One(cv, mid));
             }));
 
@@ -289,6 +329,13 @@ DELETE FROM reactions WHERE kind='d' AND (msgId NOT IN (SELECT id FROM dms)
         if (n >= 3 && d[0] == 0xFF && d[1] == 0xD8 && d[2] == 0xFF) return ("image", "image/jpeg");
         if (n >= 6 && d[0] == 'G' && d[1] == 'I' && d[2] == 'F' && d[3] == '8' && (d[4] == '7' || d[4] == '9') && d[5] == 'a') return ("gif", "image/gif");
         if (n >= 12 && d[0] == 'R' && d[1] == 'I' && d[2] == 'F' && d[3] == 'F' && d[8] == 'W' && d[9] == 'E' && d[10] == 'B' && d[11] == 'P') return ("image", "image/webp");
+        // voice messages are recorded in the browser (webm/opus, ogg or mp4/aac) and named "voice-<time>.<ext>"
+        if (name.StartsWith("voice-", StringComparison.OrdinalIgnoreCase))
+        {
+            if (n >= 4 && d[0] == 0x1A && d[1] == 0x45 && d[2] == 0xDF && d[3] == 0xA3) return ("audio", "audio/webm");
+            if (n >= 4 && d[0] == 'O' && d[1] == 'g' && d[2] == 'g' && d[3] == 'S') return ("audio", "audio/ogg");
+            if (n >= 8 && d[4] == 'f' && d[5] == 't' && d[6] == 'y' && d[7] == 'p') return ("audio", "audio/mp4");
+        }
         if (n >= 8 && d[4] == 'f' && d[5] == 't' && d[6] == 'y' && d[7] == 'p') return ("video", "video/mp4");
         if (n >= 4 && d[0] == 0x1A && d[1] == 0x45 && d[2] == 0xDF && d[3] == 0xA3) return ("video", "video/webm");
         if (n >= 4 && d[0] == 'O' && d[1] == 'g' && d[2] == 'g' && d[3] == 'S') return ("video", "video/ogg");
@@ -298,6 +345,10 @@ DELETE FROM reactions WHERE kind='d' AND (msgId NOT IN (SELECT id FROM dms)
         if (name.EndsWith(".ogg", StringComparison.OrdinalIgnoreCase)) return ("video", "video/ogg");
         return ("file", "application/octet-stream");
     }
+
+    static readonly byte[] LinkKey = System.Security.Cryptography.RandomNumberGenerator.GetBytes(32);   // new on every start: old links simply stop working
+    static string Sign(long id, long exp) =>
+        Convert.ToHexString(System.Security.Cryptography.HMACSHA256.HashData(LinkKey, System.Text.Encoding.ASCII.GetBytes($"{id}:{exp}")));
 
     static void MapFiles(RouteGroupBuilder api)
     {
@@ -351,22 +402,47 @@ DELETE FROM reactions WHERE kind='d' AND (msgId NOT IN (SELECT id FROM dms)
         });
 
         // Only people in the conversation (or the uploader, before it is sent) can fetch a file.
-        api.MapGet("files/{id:long}", (HttpContext c, long id) => WithUser(c, uid =>
+        static IResult Serve(HttpContext c, Dictionary<string, object?> f, bool isPrivate)
+        {
+            c.Response.Headers["Content-Security-Policy"] = "default-src 'none'; sandbox";
+            c.Response.Headers["Cache-Control"] = isPrivate ? "private, max-age=31536000, immutable" : "private, no-store";
+            var kind = (string)f["kind"]!;
+            if (kind is "image" or "gif" or "video" or "audio") return Results.File((string)f["path"]!, (string)f["mime"]!, enableRangeProcessing: true);
+            return Results.File((string)f["path"]!, "application/octet-stream", fileDownloadName: (string)f["name"]!, enableRangeProcessing: true);   // attachment: never rendered by the browser
+        }
+        static Dictionary<string, object?>? Visible(long id, long uid)
         {
             var f = Db.Row("SELECT * FROM files WHERE id=@i AND deletedAt IS NULL", ("@i", id));
-            if (f == null || !File.Exists((string)f["path"]!)) return Err("File not found.", 404);
+            if (f == null || !File.Exists((string)f["path"]!)) return null;
             bool ok;
             if (f["msgId"] == null) ok = (long)f["ownerId"]! == uid;
             else if ((string)f["convKind"]! == "g") ok = long.TryParse((string)f["convKey"]!, out var gid) && IsMember(gid, uid);
             else { var p = ((string)f["convKey"]!).Split(':'); ok = p.Length == 2 && (p[0] == uid.ToString() || p[1] == uid.ToString()); }
-            if (!ok) return Err("File not found.", 404);
+            return ok ? f : null;
+        }
 
-            c.Response.Headers["Content-Security-Policy"] = "default-src 'none'; sandbox";
-            c.Response.Headers["Cache-Control"] = "private, max-age=31536000, immutable";
-            var kind = (string)f["kind"]!;
-            if (kind is "image" or "gif" or "video") return Results.File((string)f["path"]!, (string)f["mime"]!, enableRangeProcessing: true);
-            return Results.File((string)f["path"]!, "application/octet-stream", fileDownloadName: (string)f["name"]!, enableRangeProcessing: true);   // attachment: never rendered by the browser
+        api.MapGet("files/{id:long}", (HttpContext c, long id) => WithUser(c, uid =>
+        {
+            var f = Visible(id, uid);
+            return f == null ? Err("File not found.", 404) : Serve(c, f, true);
         }));
+
+        // A short-lived link for opening a file outside the app (e.g. a video the built-in player can't decode opens in the system browser).
+        // Only people who can already see the file can get one; the link expires after 6 hours.
+        api.MapGet("files/{id:long}/link", (HttpContext c, long id) => WithUser(c, uid =>
+        {
+            if (Visible(id, uid) == null) return Err("File not found.", 404);
+            var exp = DateTimeOffset.UtcNow.AddHours(6).ToUnixTimeSeconds();
+            return Results.Json(new { url = $"/api/files/{id}/open?e={exp}&s={Sign(id, exp)}" });
+        }));
+        api.MapGet("files/{id:long}/open", (HttpContext c, long id, long e, string s) =>
+        {
+            if (e < DateTimeOffset.UtcNow.ToUnixTimeSeconds() || !System.Security.Cryptography.CryptographicOperations.FixedTimeEquals(
+                    System.Text.Encoding.ASCII.GetBytes(Sign(id, e)), System.Text.Encoding.ASCII.GetBytes(s ?? ""))) return Err("This link has expired.", 403);
+            var f = Db.Row("SELECT * FROM files WHERE id=@i AND deletedAt IS NULL", ("@i", id));
+            if (f == null || !File.Exists((string)f["path"]!)) return Err("File not found.", 404);
+            return Serve(c, f, false);
+        });
     }
 
     static DateTime lastOrphanSweep = DateTime.MinValue;

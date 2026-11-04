@@ -10,6 +10,7 @@ public static class NotifyApi
 {
     static readonly Regex Mention = new(@"(?<![A-Za-z0-9_])@([A-Za-z0-9_]{3,20})", RegexOptions.Compiled);
     public record ReadIn(string? Kind, long Key);
+    public record AckIn(long[]? Ids);
 
     public static void Migrate()
     {
@@ -37,6 +38,7 @@ CREATE INDEX IF NOT EXISTS ix_notif_user ON notifications(userId, readAt, id);")
             var me = Db.Scalar("SELECT username FROM users WHERE id=@i", ("@i", to)) as string;
             if (me != null && Names(text).Contains(me, StringComparer.OrdinalIgnoreCase)) AddMention(to, from, null, from, mid, text);
             UpsertDm(to, from, mid, text);
+            PushApi.Notify(to, Who(from), text.Length == 0 ? "Sent you an attachment" : text, $"/#/dm/{from}", $"dm:{from}");
         };
 
         api.MapGet("notifications/summary", (HttpContext c) => WithUser(c, me =>
@@ -72,7 +74,19 @@ CREATE INDEX IF NOT EXISTS ix_notif_user ON notifications(userId, readAt, id);")
                 }).ToList();
             var mentionCount = Convert.ToInt32(Db.Scalar("SELECT COUNT(*) FROM notifications WHERE userId=@me AND type='mention' AND readAt IS NULL", p));
 
-            return Results.Json(new { dm, groups, mentions, mentionCount });
+            // "You were added to a group": the LFG board adds people to a post's group once it is full. Shown once, then acknowledged by the client.
+            var added = Db.Rows(@"SELECT n.id, n.groupId, g.name groupName, n.snippet game FROM notifications n JOIN grps g ON g.id=n.groupId
+                WHERE n.userId=@me AND n.type='lfg_added' AND n.readAt IS NULL ORDER BY n.id LIMIT 5", p)
+                .Select(r => (object)new { id = (long)r["id"]!, groupId = (long)r["groupId"]!, groupName = (string)r["groupName"]!, game = (string)(r["game"] ?? "") }).ToList();
+
+            return Results.Json(new { dm, groups, mentions, mentionCount, added });
+        }));
+
+        api.MapPost("notifications/ack-added", (HttpContext c, AckIn b) => WithUser(c, me =>
+        {
+            foreach (var id in (b.Ids ?? Array.Empty<long>()).Take(20))
+                Db.Exec("UPDATE notifications SET readAt=@n WHERE id=@i AND userId=@u AND type='lfg_added'", ("@n", Now()), ("@i", id), ("@u", me));
+            return Results.Json(new { ok = true });
         }));
 
         // Marks one conversation read up to its newest message (the client calls this while a chat is open and visible).
@@ -147,6 +161,7 @@ CREATE INDEX IF NOT EXISTS ix_notif_user ON notifications(userId, readAt, id);")
                 ("@u", to), ("@r", mid), ("@f", from), ("@g", gid ?? 0)) != null) return;
         Db.Exec("INSERT INTO notifications(userId,type,fromId,groupId,peerId,refId,snippet,createdAt) VALUES(@u,'mention',@f,@g,@p,@r,@s,@c)",
             ("@u", to), ("@f", from), ("@g", gid), ("@p", peer), ("@r", mid), ("@s", Snip(text)), ("@c", Now()));
+        PushApi.Notify(to, $"{Who(from)} mentioned you", text, gid != null ? $"/#/group/{gid}" : $"/#/dm/{from}", $"mention:{mid}");
     }
 
     /// <summary>One rolling "dm" row per sender while unread, holding the latest snippet (used for offline/summary display).</summary>
