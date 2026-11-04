@@ -6,6 +6,7 @@ import os
 import subprocess
 import sys
 import threading
+import time
 import shutil
 import tempfile
 import urllib.request
@@ -30,7 +31,7 @@ except ImportError:  # pragma: no cover
 ROUTE_RE = re.compile(r"^#/(dm|group)/\d{1,12}$")
 
 # ---- update check: compares this version with the latest GitHub release (bump APP_VERSION when you publish a release) ----
-APP_VERSION = os.environ.get("TW_APP_VERSION", "0.6.1")
+APP_VERSION = os.environ.get("TW_APP_VERSION", "0.6.2")
 UPDATE_REPO = "SoftVortexProd/third-wheel"
 
 
@@ -79,7 +80,7 @@ class UpdateInstaller(QThread):
 
     def run(self):
         try:
-            self.progress.emit(5, "Connectingâ€¦")
+            self.progress.emit(5, "Connecting…")
             tmp_dir = Path(tempfile.gettempdir()) / "ThirdWheel_update"
             if tmp_dir.exists():
                 shutil.rmtree(tmp_dir, ignore_errors=True)
@@ -87,7 +88,18 @@ class UpdateInstaller(QThread):
             zip_path = tmp_dir / "update.zip"
 
             req = urllib.request.Request(self.download_url, headers={"User-Agent": "ThirdWheel-Desktop"})
-            with urllib.request.urlopen(req, timeout=40) as resp:
+            # DNS hiccups (getaddrinfo failed) are usually momentary: try a few times before giving up.
+            resp_cm = None
+            for attempt in range(4):
+                try:
+                    resp_cm = urllib.request.urlopen(req, timeout=40)
+                    break
+                except Exception as ex:
+                    if attempt == 3:
+                        raise
+                    self.progress.emit(5, f"Connection problem, retrying ({attempt + 1}/3)…")
+                    time.sleep(2 + attempt * 2)
+            with resp_cm as resp:
                 total_size = int(resp.headers.get("content-length", 0))
                 downloaded = 0
                 chunk_size = 65536
@@ -104,9 +116,9 @@ class UpdateInstaller(QThread):
                             mb_total = total_size / (1024 * 1024)
                             self.progress.emit(pct, f"{mb_done:.1f} / {mb_total:.1f} MB")
                         else:
-                            self.progress.emit(50, "Downloadingâ€¦")
+                            self.progress.emit(50, "Downloading…")
 
-            self.progress.emit(88, "Extracting filesâ€¦")
+            self.progress.emit(88, "Extracting files…")
             extract_dir = tmp_dir / "extracted"
             with zipfile.ZipFile(zip_path, "r") as zf:
                 zf.extractall(extract_dir)
@@ -420,7 +432,7 @@ class Main(QMainWindow):
         col.addWidget(self.update_bar)
         col.addWidget(self.stack, 1)
         self.setCentralWidget(holder)
-        self.splash = QLabel("Third Wheel\n\nStartingâ€¦")
+        self.splash = QLabel("Third Wheel\n\nStarting…")
         self.splash.setAlignment(Qt.AlignCenter)
         self.splash.setStyleSheet(f"background:{BG};color:{MUTED};font:600 18px 'Segoe UI';")
         self.stack.addWidget(self.splash)
@@ -501,7 +513,7 @@ class Main(QMainWindow):
 
     def start_server(self):
         if REMOTE_URL:  # hosted server: nothing to launch locally
-            self.splash.setText("Third Wheel\n\nConnectingâ€¦")
+            self.splash.setText("Third Wheel\n\nConnecting…")
             return
         if server_up():
             return
@@ -526,7 +538,7 @@ class Main(QMainWindow):
             self.splash.setText(f"Third Wheel\n\nServer exited (code {self.proc.returncode}).")
         elif REMOTE_URL:
             # keep retrying: the hosted server may be restarting or the network briefly down
-            self.splash.setText(f"Third Wheel\n\nCan't reach {REMOTE_URL}\nRetryingâ€¦")
+            self.splash.setText(f"Third Wheel\n\nCan't reach {REMOTE_URL}\nRetrying…")
         elif self.tries > 100:
             self.timer.stop()
             self.splash.setText("Third Wheel\n\nServer did not respond.")
@@ -624,7 +636,7 @@ class Main(QMainWindow):
             return
 
         self.btn_update.setEnabled(False)
-        self.btn_update.setText("Connectingâ€¦")
+        self.btn_update.setText("Connecting…")
         self.btn_skip.hide()
         self.btn_later.hide()
 
@@ -635,12 +647,12 @@ class Main(QMainWindow):
         self.update_installer.start()
 
     def _on_update_progress(self, pct: int, msg: str):
-        self.update_label.setText(f"Updating to {self.update_version}â€¦ {msg}")
+        self.update_label.setText(f"Updating to {self.update_version}… {msg}")
         self.btn_update.setText(f"{pct}%")
 
     def _on_update_ready(self, src_dir: str):
-        self.update_label.setText("Update ready! Restarting Third Wheelâ€¦")
-        self.btn_update.setText("Restartingâ€¦")
+        self.update_label.setText("Update ready! Restarting Third Wheel…")
+        self.btn_update.setText("Restarting…")
         QTimer.singleShot(500, lambda: apply_update_and_restart(src_dir))
 
     def _on_update_failed(self, err: str):
