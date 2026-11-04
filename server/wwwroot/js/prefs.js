@@ -185,5 +185,7 @@ function save(patch) {
 let queue = Promise.resolve();
 const get = () => ({ ...prefs, gamerTags: { ...(prefs.gamerTags || {}) }, favGifs: [...(prefs.favGifs || [])] });
 
-window.TWPrefs = { t, load, save, get, setLanguage, language: () => prefs.language, applyScale, applyAccent, DEFAULT_ACCENT };
+/* Feature modules add their own Swedish strings with TWPrefs.addStrings('sv', { 'English text': 'Svensk text' }). */
+function addStrings(lang, strings) { (DICT[lang] = DICT[lang] || {}); Object.assign(DICT[lang], strings); }
+window.TWPrefs = { t, load, save, get, setLanguage, addStrings, language: () => prefs.language, applyScale, applyAccent, DEFAULT_ACCENT };
 })();
