@@ -1291,7 +1291,10 @@ async function adminView(_, tok) {
   }
 
   async function usersTab(dead) {
-    const t = searchTab('Search users by username', (q) => api('GET', '/api/admin/users' + qs({ q })), dead);
+    let flaggedOnly = false;   // "Flagged names": accounts whose name the troll-name filter would refuse today
+    const t = searchTab('Search users by username', (q) => api('GET', '/api/admin/users' + qs({ q, flagged: flaggedOnly ? 'true' : '' })), dead);
+    const flagChip = h('button', { type: 'button', class: 'chip', 'aria-pressed': 'false', style: 'flex:none', title: 'Show accounts whose name would not be allowed today' }, 'Flagged names');
+    flagChip.addEventListener('click', () => { flaggedOnly = !flaggedOnly; flagChip.setAttribute('aria-pressed', String(flaggedOnly)); t.refresh(); });
     const act = (label, cls, fn) => { const b = btn(label, { cls: 'small ' + cls }); b.addEventListener('click', () => Promise.resolve(fn()).catch(e => toast(e.message, 'error'))); return b; };
     t.setPaint((rows) => {
       TWM.flip(t.list, '.arow', () => t.list.replaceChildren(...(rows.length ? rows.map(u => {
@@ -1319,7 +1322,7 @@ async function adminView(_, tok) {
           h('div', { class: 'act' }, acts));
       }) : [emptyState('No users found', 'Try a different name.')])));
     });
-    body.replaceChildren(t.q, t.list); t.refresh();
+    body.replaceChildren(h('div', { class: 'row', style: 'gap:8px;flex:none;align-items:center' }, t.q, flagChip), t.list); t.refresh();
   }
 
   async function groupsTab(dead) {

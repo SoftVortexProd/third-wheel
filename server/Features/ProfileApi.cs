@@ -156,6 +156,7 @@ CREATE TABLE IF NOT EXISTS activity(userId INTEGER, hour INTEGER, n INTEGER DEFA
         api.MapPut("me/profile-extras", (HttpContext c, ExtrasIn b) => WithUser(c, uid =>
         {
             if (Limited($"pe:{uid}", 30, TimeSpan.FromMinutes(1), true)) return Err("Slow down a little.", 429);
+            if (!NameFilter.TextAllowed(b.Bio)) return Err(NameFilter.TextMessage);
             var cur = ReadExtras(Db.Row("SELECT * FROM profile_extras WHERE userId=@i", ("@i", uid)));
             var bio = b.Bio == null ? cur.Bio : Enc(Clean(b.Bio, 160));
             var mode = b.PlayMode == null ? cur.Mode : b.PlayMode;

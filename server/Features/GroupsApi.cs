@@ -172,6 +172,8 @@ CREATE TABLE IF NOT EXISTS join_requests(id INTEGER PRIMARY KEY, groupId INTEGER
             if (Limited($"gc:{uid}", 10, TimeSpan.FromHours(1), true)) return Err("You're creating groups too fast. Try again later.", 429);
             var name = Clean(b.Name, 40);
             if (name.Length < 3) return Err("Group name must be at least 3 characters.");
+            if (!NameFilter.NameAllowed(name, IsAdmin(uid))) return Err(NameFilter.NameMessage);
+            if (!NameFilter.TextAllowed(b.Description) || !NameFilter.TextAllowed(b.Rules)) return Err(NameFilter.TextMessage);
             var game = GamesApi.Canonical(b.Game);   // a group is for a real game from the list, never free text
             if (game == null) return Err("Pick a real game from the list.");
             if (b.Mode is not ("casual" or "competitive")) return Err("Mode must be casual or competitive.");
@@ -313,10 +315,12 @@ CREATE TABLE IF NOT EXISTS join_requests(id INTEGER PRIMARY KEY, groupId INTEGER
             if ((b.Name != null || b.Description != null || b.Privacy != null || b.MaxMembers != null || b.Slowmode != null) && !owner) return Err("Only the owner can change group settings.", 403);
             if (b.Rules != null && !CanModerateGroup(id, uid)) return Err("Only moderators can edit the rules.", 403);
             if (Limited($"gs:{uid}", 30, TimeSpan.FromMinutes(10), true)) return Err("Slow down a little.", 429);
+            if (!NameFilter.TextAllowed(b.Description) || !NameFilter.TextAllowed(b.Rules)) return Err(NameFilter.TextMessage);
             if (b.Name != null)
             {
                 var n = Clean(b.Name, 40);
                 if (n.Length < 3) return Err("Group name must be at least 3 characters.");
+                if (!NameFilter.NameAllowed(n, IsAdmin(uid))) return Err(NameFilter.NameMessage);
                 Db.Exec("UPDATE grps SET name=@v WHERE id=@g", ("@v", Enc(n)), ("@g", id));
             }
             if (b.Description != null) Db.Exec("UPDATE grps SET description=@v WHERE id=@g", ("@v", Enc(Clean(b.Description, 300))), ("@g", id));

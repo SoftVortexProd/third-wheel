@@ -132,6 +132,7 @@ api.MapPost("auth/signup", (HttpContext c, Creds b) =>
     if (Limited("su:" + ip, 10, TimeSpan.FromHours(1), true)) return Err("Too many sign-ups. Try later.", 429);
     var name = (b.Username ?? "").Trim(); var pw = b.Password ?? "";
     if (!userRx.IsMatch(name)) return Err("Username must be 3-20 letters, numbers or underscores.");
+    if (!NameFilter.NameAllowed(name)) return Err(NameFilter.NameMessage);
     if (pw.Length < 8 || pw.Length > 72) return Err("Password must be 8-72 characters.");
     if (Db.Scalar("SELECT 1 FROM users WHERE username=@u COLLATE NOCASE", ("@u", name)) != null) return Err("That username is taken.", 409);
     var id = Db.CreateUser(name, pw, "NA-East", 0, Array.Empty<string>(), "online", null, false);
@@ -211,9 +212,13 @@ api.MapPut("me/profile", (HttpContext c, ProfileIn b) => WithUser(c, uid =>
     }
     var name = (b.Username ?? (string)u["username"]!).Trim();
     if (!userRx.IsMatch(name)) return Err("Username must be 3-20 letters, numbers or underscores.");
+    var staff = Convert.ToInt32(u["isAdmin"]) == 1;
+    // A name you already have stays; any NEW username or display name has to pass the troll-name filter.
+    if (!string.Equals(name, (string)u["username"]!, StringComparison.Ordinal) && !NameFilter.NameAllowed(name, staff)) return Err(NameFilter.NameMessage);
     if (Db.Scalar("SELECT 1 FROM users WHERE username=@n COLLATE NOCASE AND id<>@i", ("@n", name), ("@i", uid)) != null) return Err("That username is taken.", 409);
     var disp = ctrlRx.Replace(b.DisplayName ?? "", "").Trim();
     if (disp.Length > 32) return Err("Display name can be at most 32 characters.");
+    if (!NameFilter.NameAllowed(disp, staff)) return Err(NameFilter.NameMessage);
     Db.Exec("UPDATE users SET username=@n, display=@d WHERE id=@i", ("@n", name), ("@d", disp.Length == 0 ? null : Enc(disp)), ("@i", uid));
     return Results.Json(UserDto(uid));
 }));
@@ -408,11 +413,15 @@ api.MapGet("admin/stats", (HttpContext c) => WithAdmin(c, _ => Results.Json(new
         .Select(r => new { action = (string)r["action"]!, target = (string)r["target"]!, at = (string)r["at"]!, admin = r["admin"] as string })
 })));
 
-api.MapGet("admin/users", (HttpContext c, string? q) => WithAdmin(c, _ =>
+api.MapGet("admin/users", (HttpContext c, string? q, bool? flagged) => WithAdmin(c, _ =>
 {
     var like = "%" + (q ?? "").Trim().Replace("\\", "\\\\").Replace("%", "\\%").Replace("_", "\\_") + "%";
     var rows = Db.Rows(@"SELECT u.id,u.username,u.display,u.avatarVer,u.color,u.isAdmin,u.banned,u.banReason,u.created,u.status,
-        (SELECT COUNT(*) FROM members m WHERE m.userId=u.id) groups FROM users u WHERE u.username LIKE @q ESCAPE '\' ORDER BY u.id DESC LIMIT 100", ("@q", like));
+        (SELECT COUNT(*) FROM members m WHERE m.userId=u.id) groups FROM users u WHERE u.username LIKE @q ESCAPE '\' ORDER BY u.id DESC LIMIT " + (flagged == true ? "2000" : "100"), ("@q", like));
+    // flagged=true: only accounts whose username or display name would be refused by the troll-name filter today (old accounts keep their names until an admin acts).
+    if (flagged == true)
+        rows = rows.Where(r => Convert.ToInt32(r["isAdmin"]) != 1
+            && (!NameFilter.NameAllowed((string)r["username"]!) || !NameFilter.NameAllowed(System.Net.WebUtility.HtmlDecode(r["display"] as string)))).Take(100).ToList();
     return Results.Json(rows.Select(r => new
     {
         id = (long)r["id"]!, username = (string)r["username"]!, displayName = r["display"] as string, avatar = AvatarUrl((long)r["id"]!, r["avatarVer"]),
