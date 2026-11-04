@@ -19,6 +19,10 @@ const ICONS = {
   pad: 'M6 12h4M8 10v4M15 13h.01M18 11h.01M17.3 5H6.7a4 4 0 0 0-3.9 3.2l-1.3 6.5A3 3 0 0 0 4.4 18c1 0 1.8-.5 2.3-1.3L7.5 15h9l.8 1.7c.5.8 1.3 1.3 2.3 1.3a3 3 0 0 0 2.9-3.3l-1.3-6.5A4 4 0 0 0 17.3 5z',
   check: 'M20 6L9 17l-5-5',
   chev: 'M6 9l6 6 6-6',
+  menu: 'M4 6h16M4 12h16M4 18h16',
+  compass: 'M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20zM16 8l-2 6-6 2 2-6z',
+  msg: 'M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z',
+  mega: 'M3 11v2a1 1 0 0 0 1 1h2l5 4V6L6 10H4a1 1 0 0 0-1 1zM15 9a4 4 0 0 1 0 6M18 6a8 8 0 0 1 0 12',
   shield: 'M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10zM9 12l2 2 4-4'
 };
 function icon(name, size = 22) {
@@ -754,6 +758,21 @@ function renderOnboarding() {
 function navLink(href, ico, label, cls) {
   return h('a', { class: cls || 'nav-link', href, 'data-route': href }, icon(ico, 20), h('span', { class: 't', text: label }));
 }
+/* The left sidebar (and the phone menu) are built from this list: [section, [[hash, icon, label], ...]]. */
+const NAV = () => [
+  ['Home', [['#/feed', 'feed', 'Feed'], ['#/discover', 'compass', 'Discover'], ['#/search', 'search', 'Find groups'], ['#/lfg', 'mega', 'Looking for group']]],
+  ['Social', [['#/messages', 'msg', 'Messages'], ['#/friends', 'users', 'Friends']]],
+  ['Play', [['#/games', 'pad', 'My games']]]
+];
+/* Phones: the bottom bar only has three buttons, so every tab is reachable from this menu in the top bar. */
+function openMenu() {
+  let close = () => {};
+  const body = h('div', { class: 'stack', style: 'gap:6px' }, NAV().flatMap(([sec, links]) => [
+    h('div', { class: 'nav-label', text: tr(sec) }),
+    ...links.map(([href, ico, label]) => { const a = navLink(href, ico, tr(label)); a.addEventListener('click', () => close()); return a; })
+  ]));
+  close = openSheet(tr('Menu'), body);
+}
 function buildShell() {
   const E = S.el = {};
   E.view = h('main', { id: 'view', tabindex: '-1' });
@@ -769,12 +788,15 @@ function buildShell() {
 
   const rail = h('nav', { class: 'rail', 'aria-label': 'Main' },
     h('div', { class: 'brand' }, h('img', { src: 'icon.svg', alt: '', width: 32, height: 32 }), 'Third Wheel'),
-    h('div', { class: 'nav-main' }, navLink('#/feed', 'feed', tr('Feed')), navLink('#/search', 'search', tr('Find groups')), navLink('#/friends', 'users', tr('Friends & invites'))),
+    h('div', { class: 'nav-main' }, NAV().flatMap(([sec, links]) => [
+      h('div', { class: 'nav-label', text: tr(sec) }),
+      ...links.map(([href, ico, label]) => navLink(href, ico, tr(label)))
+    ])),
     h('div', { class: 'rail-head' }, tr('My groups'), h('button', { class: 'icon-btn', type: 'button', 'aria-label': tr('Create a group'), onclick: openCreate }, icon('plus', 16))),
     E.railGroups, E.user);
 
   const topbar = h('header', { class: 'topbar' },
-    h('div', { class: 'brand brand-mobile' }, h('img', { src: 'icon.svg', alt: '', width: 28, height: 28 }), 'Third Wheel'),
+    h('div', { class: 'brand brand-mobile' }, h('button', { class: 'icon-btn mobile-only', type: 'button', 'aria-label': tr('Menu'), onclick: openMenu }, icon('menu')), h('img', { src: 'icon.svg', alt: '', width: 28, height: 28 }), 'Third Wheel'),
     h('div', { class: 'searchbox', role: 'search' }, h('span', { class: 'ico' }, icon('search', 18)), E.q),
     h('div', { class: 'actions' },
       S.me.isAdmin ? h('a', { class: 'icon-btn', href: '#/admin', 'aria-label': tr('Admin panel') }, icon('shield')) : null,
@@ -883,13 +905,13 @@ async function route() {
   S.viewGroup = null;
   TWM.prog.start();
   markNav();
-  const closedKey = { feed: 'feed', search: 'search', friends: 'friends', dm: 'dms', group: 'groups' }[parts[0]];
+  const closedKey = { feed: 'feed', search: 'search', friends: 'friends', dm: 'dms', messages: 'dms', group: 'groups' }[parts[0]];
   const closedMsg = closedKey && S.site.closed[closedKey];
   if (closedMsg && !S.me.isAdmin) {
     show(h('div', { class: 'page' }, emptyState('This page is closed', T(closedMsg))));
     return;
   }
-  const fn = { feed: feedView, search: searchView, group: groupView, dm: dmView, friends: friendsView, settings: settingsView, admin: adminView, join: (c, t) => window.TWG ? TWG.joinView(c, t) : feedView(c, t) }[parts[0]] || feedView;
+  const fn = { feed: feedView, search: searchView, group: groupView, dm: dmView, friends: friendsView, settings: settingsView, admin: adminView, join: (c, t) => window.TWG ? TWG.joinView(c, t) : feedView(c, t) }[parts[0]] || TWPages[parts[0]] || feedView;
   try { await fn(parts[1], tok); }
   catch (e) { if (tok === S.tok) show(h('div', { class: 'page' }, emptyState('That didn’t load', e.message || 'Please try again.', btn('Try again', { onclick: route })))); }
   if (tok === S.tok) TWM.prog.done();
@@ -1911,6 +1933,8 @@ document.addEventListener('tw:lang', () => {
 document.addEventListener('visibilitychange', () => { if (!document.hidden) poll(); });
 /* Shared helpers for the feature modules (js/chat.js, groups.js, profile.js, notify.js), which load after this file.
    Read S/me through the getters; they change after login. */
+/* Pages added by modules: `TWPages.name = async (arg, tok) => {...}` makes `#/name/arg` a route (use TW.show(node) to display it). */
+const TWPages = window.TWPages = window.TWPages || {};
 window.TW = {
   $, h, icon, api, qs, enc, toast, T, nm, avatar, safeColor, ink, STATUS, statusKey,
   openSheet, confirmSheet, btn, busy, field, tabs, selectEl, suggestInput, gamePicker, switchEl, emptyState, stagger, when,

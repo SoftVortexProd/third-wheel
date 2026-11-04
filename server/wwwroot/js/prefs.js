@@ -45,6 +45,7 @@ const SV = {
   '3–20 letters, numbers, . _ -': '3–20 bokstäver, siffror, . _ -', 'Password': 'Lösenord', 'Log in': 'Logga in', 'Sign up': 'Skapa konto',
   'Create account': 'Skapa konto', 'Account': 'Konto', 'Use 3–20 letters, numbers, . _ or -': 'Använd 3–20 bokstäver, siffror, . _ eller -',
   'Password must be at least 8 characters': 'Lösenordet måste vara minst 8 tecken', 'Find a group that plays the way you do.': 'Hitta en grupp som spelar som du.',
+  'Home': 'Hem', 'Social': 'Socialt', 'Play': 'Spela', 'Discover': 'Upptäck', 'Looking for group': 'Söker lag', 'Messages': 'Meddelanden', 'My games': 'Mina spel', 'Menu': 'Meny',
   'Search groups and people': 'Sök grupper och personer', 'Feed': 'Flöde', 'Find groups': 'Hitta grupper', 'Friends & invites': 'Vänner & inbjudningar',
   'My groups': 'Mina grupper', 'Create a group': 'Skapa en grupp', 'Admin panel': 'Adminpanel', 'Friend requests and invites': 'Vänförfrågningar och inbjudningar',
   'Settings': 'Inställningar', 'Friends': 'Vänner', 'Search': 'Sök', 'Playing {game}': 'Spelar {game}', 'Playing {game} with +{count}': 'Spelar {game} med +{count}', 'View profile': 'Visa profil',
