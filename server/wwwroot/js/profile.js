@@ -199,6 +199,12 @@ async function profileDetails(slot, id) {
   if (d.bio) kids.push(h('p', { class: 'profile-bio', text: T(d.bio) }));
   const vibe = [MODE_LABEL[d.playMode] || null, ...(d.tags || []).map(t => TAG_LABEL[t] || t)].filter(Boolean);
   if (vibe.length) kids.push(section('How they play', h('div', { class: 'chips' }, vibe.map((t, i) => h('span', { class: 'chip' + (i === 0 ? ' accent' : ''), text: t })))));
+  // Gamer tags (Steam, Discord, ...): tap one to copy the handle.
+  const tagList = Object.entries(d.gamerTags || {}).filter(([k, v]) => k && v);
+  if (tagList.length) kids.push(section(TW.t('Gamer tags'), h('div', { class: 'chips tag-list' }, tagList.map(([k, v]) =>
+    h('button', { class: 'chip tag-chip', type: 'button', title: TW.t('Copy'), 'aria-label': `${k}: ${v}. ${TW.t('Copy')}`, onclick: async () => {
+      try { await navigator.clipboard.writeText(String(v)); TW.toast(TW.t('Copied {name}', { name: k })); } catch { TW.toast(`${k}: ${v}`); }
+    } }, h('b', { text: k }), h('span', { class: 'tag-val', text: v }))))));
   if ((d.languages || []).length) kids.push(h('p', { class: 'muted small', text: 'Speaks ' + words(d.languages) }));
   const seen = onlineSummary(d.online && d.online.blocks), free = declaredSummary(d.availability);
   if (seen || free) kids.push(section('When they play', ...[seen ? `Usually online in the ${seen} (your time)` : null, free ? `${free} (their time)` : null].filter(Boolean).map(t => h('p', { class: 'avail-line', text: t }))));

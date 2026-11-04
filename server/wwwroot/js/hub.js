@@ -17,6 +17,7 @@ TWPrefs.addStrings('sv', {
   'Static profile pictures': 'Stillbilder som profilbild', 'Show animated profile pictures as a still image. Helps on slower computers and phones.': 'Visa animerade profilbilder som stillbild. Hjälper på långsammare datorer och telefoner.',
   'Read receipts': 'Läskvitton', 'Let friends see when you’ve read their message. If you turn this off, you won’t see their “Seen” either.': 'Låt vänner se när du har läst deras meddelande. Stänger du av det ser du inte heller deras “Sedd”.',
   'More': 'Mer', 'Account': 'Konto', 'You haven’t joined any groups yet.': 'Du har inte gått med i några grupper än.', 'Reports': 'Rapporter',
+  'Copy': 'Kopiera', 'Copied {name}': 'Kopierade {name}',
   'My games': 'Mina spel', 'The games you play, your ranks, your groups and the friends who play with you.': 'Spelen du spelar, dina rank, dina grupper och vännerna som spelar med dig.',
   'Add a game': 'Lägg till ett spel', 'Remove {game}': 'Ta bort {game}', 'Edit ranks': 'Redigera rank', 'No groups for this game yet': 'Inga grupper för det här spelet än',
   'Find groups': 'Hitta grupper', 'Your groups': 'Dina grupper', 'Friends who play this': 'Vänner som spelar det här', 'No friends play this yet': 'Inga vänner spelar det här än',
