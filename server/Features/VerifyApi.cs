@@ -93,7 +93,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS ux_verified_ext ON verified_tags(platform, ext
         var html = $"<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>{t}</title>" +
             "<style>body{margin:0;min-height:100vh;display:grid;place-items:center;background:#000;color:#fafafa;font:16px system-ui,sans-serif}.c{max-width:420px;margin:24px;padding:28px;border:1px solid #26262c;border-radius:16px;background:#111114;text-align:center}" +
             "h1{font-size:22px;margin:0 0 10px}p{color:#a3a3ad;line-height:1.5}a{display:inline-block;margin-top:14px;padding:10px 18px;border-radius:10px;background:#4f5ee6;color:#fff;text-decoration:none;font-weight:600}</style></head>" +
-            $"<body><div class=\"c\"><h1>{(ok ? "✓ " : "")}{t}</h1><p>{m}</p><a href=\"/#/settings/profile\">Back to Third Wheel</a></div></body></html>";
+            $"<body><div class=\"c\"><h1>{(ok ? "✓ " : "")}{t}</h1><p>{m}</p><a href=\"/#/settings/connections\">Back to Third Wheel</a></div></body></html>";
         return Results.Content(html, "text/html; charset=utf-8");
     }
 

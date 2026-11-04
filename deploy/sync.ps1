@@ -10,7 +10,7 @@ param([switch]$Watch, [switch]$SetupKey, [switch]$DryRun, [string]$Server, [stri
 $ErrorActionPreference = "Stop"
 $root = Split-Path $PSScriptRoot -Parent
 
-$cfg = @{ server = ""; user = "Administrator"; port = 1732; domain = "" }
+$cfg = @{ server = ""; user = "Administrator"; port = 1732; domain = ""; keepPlainPort = $false }
 $cfgFile = Join-Path $PSScriptRoot "sync.config.json"
 if (Test-Path $cfgFile) { (Get-Content $cfgFile -Raw | ConvertFrom-Json).PSObject.Properties | ForEach-Object { $cfg[$_.Name] = $_.Value } }
 if ($Server) { $cfg.server = $Server }; if ($User) { $cfg.user = $User }; if ($Port) { $cfg.port = $Port }; if ($Domain) { $cfg.domain = $Domain }
@@ -32,9 +32,9 @@ $key = Join-Path $env:USERPROFILE ".ssh\thirdwheel_ed25519"
 $opts = @("-o", "StrictHostKeyChecking=accept-new")
 if (Test-Path $key) { $opts += @("-i", $key, "-o", "IdentitiesOnly=yes") }
 
-function ConvertTo-Encoded([string]$script) { [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($script)) }
+function ConvertTo-Encoded([string]$script) { [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes('$ProgressPreference="SilentlyContinue"; ' + $script)) }   # no progress bars in the log
 function Invoke-Remote([string]$script) {
-    & ssh @opts $target "powershell -NoProfile -ExecutionPolicy Bypass -EncodedCommand $(ConvertTo-Encoded $script)"
+    & ssh -n @opts $target "powershell -NoProfile -NonInteractive -OutputFormat Text -ExecutionPolicy Bypass -EncodedCommand $(ConvertTo-Encoded $script)"   # -n: never wait for input (it hangs when run from a background job)
     if ($LASTEXITCODE -ne 0) { throw "Remote command failed (exit $LASTEXITCODE)." }
 }
 
@@ -46,7 +46,7 @@ if ($SetupKey) {
     }
     $remote = '$k=[Console]::In.ReadToEnd().Trim().TrimStart([char]0xFEFF); $f="$env:ProgramData\ssh\administrators_authorized_keys"; New-Item -ItemType Directory -Force (Split-Path $f) | Out-Null; if(-not (Test-Path $f) -or -not (Select-String -Path $f -SimpleMatch $k -Quiet)){ Add-Content -Path $f -Value $k -Encoding ascii }; icacls $f /inheritance:r /grant "Administrators:F" /grant "SYSTEM:F" | Out-Null; "key installed"'
     Write-Host "Authorising your key on $($cfg.server) ... ssh will ask for the server's Administrator password (typed into ssh, not saved)."
-    (Get-Content "$key.pub" -Raw) | & ssh -o StrictHostKeyChecking=accept-new $target "powershell -NoProfile -ExecutionPolicy Bypass -EncodedCommand $(ConvertTo-Encoded $remote)"
+    (Get-Content "$key.pub" -Raw) | & ssh -o StrictHostKeyChecking=accept-new $target "powershell -NoProfile -NonInteractive -OutputFormat Text -ExecutionPolicy Bypass -EncodedCommand $(ConvertTo-Encoded $remote)"
     if ($LASTEXITCODE -ne 0) { throw "Could not install the key." }
     Write-Host "Done. From now on sync.ps1 logs in with the key. Then, on the server, run .\enable-ssh.ps1 -KeyOnly to switch off password logins."
     return
@@ -57,10 +57,10 @@ function Deploy {
     Write-Host "[$stamp] Building package ..."
     # ffmpeg is about 100 MB: only send it when the server does not have it yet
     $hasFfmpeg = $false
-    if (-not $DryRun) { try { $hasFfmpeg = ((& ssh @opts $target "powershell -NoProfile -ExecutionPolicy Bypass -EncodedCommand $(ConvertTo-Encoded 'Test-Path C:\ThirdWheel\app\ffmpeg\ffmpeg.exe')") -join '').Trim() -eq 'True' } catch { } }
+    if (-not $DryRun) { try { $hasFfmpeg = ((& ssh -n @opts $target "powershell -NoProfile -NonInteractive -OutputFormat Text -ExecutionPolicy Bypass -EncodedCommand $(ConvertTo-Encoded 'Test-Path C:\ThirdWheel\app\ffmpeg\ffmpeg.exe')") -join '').Trim() -eq 'True' } catch { } }
     & (Join-Path $PSScriptRoot "publish.ps1") -NoFfmpeg:$hasFfmpeg | Out-Null
     $zip = Join-Path $root "dist\ThirdWheel-server.zip"
-    $installArgs = "-Port $($cfg.port)" + $(if ($cfg.domain) { " -Domain $($cfg.domain)" } else { "" }) + $(if ($KlipyKey) { " -KlipyKey $KlipyKey" } else { "" }) + $(if ($DiscordClientId -and $DiscordSecret) { " -DiscordClientId $DiscordClientId -DiscordSecret $DiscordSecret" } else { "" })
+    $installArgs = "-Port $($cfg.port)" + $(if ($cfg.domain) { " -Domain $($cfg.domain)" } else { "" }) + $(if ($cfg.domain -and $cfg.keepPlainPort) { " -KeepPlainPort" } else { "" }) + $(if ($KlipyKey) { " -KlipyKey $KlipyKey" } else { "" }) + $(if ($DiscordClientId -and $DiscordSecret) { " -DiscordClientId $DiscordClientId -DiscordSecret $DiscordSecret" } else { "" })
     $remote = @"
 `$ErrorActionPreference='Stop'; `$d='C:\ThirdWheel\incoming'
 Remove-Item "`$d\pkg" -Recurse -Force -ErrorAction SilentlyContinue

@@ -1,4 +1,4 @@
-/* Settings page: left sidebar of tabs (profile, appearance, safety, language, account).
+/* Settings page: left sidebar of tabs (profile, profile look, connections, appearance, safety, language, account).
    Loaded after app.js (window.TW) and prefs.js (window.TWPrefs). Other modules add cards to a tab by listening for
    `tw:settings-tab` ({ detail: { tab, root } }), which fires once each time a tab panel is first built. */
 (() => {
@@ -13,7 +13,9 @@ const PATHS = {
   appearance: 'M12 3a9 9 0 1 0 0 18c1.1 0 1.8-.9 1.5-1.9-.3-1 .4-2.1 1.5-2.1H17a4 4 0 0 0 4-4c0-5-4-10-9-10zM7.5 11.5h.01M10 7.5h.01M14.5 7.5h.01M17 11.5h.01',
   safety: 'M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10zM9 12l2 2 4-4',
   language: 'M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM3 12h18M12 3c2.5 2.7 3.8 5.7 3.8 9S14.5 18.3 12 21c-2.5-2.7-3.8-5.7-3.8-9S9.5 5.7 12 3z',
-  account: 'M5 11h14v10H5zM8 11V7a4 4 0 0 1 8 0v4'
+  account: 'M5 11h14v10H5zM8 11V7a4 4 0 0 1 8 0v4',
+  look: 'M12 3l2.6 5.3 5.9.9-4.3 4.1 1 5.8L12 16.3 6.8 19.1l1-5.8L3.5 9.2l5.9-.9z',
+  connections: 'M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7'
 };
 function ico(name, size = 20) {
   const s = document.createElementNS(SVGNS, 'svg');
@@ -183,7 +185,17 @@ function profileTab(panel, ctx) {
   const extras = h('div', { class: 'stack', style: 'gap:16px' });
   if (window.TWProfile) TWProfile.settings(extras);
 
-  panel.append(pic, framesCard(), bannerCard, idCard, general, extras, layoutCard(), gamerTagsCard());
+  panel.append(pic, bannerCard, idCard, general, extras);
+}
+
+/* ---- Profile look: frame + the order of the sections on your profile ---- */
+function lookTab(panel) {
+  panel.append(framesCard(), layoutCard());
+}
+
+/* ---- Connections: gamer tags, verified Steam / Discord, Steam import ---- */
+function connectionsTab(panel) {
+  panel.append(gamerTagsCard());
 }
 
 /* gamer tags: platform -> handle, saved with the preferences */
@@ -485,8 +497,8 @@ function accountTab(panel) {
 }
 
 /* ================= page ================= */
-const TABS = [['profile', 'Profile & identity', 'profile', profileTab], ['appearance', 'Appearance & theme', 'appearance', appearanceTab],
-  ['safety', 'Content & safety', 'safety', safetyTab], ['language', 'Language', 'language', languageTab], ['account', 'Account & security', 'account', accountTab]];
+const TABS = [['profile', 'Profile & identity', 'profile', profileTab], ['look', 'Profile look', 'look', lookTab], ['connections', 'Connections', 'connections', connectionsTab],
+  ['appearance', 'Appearance & theme', 'appearance', appearanceTab], ['safety', 'Content & safety', 'safety', safetyTab], ['language', 'Language', 'language', languageTab], ['account', 'Account & security', 'account', accountTab]];
 let SL = null;
 
 function build() {
