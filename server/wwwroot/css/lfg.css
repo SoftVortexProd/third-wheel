@@ -1,2 +1,31 @@
-﻿/* lfg styles */
+﻿/* Looking for group board */
+.lfg-filters { display: grid; grid-template-columns: 1.4fr 1fr 1fr auto; gap: var(--space-3); align-items: center; padding: var(--space-4); margin-bottom: var(--space-5); }
+.lfg-mine { display: inline-flex; align-items: center; gap: var(--space-3); cursor: pointer; font-size: var(--fs-md); }
+.lfg-board { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: var(--space-5); align-items: start; }
+.lfg-board > .empty { grid-column: 1 / -1; }
+.lfg-card { padding: var(--space-5); display: flex; flex-direction: column; gap: var(--space-3); min-width: 0; }
+.lfg-card.mine { border-color: var(--color-accent); }
+.lfg-top { display: flex; align-items: flex-start; gap: var(--space-4); }
+.lfg-top .gp-thumb { width: 48px; height: 48px; border-radius: 10px; flex: none; }
+.lfg-title { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+.lfg-title h3 { font-size: var(--fs-lg); line-height: 22px; overflow-wrap: anywhere; }
+.lfg-slots { flex: none; font-weight: 700; font-size: var(--fs-sm); color: var(--color-accent); }
+.lfg-slots.full { color: var(--color-text-2); }
+.lfg-note { color: var(--color-text); overflow-wrap: anywhere; line-height: 22px; }
+.lfg-meta { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-3); }
+.lfg-who { display: inline-flex; align-items: center; gap: var(--space-2); min-width: 0; font-weight: 600; }
+.lfg-who span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 160px; }
+.lfg-time { margin-left: auto; }
+.lfg-joined { display: flex; align-items: center; gap: var(--space-3); }
+.lfg-faces { display: flex; }
+.lfg-faces a { line-height: 0; margin-left: -6px; border-radius: 50%; }
+.lfg-faces a:first-child { margin-left: 0; }
+.lfg-actions { display: flex; gap: var(--space-3); justify-content: flex-end; }
+.lfg-card .chip svg { margin-right: 4px; vertical-align: -2px; }
+@media (max-width: 899px) { .lfg-filters { grid-template-columns: 1fr; } .lfg-board { grid-template-columns: 1fr; } }
 
+.lfg-who { background: none; border: 0; padding: 0; color: inherit; cursor: pointer; }
+.lfg-faces button { background: none; border: 0; padding: 0; margin-left: -6px; line-height: 0; border-radius: 50%; cursor: pointer; }
+.lfg-faces button:first-child { margin-left: 0; }
+.row2 { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-3); }
+.sheet-actions { display: flex; justify-content: flex-end; gap: var(--space-3); }
