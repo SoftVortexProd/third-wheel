@@ -1,4 +1,21 @@
 
+function detectRegion() {
+  try {
+    const tz = (Intl.DateTimeFormat().resolvedOptions().timeZone || '').toLowerCase();
+    if (tz.startsWith('europe/')) return 'EU';
+    if (tz.startsWith('africa/')) return 'Africa';
+    if (tz.startsWith('australia/') || tz.startsWith('pacific/')) return 'OCE';
+    if (tz.includes('dubai') || tz.includes('riyadh') || tz.includes('jerusalem') || tz.includes('baghdad') || tz.includes('beirut') || tz.includes('tehran') || tz.includes('kuwait') || tz.includes('qatar')) return 'ME';
+    if (tz.startsWith('asia/')) return 'Asia';
+    if (tz.startsWith('america/')) {
+      if (tz.includes('sao_paulo') || tz.includes('buenos_aires') || tz.includes('santiago') || tz.includes('bogota') || tz.includes('lima') || tz.includes('caracas') || tz.includes('montevideo') || tz.includes('asuncion') || tz.includes('guyana') || tz.includes('la_paz')) return 'SA';
+      if (tz.includes('los_angeles') || tz.includes('vancouver') || tz.includes('tijuana') || tz.includes('denver') || tz.includes('phoenix') || tz.includes('edmonton') || tz.includes('boise') || tz.includes('anchorage')) return 'NA-West';
+      return 'NA-East';
+    }
+  } catch {}
+  return 'EU';
+}
+
 function showSuspendedAppeal(u, p, banReason) {
   const reasonMsg = h('p', { class: 'muted', style: 'margin-bottom:12px', text: tr('Your account has been suspended: {0}', banReason) });
   const appealInput = h('textarea', { class: 'input', rows: 4, placeholder: tr('Explain why your account should be unbanned...'), maxlength: 2000 });
@@ -752,7 +769,7 @@ function renderAuth() {
 /* ================= onboarding ================= */
 function renderOnboarding() {
   clearTimers();
-  const d = { region: S.me.region || '', age: S.me.age || '', games: [...(S.me.favoriteGames || [])] };
+  const d = { region: S.me.region || detectRegion(), age: S.me.age || '', games: [...(S.me.favoriteGames || [])] };
   let step = 0, dir = 1;
   const card = h('div', { class: 'card ob-card' });
   const steps = ['Where do you play?', 'What do you play?', 'How do you play?', 'You’re set'];
@@ -2222,7 +2239,7 @@ document.addEventListener('visibilitychange', () => { if (!document.hidden) poll
    Read S/me through the getters; they change after login. */
 /* Pages added by modules: `TWPages.name = async (arg, tok) => {...}` makes `#/name/arg` a route (use TW.show(node) to display it). */
 const TWPages = window.TWPages = window.TWPages || {};
-window.TW = { calcAge,
+window.TW = { detectRegion, calcAge,
   $, h, icon, api, qs, enc, toast, T, nm, avatar, safeColor, ink, STATUS, statusKey,
   openSheet, confirmSheet, btn, busy, field, tabs, selectEl, suggestInput, gamePicker, switchEl, emptyState, stagger, when,
   personRow, groupCard, makeChat, openProfile, go, show, route, stale, playingStatusText, gameThumb, groupTile,

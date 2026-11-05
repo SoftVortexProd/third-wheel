@@ -52,19 +52,88 @@ CREATE UNIQUE INDEX IF NOT EXISTS ux_verified_ext ON verified_tags(platform, ext
     }
 
     public record ImportIn(string[]? Games);
-    static string SteamKey => Environment.GetEnvironmentVariable("TW_STEAM_API_KEY") ?? "";
+    static string SteamKey
+    {
+        get
+        {
+            var env = Environment.GetEnvironmentVariable("TW_STEAM_API_KEY");
+            if (!string.IsNullOrWhiteSpace(env)) return env.Trim();
+            return "1385F19AAB121B471ED7B4F19BFAE047";
+        }
+    }
     static readonly Dictionary<string, (DateTime At, List<(long, string, int)> Games)> LibCache = new();
 
     /// <summary>The games a Steam account owns, with hours played. Uses the Steam Web API when a key is set (TW_STEAM_API_KEY).
     /// If no API key is set, attempts to read recent games from the profile XML.
     /// Throws KeyNotFoundException when an API key is required, or InvalidOperationException when the profile's game list is private. Cached for 10 minutes.</summary>
+    
+    static async Task<string> ResolveSteamName(string steamId)
+    {
+        var name = steamId;
+        if (SteamKey.Length > 0 && Regex.IsMatch(SteamKey, @"^[A-Za-z0-9]{16,64}$"))
+        {
+            try
+            {
+                var json = await Http.GetStringAsync($"https://api.steampowered.com/ISteamUser/GetPlayerSummaries/v2/?key={SteamKey}&steamids={steamId}");
+                var root = JsonDocument.Parse(json).RootElement.GetProperty("response").GetProperty("players");
+                if (root.GetArrayLength() > 0)
+                {
+                    var player = root[0];
+                    var persona = player.TryGetProperty("personaname", out var pn) ? pn.GetString()?.Trim() : null;
+                    var profileUrl = player.TryGetProperty("profileurl", out var pu) ? pu.GetString()?.Trim() : null;
+                    string? vanity = null;
+                    if (!string.IsNullOrEmpty(profileUrl))
+                    {
+                        var vm = Regex.Match(profileUrl, @"/id/([^/]+)/?");
+                        if (vm.Success) vanity = vm.Groups[1].Value.Trim();
+                    }
+
+                    if (!string.IsNullOrEmpty(vanity) && !string.IsNullOrEmpty(persona) && !vanity.Equals(persona, StringComparison.OrdinalIgnoreCase))
+                    {
+                        name = $"{persona} ({vanity})";
+                    }
+                    else if (!string.IsNullOrEmpty(vanity))
+                    {
+                        name = vanity;
+                    }
+                    else if (!string.IsNullOrEmpty(persona))
+                    {
+                        name = persona;
+                    }
+                }
+            }
+            catch { }
+        }
+
+        if (name == steamId)
+        {
+            try
+            {
+                var xml = await Http.GetStringAsync($"https://steamcommunity.com/profiles/{steamId}/?xml=1");
+                var n = Regex.Match(xml, @"<steamID><!\[CDATA\[(.{1,64}?)\]\]></steamID>");
+                if (n.Success) name = n.Groups[1].Value.Trim();
+                var c = Regex.Match(xml, @"<customURL><!\[CDATA\[(.{1,64}?)\]\]></customURL>");
+                if (c.Success)
+                {
+                    var custom = c.Groups[1].Value.Trim();
+                    if (!string.IsNullOrEmpty(custom) && !custom.Equals(name, StringComparison.OrdinalIgnoreCase))
+                        name = $"{name} ({custom})";
+                }
+            }
+            catch { }
+        }
+
+        name = new string(name.Where(ch => !char.IsControl(ch)).ToArray());
+        return name.Length > 0 ? name : steamId;
+    }
+
     static async Task<List<(long App, string Name, int Hours)>> FetchOwned(string steamId)
     {
         lock (LibCache) if (LibCache.TryGetValue(steamId, out var hit) && DateTime.UtcNow - hit.At < TimeSpan.FromMinutes(10)) return hit.Games.Select(x => (x.Item1, x.Item2, x.Item3)).ToList();
         var list = new List<(long, string, int)>();
         if (SteamKey.Length > 0 && Regex.IsMatch(SteamKey, @"^[A-Za-z0-9]{16,64}$"))
         {
-            var json = await Http.GetStringAsync($"https://api.steampowered.com/IPlayerService/GetOwnedGames/v1/?key={SteamKey}&steamid={steamId}&include_appinfo=1&format=json");
+            var json = await Http.GetStringAsync($"https://api.steampowered.com/IPlayerService/GetOwnedGames/v1/?key={SteamKey}&steamid={steamId}&include_appinfo=1&include_played_free_games=1&format=json");
             var root = JsonDocument.Parse(json).RootElement.GetProperty("response");
             if (!root.TryGetProperty("games", out var gs)) throw new InvalidOperationException("private");
             foreach (var g in gs.EnumerateArray())
@@ -154,6 +223,17 @@ CREATE UNIQUE INDEX IF NOT EXISTS ux_verified_ext ON verified_tags(platform, ext
             foreach (var g in owned.OrderByDescending(x => x.Hours))
             {
                 var name = byApp.GetValueOrDefault(g.App) ?? byName.GetValueOrDefault(g.Name.ToLowerInvariant());
+                if (name == null && g.App > 0 && !string.IsNullOrWhiteSpace(g.Name))
+                {
+                    var cleanName = Core.Clean(g.Name, 80);
+                    if (cleanName.Length >= 2 && !GamesApi.IsNsfwName(cleanName))
+                    {
+                        Db.Exec("INSERT OR IGNORE INTO games(name, steamAppId, hidden) VALUES(@n, @s, 0)", ("@n", cleanName), ("@s", g.App));
+                        name = cleanName;
+                        byApp[g.App] = cleanName;
+                        byName[cleanName.ToLowerInvariant()] = cleanName;
+                    }
+                }
                 if (name == null) continue;
                 matched++;
                 list.Add(new { name, hours = g.Hours, inFavorites = favs.Contains(name, StringComparer.OrdinalIgnoreCase) });
@@ -171,12 +251,23 @@ CREATE UNIQUE INDEX IF NOT EXISTS ux_verified_ext ON verified_tags(platform, ext
             if (want.Count == 0) return Err("Pick at least one game.");
             List<(long App, string Name, int Hours)> owned;
             try { owned = await FetchOwned(steamId); } catch { return Err("Couldn't reach Steam. Try again in a moment.", 502); }   // hours come from Steam, never from the browser
+            var catalog = Db.Rows("SELECT name, steamAppId FROM games WHERE COALESCE(hidden,0)=0");
+            var byApp = catalog.Where(r => r["steamAppId"] != null).GroupBy(r => Convert.ToInt64(r["steamAppId"])).ToDictionary(g => g.Key, g => (string)g.First()["name"]!);
+            var byName = catalog.GroupBy(r => ((string)r["name"]!).ToLowerInvariant()).ToDictionary(g => g.Key, g => (string)g.First()["name"]!);
             var hours = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
-            foreach (var r in Db.Rows("SELECT name, steamAppId FROM games WHERE COALESCE(hidden,0)=0"))
+            foreach (var g in owned)
             {
-                var n = (string)r["name"]!;
-                var m = owned.FirstOrDefault(o => (r["steamAppId"] != null && o.App == Convert.ToInt64(r["steamAppId"])) || o.Name.Equals(n, StringComparison.OrdinalIgnoreCase));
-                if (m.Name != null) hours[n] = m.Hours;
+                var n = byApp.GetValueOrDefault(g.App) ?? byName.GetValueOrDefault(g.Name.ToLowerInvariant());
+                if (n == null && g.App > 0 && !string.IsNullOrWhiteSpace(g.Name))
+                {
+                    var cleanName = Core.Clean(g.Name, 80);
+                    if (cleanName.Length >= 2 && !GamesApi.IsNsfwName(cleanName))
+                    {
+                        Db.Exec("INSERT OR IGNORE INTO games(name, steamAppId, hidden) VALUES(@n, @s, 0)", ("@n", cleanName), ("@s", g.App));
+                        n = cleanName;
+                    }
+                }
+                if (n != null) hours[n] = g.Hours;
             }
             var cur = (JsonSerializer.Deserialize<string[]>(Db.Scalar("SELECT games FROM users WHERE id=@i", ("@i", me)) as string ?? "[]") ?? Array.Empty<string>()).ToList();
             foreach (var g in want) { if (!cur.Contains(g, StringComparer.OrdinalIgnoreCase)) { if (cur.Count >= 12) break; cur.Add(g); } }
@@ -219,16 +310,8 @@ CREATE UNIQUE INDEX IF NOT EXISTS ux_verified_ext ON verified_tags(platform, ext
             catch { return Page("Couldn't reach Steam", "Try again in a moment.", false); }
             if (!Regex.IsMatch(reply, @"(^|\n)is_valid:true\s*($|\n)")) return Page("Not verified", "Steam didn't confirm that sign-in.", false);
 
-            var steamId = m.Groups[1].Value; var name = steamId;
-            try   // the public profile page gives the display name; if it can't be read we show the id instead
-            {
-                var xml = await Http.GetStringAsync($"https://steamcommunity.com/profiles/{steamId}/?xml=1");
-                var n = Regex.Match(xml, @"<steamID><!\[CDATA\[(.{1,64}?)\]\]></steamID>");
-                if (n.Success) name = n.Groups[1].Value.Trim();
-            }
-            catch { /* keep the id */ }
-            name = new string(name.Where(ch => !char.IsControl(ch)).ToArray());
-            if (name.Length == 0) name = steamId;
+            var steamId = m.Groups[1].Value;
+            var name = await ResolveSteamName(steamId);
             if (!Save(uid.Value, "Steam", name, steamId, out var err)) return Page("Already linked", err, false);
             return Page("Steam linked", $"Your Steam account “{name}” is now verified on your profile.", true);
         });

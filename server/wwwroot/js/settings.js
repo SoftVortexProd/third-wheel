@@ -229,7 +229,8 @@ function profileTab(panel, ctx) {
   const idCard = card(cardHead(t('Name')), idForm);
 
   /* region, age (locked once chosen), status, playing, favorite games */
-  const region = selectEl(TW.S.meta.regions, me.region || '', t('Choose a region'));
+  const autoReg = (TW.detectRegion ? TW.detectRegion() : 'EU');
+  const region = selectEl(TW.S.meta.regions, me.region || autoReg, t('Choose a region'));
   const calcAge = TW.calcAge || ((bd) => {
     if (!bd) return 0;
     const b = new Date(bd), today = new Date();
@@ -244,7 +245,7 @@ function profileTab(panel, ctx) {
   // "Currently playing" is a real game or nothing: pick it from the list (the desktop app also sets it automatically).
   const playing = gamePicker({ multi: false, value: T(me.playing || ''), placeholder: t('Not playing anything') });
   const gp = gamePicker({ multi: true, value: me.favoriteGames || [] });
-  const fr = field(t('Region'), region);
+  const fr = field(t('Region'), region, me.region ? t('Your matchmaking region.') : t('Auto-detected based on your location: {0}', autoReg));
   const fa = field(t('Birthday'), bday, me.age ? t('Age: {0} (automatically updated each year)', me.age) : t('Must be 13 or older.'));
   const fs = field(t('Status'), status), fp = field(t('Currently playing'), playing, t('Pick a game. It shows next to your name in friends lists.'));
   const save = h('button', { class: 'btn', type: 'submit' }, t('Save changes'));

@@ -254,6 +254,8 @@ TWPrefs.addStrings('sv', {
   'Secondary role': 'Sekundär roll',
   'Add secondary role': 'Lägg till sekundär roll',
   'Unranked': 'Orankad',
+  'Auto-detected based on your location: {0}': 'Automatiskt vald baserat på din plats: {0}',
+  'Your matchmaking region.': 'Din matchmaking-region.',
   'Instant 30s Clip Catcher (F8)': 'Snabbklipp-inspelare 30 sek (F8)',
   'Press F8 in any game to capture the last 30 seconds and upload it directly into chat.': 'Tryck F8 i valfritt spel för att spara de senaste 30 sekunderna och ladda upp direkt i chatten.'
 });
