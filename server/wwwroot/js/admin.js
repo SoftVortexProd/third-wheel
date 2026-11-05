@@ -29,7 +29,7 @@ window.TWAccount = {
       } catch (ex) { if (/current/i.test(ex.message)) fc.setError(ex.message); else toast(ex.message, 'error'); }
       finally { save.disabled = false; idle(); }
     } }, fc, h('div', { class: 'row' }, fn, fa), h('div', {}, save));
-    return h('div', { class: 'card', style: 'padding:24px' }, h('h3', { text: t('Password'), style: 'margin-bottom:12px' }), form);
+    return h('div', { class: 'card' }, h('h3', { text: t('Password') }), form);
   }
 };
 

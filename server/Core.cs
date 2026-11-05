@@ -152,7 +152,8 @@ public static class Core
             onboarded = Convert.ToInt32(u["onboarded"]) == 1, status = EffectiveStatus(uid, (string)u["status"]!),
             playing = u["playing"] as string,
             playingWith = PlayingPartyCount(uid, u["playing"] as string),
-            banner = BannerUrl(uid, Col(u, "bannerVer"))
+            banner = BannerUrl(uid, Col(u, "bannerVer")),
+            tosAccepted = Convert.ToInt32(Col(u, "tosAccepted") ?? 0) == 1
         };
     }
     public static string? AvatarUrl(long id, object? ver) => ver != null && Convert.ToInt64(ver) > 0 ? $"/api/avatars/{id}?v={Convert.ToInt64(ver)}" : null;

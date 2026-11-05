@@ -90,7 +90,9 @@ const ICONS = {
   compass: 'M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20zM16 8l-2 6-6 2 2-6z',
   msg: 'M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z',
   mega: 'M3 11v2a1 1 0 0 0 1 1h2l5 4V6L6 10H4a1 1 0 0 0-1 1zM15 9a4 4 0 0 1 0 6M18 6a8 8 0 0 1 0 12',
-  shield: 'M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10zM9 12l2 2 4-4'
+  shield: 'M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10zM9 12l2 2 4-4',
+  camera: 'M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2zM12 17a4 4 0 1 0 0-8 4 4 0 0 0 0 8z',
+  video: 'M23 7l-7 5 7 5V7zM1 5a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V5z'
 };
 function icon(name, size = 22) {
   const s = document.createElementNS(SVGNS, 'svg');
@@ -668,14 +670,14 @@ function openSheet(title, body, opts = {}) {
   const prev = document.activeElement;
   let closing = false;
   const ov = h('div', { class: 'overlay' });
+  const closeBtn = opts.unclosable ? null : h('button', { class: 'icon-btn', type: 'button', 'aria-label': 'Close', onclick: () => close() }, icon('x'));
   const panel = h('div', { class: 'sheet' + (opts.cls ? ' ' + opts.cls : ''), role: 'dialog', 'aria-modal': 'true', 'aria-label': title },
-    h('div', { class: 'sheet-head' }, h('h2', { text: title }),
-      h('button', { class: 'icon-btn', type: 'button', 'aria-label': 'Close', onclick: () => close() }, icon('x'))),
+    h('div', { class: 'sheet-head' }, h('h2', { text: title }), closeBtn),
     h('div', { class: 'sheet-body' }, body));
   ov.append(panel);
   const focusables = () => [...panel.querySelectorAll('button,[href],input,select,textarea,[tabindex]:not([tabindex="-1"])')].filter(x => !x.disabled);
   function key(e) {
-    if (e.key === 'Escape') { e.preventDefault(); close(); }
+    if (e.key === 'Escape') { if (!opts.unclosable) { e.preventDefault(); close(); } }
     else if (e.key === 'Tab') {
       const f = focusables(); if (!f.length) return;
       if (e.shiftKey && document.activeElement === f[0]) { e.preventDefault(); f[f.length - 1].focus(); }
@@ -687,7 +689,7 @@ function openSheet(title, body, opts = {}) {
     document.removeEventListener('keydown', key);
     TWM.sheetOut(prev, panel, ov).then(() => { ov.remove(); if (prev && prev.focus) prev.focus(); });
   }
-  ov.addEventListener('mousedown', (e) => { if (e.target === ov) close(); });
+  ov.addEventListener('mousedown', (e) => { if (e.target === ov && !opts.unclosable) close(); });
   document.addEventListener('keydown', key);
   document.body.append(ov);
   TWM.sheetIn(prev, panel, ov);
@@ -734,6 +736,90 @@ function personRow(p, o = {}) {
   return row;
 }
 
+/* ================= legal policies & consent ================= */
+function showTermsOfService() {
+  const body = h('div', { class: 'stack', style: 'gap:12px;max-height:70vh;overflow-y:auto;padding-right:4px;font-size:14px;line-height:1.6;' },
+    h('h3', { text: tr('1. Respect Other Players') }),
+    h('p', { class: 'muted', text: tr('Third Wheel is built for gamers to connect, play, and have fun. We have zero tolerance for hate speech, harassment, bullying, impersonation, doxxing, cheating, or sexually explicit content.') }),
+    h('h3', { text: tr('2. Account Responsibility & Age') }),
+    h('p', { class: 'muted', text: tr('You must be at least 13 years old to use Third Wheel. You are responsible for all actions conducted on your account.') }),
+    h('h3', { text: tr('3. Moderation & Enforcement') }),
+    h('p', { class: 'muted', text: tr('Lobby and group creators manage their own rooms. Platform administrators reserve the right to warn, suspend, delete accounts, or permanently device-ban bad actors.') }),
+    h('h3', { text: tr('4. Peer-to-Peer Voice & Video') }),
+    h('p', { class: 'muted', text: tr('Voice and video chats are streamed directly between users using encrypted WebRTC. Third Wheel servers do not record or listen into your live communications.') }),
+    h('h3', { text: tr('5. Service Availability') }),
+    h('p', { class: 'muted', text: tr('Third Wheel is provided "as is" without warranty. We strive for uninterrupted gaming uptime, but reserve the right to perform necessary updates and maintenance.') })
+  );
+  openSheet(tr('Terms of Service'), body);
+}
+
+function showPrivacyPolicy() {
+  const body = h('div', { class: 'stack', style: 'gap:12px;max-height:70vh;overflow-y:auto;padding-right:4px;font-size:14px;line-height:1.6;' },
+    h('h3', { text: tr('1. Data We Collect') }),
+    h('p', { class: 'muted', text: tr('We collect only the information needed to connect you with gaming groups: your chosen username, birthdate (used to match you by age bracket and ensure you are 13+), regional ping preference, and favorite games.') }),
+    h('h3', { text: tr('2. Device & Security Telemetry') }),
+    h('p', { class: 'muted', text: tr('To prevent ban evasion and troll attacks, we record your IP address and hardware device identifier. This data is strictly used for security, abuse moderation, and session authorization.') }),
+    h('h3', { text: tr('3. Peer-to-Peer (P2P) Realtime Media') }),
+    h('p', { class: 'muted', text: tr('Your voice and camera streams travel directly between peers in your group. None of your voice or video data is recorded, saved, or analyzed on Third Wheel servers.') }),
+    h('h3', { text: tr('4. Chat Messages & Media') }),
+    h('p', { class: 'muted', text: tr('Text messages and uploaded files are stored securely so you and your group members can view your conversation history across devices.') }),
+    h('h3', { text: tr('5. We Never Sell Your Data') }),
+    h('p', { class: 'muted', text: tr('We do not sell, rent, or share personal information with third-party advertisers or data brokers.') })
+  );
+  openSheet(tr('Privacy Policy'), body);
+}
+
+function showCookiePolicy() {
+  const body = h('div', { class: 'stack', style: 'gap:12px;max-height:70vh;overflow-y:auto;padding-right:4px;font-size:14px;line-height:1.6;' },
+    h('h3', { text: tr('What are cookies & local storage?') }),
+    h('p', { class: 'muted', text: tr('Cookies and local storage are small text files placed on your device to keep you signed in and remember your preferences.') }),
+    h('h3', { text: tr('Strictly Essential Cookies Only') }),
+    h('p', { class: 'muted', text: tr('Third Wheel uses cookies exclusively for core functionality. We use:') }),
+    h('ul', { style: 'padding-left:18px;color:var(--color-text-2);margin:4px 0;' },
+      h('li', { text: tr('tw_session: An encrypted session cookie so you remain signed into your account.') }),
+      h('li', { text: tr('Preferences: Local storage entries for theme (light/dark/custom), language, and audio devices (microphone/speaker selection).') })
+    ),
+    h('h3', { text: tr('No Tracking or Advertising Cookies') }),
+    h('p', { class: 'muted', text: tr('We do not use advertising cookies, marketing pixels, or third-party trackers.') })
+  );
+  openSheet(tr('Cookie Policy'), body);
+}
+
+function checkTosAndCookiesConsent() {
+  if (!S.me) return;
+  const accepted = S.me.tosAccepted || localStorage.getItem('tw_tos_accepted');
+  if (accepted) return;
+
+  const body = h('div', { class: 'stack', style: 'gap:14px' });
+  body.append(
+    h('p', { class: 'muted', style: 'font-size:14px;line-height:1.5;', text: tr('Welcome! Before continuing, please review and accept Third Wheel’s Terms of Service, Privacy Policy, and Cookie Policy.') }),
+    h('div', { style: 'background:var(--color-hover);padding:12px;border-radius:8px;font-size:13px;display:flex;flex-direction:column;gap:6px;' },
+      h('div', {}, h('b', { text: tr('Terms of Service: ') }), h('span', { text: tr('Zero tolerance for harassment, cheating, or abusive behavior.') })),
+      h('div', {}, h('b', { text: tr('Privacy & Voice: ') }), h('span', { text: tr('Voice and video calls are direct peer-to-peer (P2P). We never record them.') })),
+      h('div', {}, h('b', { text: tr('Cookies: ') }), h('span', { text: tr('We use essential cookies and storage solely to keep you signed in and remember your settings.') }))
+    ),
+    h('div', { style: 'display:flex;gap:12px;flex-wrap:wrap;font-size:13px;' },
+      h('a', { href: '#', text: tr('Read Terms of Service'), onclick: (e) => { e.preventDefault(); showTermsOfService(); } }),
+      h('a', { href: '#', text: tr('Read Privacy Policy'), onclick: (e) => { e.preventDefault(); showPrivacyPolicy(); } }),
+      h('a', { href: '#', text: tr('Read Cookie Policy'), onclick: (e) => { e.preventDefault(); showCookiePolicy(); } })
+    )
+  );
+
+  const acceptBtn = h('button', { class: 'btn block', type: 'button', text: tr('I Accept & Continue') });
+  body.append(h('div', { style: 'margin-top:8px;' }, acceptBtn));
+
+  const close = openSheet(tr('Terms of Service & Cookie Consent'), body, { unclosable: true, cls: 'tos-consent-sheet' });
+  acceptBtn.addEventListener('click', async () => {
+    busy(acceptBtn, async () => {
+      try { await api('POST', '/api/me/tos'); } catch {}
+      localStorage.setItem('tw_tos_accepted', '1');
+      if (S.me) S.me.tosAccepted = true;
+      close();
+      toast(tr('Terms & Cookies accepted. Welcome!'));
+    });
+  });
+}
+
 /* ================= auth ================= */
 const USER_RE = /^[A-Za-z0-9_.-]{3,20}$/;
 function renderAuth() {
@@ -745,10 +831,21 @@ function renderAuth() {
   const fp = field(tr('Password'), pass);
   const err = h('div', { class: 'form-error', role: 'alert' });
   const submit = h('button', { class: 'btn block', type: 'submit' }, tr('Log in'));
+
+  const tosCheck = h('input', { type: 'checkbox', id: 'auth-tos', style: 'margin-top:2px;cursor:pointer;' });
+  const tosLink = h('a', { href: '#', text: tr('Terms of Service'), onclick: (e) => { e.preventDefault(); showTermsOfService(); } });
+  const privLink = h('a', { href: '#', text: tr('Privacy Policy'), onclick: (e) => { e.preventDefault(); showPrivacyPolicy(); } });
+  const cookieLink = h('a', { href: '#', text: tr('Cookie Policy'), onclick: (e) => { e.preventDefault(); showCookiePolicy(); } });
+  const tosLabel = h('label', { for: 'auth-tos', style: 'font-size:12px;line-height:1.4;color:var(--color-text-2);cursor:pointer;' },
+    tr('I agree to the '), tosLink, tr(', '), privLink, tr(', and essential '), cookieLink, '.'
+  );
+  const tosRow = h('div', { class: 'auth-tos-row', style: 'display:none;align-items:flex-start;gap:8px;margin:4px 0 8px;' }, tosCheck, tosLabel);
+
   const tb = tabs([['login', tr('Log in')], ['signup', tr('Sign up')]], 'login', (k) => {
     mode = k; submit.textContent = k === 'login' ? tr('Log in') : tr('Create account'); err.textContent = '';
     pass.autocomplete = k === 'login' ? 'current-password' : 'new-password';
     fu.setError(''); fp.setError('');
+    tosRow.style.display = (mode === 'signup' ? 'flex' : 'none');
   }, tr('Account'));
   const form = h('form', { novalidate: true, onsubmit: async (e) => {
     e.preventDefault(); err.textContent = '';
@@ -756,6 +853,10 @@ function renderAuth() {
     const okU = fu.setError(USER_RE.test(u) ? '' : tr('Use 3–20 letters, numbers, . _ or -'));
     const okP = fp.setError(p.length >= 8 ? '' : tr('Password must be at least 8 characters'));
     if (!okU || !okP) return;
+    if (mode === 'signup' && !tosCheck.checked) {
+      err.textContent = tr('You must agree to the Terms of Service, Privacy Policy, and Cookies to sign up.');
+      return;
+    }
     submit.disabled = true; const idle = TWM.busyBtn(submit);
     try {
       const r = await api('POST', '/api/auth/' + mode, { username: u, password: p });
@@ -768,7 +869,7 @@ function renderAuth() {
       err.textContent = T(ex.message);
     }
     finally { submit.disabled = false; idle(); }
-  } }, fu, fp, err, submit);
+  } }, fu, fp, tosRow, err, submit);
   document.title = 'Third Wheel';
   const card = h('div', { class: 'card auth-card' },
     h('div', { class: 'brand' }, h('img', { src: 'icon.svg', alt: '', width: 32, height: 32 }), 'Third Wheel'),
@@ -2452,6 +2553,7 @@ async function start() {
   if (window.TWPrefs) await TWPrefs.load();   // accent colour, text size, language: applied before the first screen is built
   if (!S.me.onboarded) { renderOnboarding(); return; }
   buildShell();
+  checkTosAndCookiesConsent();
   if (window.TWRT && !S.rtOn) { S.rtOn = true; TWRT.on('social', () => { if (S.me && !document.hidden) poll(); }); TWRT.on('rt.up', () => { if (S.me) poll(); }); }
   if (window.TWRT) TWRT.start();
   try { await Promise.all([loadSocial(), refreshMine()]); } catch (e) { toast(e.message, 'error'); }
@@ -2478,6 +2580,7 @@ window.TW = { detectRegion, calcAge,
   openSheet, confirmSheet, btn, busy, field, tabs, selectEl, suggestInput, gamePicker, switchEl, emptyState, stagger, when,
   personRow, groupCard, makeChat, openProfile, go, show, route, stale, playingStatusText, gameThumb, groupTile,
   loadSocial, refreshMine, renderFriends, renderBadge, renderUserPanel, applyAutoGame,
+  showTermsOfService, showPrivacyPolicy, showCookiePolicy, checkTosAndCookiesConsent,
   t: tr, loggedOut, prepAvatar, sendAvatar, sendBanner, cropImage, autoOn,
   get S() { return S; }, get me() { return S.me; }, set me(u) { S.me = u; }
 };

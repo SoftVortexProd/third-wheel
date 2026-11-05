@@ -158,7 +158,13 @@ public static class Voice
     public static List<long> Present(long gid) { lock (Gate) return Rooms.TryGetValue(gid, out var r) ? r.Peers.Select(p => p.Uid).Distinct().ToList() : new(); }
     public static Dictionary<long, List<long>> All() { lock (Gate) return Rooms.Where(kv => kv.Value.Peers.Count > 0).ToDictionary(kv => kv.Key, kv => kv.Value.Peers.Select(p => p.Uid).Distinct().ToList()); }
 
-    static void Update(long gid) => Realtime.ToUsers(Db.Rows("SELECT userId FROM members WHERE groupId=@g", ("@g", gid)).Select(r => (long)r["userId"]!), new { t = "vc.update", gid, who = Present(gid) });
+    static void Update(long gid)
+    {
+        var ids = Present(gid);
+        var members = Db.Rows("SELECT userId FROM members WHERE groupId=@g", ("@g", gid)).Select(r => (long)r["userId"]!).ToList();
+        var people = ids.Count == 0 ? new List<object>() : Db.Rows($"SELECT * FROM users WHERE id IN ({string.Join(",", ids)})").Select(u => (object)Core.PersonObj(u, false)).ToList();
+        Realtime.ToUsers(members, new { t = "vc.update", gid, who = ids, people });
+    }
 
     public static void Handle(long uid, Guid conn, string t, JsonElement m, Action<long, string> toUser, Action<Guid, string> toConn)
     {

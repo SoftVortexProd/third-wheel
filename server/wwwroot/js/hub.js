@@ -258,4 +258,18 @@ TWPrefs.addStrings('sv', {
   'Your matchmaking region.': 'Din matchmaking-region.',
   'Instant 30s Clip Catcher (F8)': 'Snabbklipp-inspelare 30 sek (F8)',
   'Press F8 in any game to capture the last 30 seconds and upload it directly into chat.': 'Tryck F8 i valfritt spel för att spara de senaste 30 sekunderna och ladda upp direkt i chatten.'
+,
+  'Terms of Service': 'Användarvillkor',
+  'Privacy Policy': 'Integritetspolicy',
+  'Cookie Policy': 'Cookiepolicy',
+  'I agree to the ': 'Jag godkänner ',
+  ', and essential ': ', och nödvändiga ',
+  'You must agree to the Terms of Service, Privacy Policy, and Cookies to sign up.': 'Du måste godkänna användarvillkoren, integritetspolicyn och cookies för att registrera dig.',
+  'Terms of Service & Cookie Consent': 'Användarvillkor & Cookies',
+  'I Accept & Continue': 'Jag godkänner & fortsätt',
+  'Terms & Cookies accepted. Welcome!': 'Villkor & cookies godkända. Välkommen!',
+  'Welcome! Before continuing, please review and accept Third Wheel’s Terms of Service, Privacy Policy, and Cookie Policy.': 'Välkommen! Innan du fortsätter, vänligen läs och godkänn Third Wheels användarvillkor, integritetspolicy och cookiepolicy.',
+  'Read Terms of Service': 'Läs användarvillkor',
+  'Read Privacy Policy': 'Läs integritetspolicy',
+  'Read Cookie Policy': 'Läs cookiepolicy'
 });

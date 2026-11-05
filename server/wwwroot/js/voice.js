@@ -162,12 +162,42 @@ window.addEventListener('click', unlockAutoplay, { passive: true });
 window.addEventListener('touchstart', unlockAutoplay, { passive: true });
 window.addEventListener('keydown', unlockAutoplay, { passive: true });
 
+const present = new Map();         // gid -> [user ids]
+const presentUsers = new Map();    // gid -> [user objects]
+const btns = new Set();            // buttons on screen (to paint them when presence changes)
+
 /* ---------- UI ---------- */
-function paintOne(b) {
-  const gid = Number(b.dataset.gid), n = (present.get(gid) || []).length, inRoom = room && room.gid === gid;
+function paintOne(wrap) {
+  const gid = Number(wrap.dataset.gid);
+  const b = wrap.querySelector ? (wrap.querySelector('.vc-btn') || wrap) : wrap;
+  const stack = wrap.querySelector ? wrap.querySelector('.vc-avatar-stack') : null;
+  const who = present.get(gid) || [];
+  const users = presentUsers.get(gid) || [];
+  const n = who.length;
+  const inRoom = room && room.gid === gid;
   b.classList.toggle('vc-live', n > 0);
   b.replaceChildren(icon('mic', 16), inRoom ? t('Leave voice') : (n ? t('In voice: {n}', { n }) : t('Join voice')));
   b.setAttribute('aria-pressed', String(!!inRoom));
+
+  if (stack) {
+    if (n === 0) {
+      stack.replaceChildren();
+      stack.style.display = 'none';
+    } else {
+      stack.style.display = 'inline-flex';
+      const items = [];
+      const showUsers = users.length ? users.slice(0, 4) : who.slice(0, 4).map(id => ({ id }));
+      for (const u of showUsers) {
+        const av = avatar(u, 'xs');
+        av.title = nm(u);
+        items.push(av);
+      }
+      if (n > 4) {
+        items.push(h('span', { class: 'vc-stack-more', text: '+' + (n - 4) }));
+      }
+      stack.replaceChildren(...items);
+    }
+  }
 }
 function paintButtons() {
   for (const b of [...btns]) {
@@ -176,11 +206,19 @@ function paintButtons() {
   }
 }
 function button(g) {
+  const wrap = h('div', { class: 'vc-btn-wrap', 'data-gid': g.id });
   const b = h('button', { class: 'btn small vc-btn', type: 'button', 'data-gid': g.id });
   b.addEventListener('click', () => { if (room && room.gid === g.id) leave(); else join(g.id, T(g.name)); });
-  btns.add(b); paintOne(b);
-  api('GET', `/api/groups/${g.id}/voice`).then(r => { present.set(g.id, r.people.map(p => p.id)); paintButtons(); }).catch(() => {});
-  return b;
+  const stack = h('div', { class: 'vc-avatar-stack' });
+  wrap.append(b, stack);
+  btns.add(wrap);
+  paintOne(wrap);
+  api('GET', `/api/groups/${g.id}/voice`).then(r => {
+    present.set(g.id, (r.people || []).map(p => p.id));
+    presentUsers.set(g.id, r.people || []);
+    paintButtons();
+  }).catch(() => {});
+  return wrap;
 }
 
 function updateVideoPanel() {
@@ -190,36 +228,70 @@ function updateVideoPanel() {
   const total = (hasLocalVideo ? 1 : 0) + remoteVideos.length;
 
   if (total === 0) {
-    if (room.videoGrid) { room.videoGrid.remove(); room.videoGrid = null; }
+    if (room.videoGrid) { room.videoGrid.remove(); room.videoGrid = null; room.videoTiles = null; }
     return;
   }
 
   if (!room.videoGrid) {
     room.videoGrid = h('div', { class: 'vc-video-grid' });
+    room.videoTiles = new Map();
     document.body.append(room.videoGrid);
   }
 
-  const tiles = [];
+  const activeKeys = new Set();
+  const currentTiles = room.videoTiles || (room.videoTiles = new Map());
+
   if (hasLocalVideo) {
-    const v = h('video', { autoplay: true, playsinline: true, muted: true });
-    v.srcObject = new MediaStream([room.videoTrack]);
-    const tile = h('div', { class: 'vc-video-tile' }, v,
-      h('span', { class: 'vc-video-label' }, avatar(TW.me, 'sm'), h('b', { text: t('You') }))
-    );
-    tiles.push(tile);
+    activeKeys.add('local');
+    let entry = currentTiles.get('local');
+    if (!entry) {
+      const v = h('video', { autoplay: true, playsinline: true, muted: true });
+      v.srcObject = new MediaStream([room.videoTrack]);
+      const tile = h('div', { class: 'vc-video-tile' }, v,
+        h('span', { class: 'vc-video-label' }, avatar(TW.me, 'sm'), h('b', { text: t('You') }))
+      );
+      v.play().catch(() => {});
+      entry = { tile, video: v, stream: v.srcObject };
+      currentTiles.set('local', entry);
+      room.videoGrid.append(tile);
+    } else {
+      if (entry.video.srcObject !== room.stream) {
+        entry.video.srcObject = new MediaStream([room.videoTrack]);
+        entry.video.play().catch(() => {});
+      }
+    }
   }
 
   for (const p of remoteVideos) {
-    const v = h('video', { autoplay: true, playsinline: true });
-    v.srcObject = p.videoStream || new MediaStream([p.videoTrack]);
-    const u = p.person || { id: p.uid, username: p.name, displayName: p.name };
-    const tile = h('div', { class: 'vc-video-tile' }, v,
-      h('span', { class: 'vc-video-label' }, avatar(u, 'sm'), h('b', { text: nm(u) }))
-    );
-    tiles.push(tile);
+    const key = String(p.uid);
+    activeKeys.add(key);
+    let entry = currentTiles.get(key);
+    const stream = p.videoStream || new MediaStream([p.videoTrack]);
+    if (!entry) {
+      const v = h('video', { autoplay: true, playsinline: true });
+      v.srcObject = stream;
+      const u = p.person || { id: p.uid, username: p.name, displayName: p.name };
+      const tile = h('div', { class: 'vc-video-tile' }, v,
+        h('span', { class: 'vc-video-label' }, avatar(u, 'sm'), h('b', { text: nm(u) }))
+      );
+      v.play().catch(() => {});
+      entry = { tile, video: v };
+      currentTiles.set(key, entry);
+      room.videoGrid.append(tile);
+    } else {
+      if (entry.video.srcObject !== stream) {
+        entry.video.srcObject = stream;
+        entry.video.play().catch(() => {});
+      }
+    }
   }
 
-  room.videoGrid.replaceChildren(...tiles);
+  for (const [key, entry] of currentTiles.entries()) {
+    if (!activeKeys.has(key)) {
+      entry.tile.remove();
+      currentTiles.delete(key);
+    }
+  }
 }
 
 async function toggleCamera() {
@@ -234,11 +306,17 @@ async function toggleCamera() {
       room.cam = true;
       room.videoTrack = track;
       track.onended = () => { if (room && room.cam) toggleCamera(); };
-      room.stream.addTrack(track);
+      try { room.stream.addTrack(track); } catch {}
 
       for (const p of room.peers.values()) {
         try {
-          p.pc.addTrack(track, room.stream);
+          const senders = p.pc.getSenders();
+          let vs = senders.find(s => s.track && s.track.kind === 'video') || senders.find(s => s.kind === 'video');
+          if (vs) {
+            await vs.replaceTrack(track);
+          } else {
+            p.pc.addTrack(track, room.stream);
+          }
           const offer = await p.pc.createOffer();
           await p.pc.setLocalDescription(offer);
           TWRT.send({ t: 'vc.signal', gid: room.gid, to: p.uid, data: { sdp: p.pc.localDescription } });
@@ -257,8 +335,8 @@ async function toggleCamera() {
       for (const p of room.peers.values()) {
         try {
           const senders = p.pc.getSenders();
-          const vs = senders.find(s => s.track && s.track.kind === 'video');
-          if (vs) p.pc.removeTrack(vs);
+          const vs = senders.find(s => s.track && s.track.kind === 'video') || senders.find(s => s.kind === 'video');
+          if (vs) await vs.replaceTrack(null);
           const offer = await p.pc.createOffer();
           await p.pc.setLocalDescription(offer);
           TWRT.send({ t: 'vc.signal', gid: room.gid, to: p.uid, data: { sdp: p.pc.localDescription } });
@@ -376,6 +454,7 @@ function meter(stream, onLevel) {
 async function makePeer(uid, name, initiator) {
   if (!room || room.peers.has(uid)) return room && room.peers.get(uid);
   const pc = new RTCPeerConnection({ iceServers: await iceServers() });
+  try { pc.addTransceiver('video', { direction: 'sendrecv' }); } catch {}
   const peer = { uid, name, pc, audio: null, videoTrack: null, videoStream: null, muted: false, speaking: false, state: 'new', stopMeter: null, pending: [] };
   room.peers.set(uid, peer);
   api('GET', '/api/users/' + uid).then(p => { peer.person = p; peer.name = nm(p); drawBar(); }).catch(() => {});
@@ -530,7 +609,11 @@ TWRT.on('vc.peer', (m) => {
 TWRT.on('vc.left', (m) => { if (room && m.gid === room.gid) { const p = room.peers.get(m.uid); if (p) toast(t('{name} left the voice chat', { name: p.name })); dropPeer(m.uid); } });
 TWRT.on('vc.signal', onSignal);
 TWRT.on('vc.state', (m) => { if (room && m.gid === room.gid) { const p = room.peers.get(m.uid); if (p) { p.muted = !!m.muted; drawBar(); } } });
-TWRT.on('vc.update', (m) => { present.set(m.gid, m.who || []); paintButtons(); });
+TWRT.on('vc.update', (m) => {
+  present.set(m.gid, m.who || []);
+  if (m.people) presentUsers.set(m.gid, m.people);
+  paintButtons();
+});
 TWRT.on('vc.error', (m) => { toast(m.error || 'Voice chat error.', 'error'); if (room && room.gid === m.gid && !room.joined) leave(); });
 TWRT.on('rt.down', () => { if (room) { toast(t('Live connection is down. Voice chat needs it.'), 'error'); leave(); } });
 addEventListener('beforeunload', () => { if (room) TWRT.send({ t: 'vc.leave', gid: room.gid }); });

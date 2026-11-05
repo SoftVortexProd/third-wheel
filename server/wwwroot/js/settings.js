@@ -247,8 +247,8 @@ function profileTab(panel, ctx) {
   // "Currently playing" is a real game or nothing: pick it from the list (the desktop app also sets it automatically).
   const playing = gamePicker({ multi: false, value: T(me.playing || ''), placeholder: t('Not playing anything') });
   if (!isDesktop) {
-    playing.el.style.opacity = '0.6';
-    playing.el.style.pointerEvents = 'none';
+    playing.style.opacity = '0.6';
+    playing.style.pointerEvents = 'none';
   }
   const gp = gamePicker({ multi: true, value: me.favoriteGames || [] });
   const fr = field(t('Region'), region, me.region ? t('Your matchmaking region.') : t('Auto-detected based on your location: {0}', autoReg));
@@ -604,8 +604,16 @@ function languageTab(panel) {
 /* ---- Account & security ---- */
 function accountTab(panel) {
   const out = btn(t('Log out'), { cls: 'danger', onclick: async () => { try { await api('POST', '/api/auth/logout'); } catch { /* ignore */ } TW.loggedOut(); } });
+  const legalRow = h('div', { class: 'srow-legal', style: 'display:flex;gap:12px;align-items:center;margin-top:8px;font-size:12px;color:var(--color-text-3);' },
+    h('a', { href: '#', text: t('Terms of Service'), onclick: (e) => { e.preventDefault(); if (TW.showTermsOfService) TW.showTermsOfService(); } }),
+    h('span', { text: '·' }),
+    h('a', { href: '#', text: t('Privacy Policy'), onclick: (e) => { e.preventDefault(); if (TW.showPrivacyPolicy) TW.showPrivacyPolicy(); } }),
+    h('span', { text: '·' }),
+    h('a', { href: '#', text: t('Cookie Policy'), onclick: (e) => { e.preventDefault(); if (TW.showCookiePolicy) TW.showCookiePolicy(); } })
+  );
   panel.append(window.TWAccount ? TWAccount.card() : h('span'),
-    h('div', { class: 'card scard logout-card' }, h('div', {}, h('div', { class: 'scard-title-row' }, ico('logout', 20), h('h3', { text: t('Log out') })), h('p', { class: 'muted small', text: t('You’ll need your password to come back.') })), out));
+    h('div', { class: 'card scard logout-card' }, h('div', {}, h('div', { class: 'scard-title-row' }, ico('logout', 20), h('h3', { text: t('Log out') })), h('p', { class: 'muted small', text: t('You’ll need your password to come back.') })), out),
+    legalRow);
 }
 
 /* Folding rows: every settings card becomes one line (its title) that opens when you click it. Works on cards built by other modules too (RCKT, password, ...). */
@@ -631,6 +639,7 @@ function foldify(panel, openFirst) {
     const open = !!openFirst && total <= 1;                    // tabs with a single card (Connections, Language) show it; everything else starts as one line each
     const set = (on) => { card.classList.toggle('open', on); head.setAttribute('aria-expanded', String(on)); body.hidden = !on; };
     head.addEventListener('click', () => set(!card.classList.contains('open')));
+    card.style.padding = ''; card.style.gap = '';
     card.replaceChildren(head, body); card.classList.add('fold'); card.dataset.fold = '1'; set(open);
   }
 }

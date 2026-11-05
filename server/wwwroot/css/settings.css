@@ -33,10 +33,10 @@ h3 { line-height: calc(20px * var(--ts, 1)); }
 .snav[aria-current="page"] { color: var(--color-text); background: transparent; }
 .settings-nav .slide-pill { border-radius: var(--radius-md); }
 .settings-body { min-width: 0; }
-.settings-panel { display: flex; flex-direction: column; gap: var(--space-5); min-width: 0; }
+.settings-panel { display: flex; flex-direction: column; gap: var(--space-3); min-width: 0; }
 .settings-panel[hidden] { display: none; }
 .settings-panel .card { min-width: 0; }
-.scard { padding: 24px; display: flex; flex-direction: column; gap: var(--space-4); }
+.scard { padding: 14px 16px; display: flex; flex-direction: column; gap: var(--space-3); }
 .scard > div > h3 + p { margin-top: 2px; }
 
 /* ---------- Rows, switches, tags ---------- */

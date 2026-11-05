@@ -163,7 +163,7 @@ api.MapPost("auth/signup", (HttpContext c, Creds b) =>
     if (Db.Scalar("SELECT 1 FROM users WHERE username=@u COLLATE NOCASE", ("@u", name)) != null) return Err("That username is taken.", 409);
     var id = Db.CreateUser(name, pw, "NA-East", 0, Array.Empty<string>(), "online", null, false);
     var dev = ClientDeviceId(c);
-    Db.Exec("UPDATE users SET lastIp=@ip, deviceId=@d WHERE id=@i", ("@ip", ip), ("@d", dev), ("@i", id));
+    Db.Exec("UPDATE users SET lastIp=@ip, deviceId=@d, tosAccepted=1 WHERE id=@i", ("@ip", ip), ("@d", dev), ("@i", id));
     StartSession(c, id);
     return Results.Json(new { user = UserDto(id) });
 });
@@ -228,6 +228,7 @@ api.MapPost("auth/logout", (HttpContext c) =>
 
 // ---------- me / meta ----------
 api.MapGet("me", (HttpContext c) => WithUser(c, uid => Results.Json(UserDto(uid))));
+api.MapPost("me/tos", (HttpContext c) => WithUser(c, uid => { Db.Exec("UPDATE users SET tosAccepted=1 WHERE id=@i", ("@i", uid)); return Results.Json(new { ok = true }); }));
 
 api.MapPut("me/settings", (HttpContext c, SettingsIn b) => WithUser(c, uid =>
 {
@@ -959,6 +960,7 @@ CREATE TABLE IF NOT EXISTS group_icons(groupId INTEGER PRIMARY KEY, mime TEXT NO
         if (!cols.Contains("lastIp")) Exec("ALTER TABLE users ADD COLUMN lastIp TEXT");
         if (!cols.Contains("deviceId")) Exec("ALTER TABLE users ADD COLUMN deviceId TEXT");
         if (!cols.Contains("suspendedUntil")) Exec("ALTER TABLE users ADD COLUMN suspendedUntil TEXT");
+        if (!cols.Contains("tosAccepted")) Exec("ALTER TABLE users ADD COLUMN tosAccepted INTEGER DEFAULT 0");
         Exec(@"CREATE TABLE IF NOT EXISTS banned_ips(ip TEXT PRIMARY KEY, reason TEXT, bannedAt TEXT, bannedBy INTEGER);
 CREATE TABLE IF NOT EXISTS banned_devices(deviceId TEXT PRIMARY KEY, reason TEXT, bannedAt TEXT, bannedBy INTEGER);
 DELETE FROM banned_ips;");
