@@ -62,6 +62,35 @@
 .framed[data-frame="rainbow"]::before { background: conic-gradient(#ff3b3b, #ffd23b, #3bff6e, #3bd9ff, #6b3bff, #ff3bd9, #ff3b3b); animation: fr-rot 3s linear infinite; }
 .framed[data-frame="pulse"]::before { background: #ef4444; animation: fr-beat 1.3s ease-in-out infinite; }
 
+/* Icon & Partial Avatar Frames */
+@keyframes fr-halo-float { 0%, 100% { transform: translateX(-50%) translateY(0) rotateX(65deg); } 50% { transform: translateX(-50%) translateY(-3px) rotateX(65deg); } }
+.framed[data-frame="halo"]::before { inset: auto; top: -7px; left: 50%; transform: translateX(-50%) rotateX(65deg); width: 84%; height: 26%; border: 3px solid #ffd700; border-radius: 50%; box-shadow: 0 0 10px #ffd700, inset 0 0 6px #ffe066; mask: none; -webkit-mask: none; animation: fr-halo-float 2.4s ease-in-out infinite; }
+
+.framed[data-frame="horns"]::before { inset: auto; top: -6px; left: 2px; width: 10px; height: 14px; background: linear-gradient(135deg, #ff1a40, #5c000e); clip-path: polygon(100% 0, 0 100%, 100% 100%); mask: none; -webkit-mask: none; filter: drop-shadow(0 0 4px #ff1a40); }
+.framed[data-frame="horns"]::after { display: block; inset: auto; top: -6px; right: 2px; width: 10px; height: 14px; background: linear-gradient(225deg, #ff1a40, #5c000e); clip-path: polygon(0 0, 0 100%, 100% 100%); mask: none; -webkit-mask: none; filter: drop-shadow(0 0 4px #ff1a40); }
+
+.framed[data-frame="stars"]::before { inset: -4px; border-radius: 50%; mask: none; -webkit-mask: none; background: radial-gradient(circle at 15% 15%, #ffd700 3px, transparent 4px), radial-gradient(circle at 85% 20%, #ffd700 3px, transparent 4px), radial-gradient(circle at 50% 92%, #ffd700 3.5px, transparent 4.5px); animation: fr-rot 8s linear infinite; filter: drop-shadow(0 0 4px #ffd700); }
+
+.framed[data-frame="cyber"]::before { inset: -3px; border-radius: 6px; mask: none; -webkit-mask: none; background: linear-gradient(to right, #00f0ff 5px, transparent 5px) 0 0, linear-gradient(to left, #00f0ff 5px, transparent 5px) 100% 0, linear-gradient(to right, #00f0ff 5px, transparent 5px) 0 100%, linear-gradient(to left, #00f0ff 5px, transparent 5px) 100% 100%, linear-gradient(to bottom, #00f0ff 5px, transparent 5px) 0 0, linear-gradient(to bottom, #00f0ff 5px, transparent 5px) 100% 0, linear-gradient(to top, #00f0ff 5px, transparent 5px) 0 100%, linear-gradient(to top, #00f0ff 5px, transparent 5px) 100% 100%; background-repeat: no-repeat; background-size: 8px 8px; filter: drop-shadow(0 0 4px #00f0ff); animation: fr-beat 2.2s ease-in-out infinite; }
+
+.framed[data-frame="hearts"]::before { inset: -5px; border-radius: 50%; mask: none; -webkit-mask: none; background: radial-gradient(circle at 4% 50%, #ff4d8d 4px, transparent 5px), radial-gradient(circle at 96% 50%, #ff4d8d 4px, transparent 5px); animation: fr-beat 1.6s ease-in-out infinite; filter: drop-shadow(0 0 4px #ff4d8d); }
+
+.framed[data-frame="sakura"]::before { inset: -5px; border-radius: 50%; mask: none; -webkit-mask: none; background: radial-gradient(circle at 20% 10%, #ffb7c5 4px, transparent 5px), radial-gradient(circle at 80% 85%, #ffb7c5 4px, transparent 5px), radial-gradient(circle at 90% 25%, #ff94a8 3px, transparent 4px); animation: fr-rot 6s linear infinite; filter: drop-shadow(0 0 3px #ffb7c5); }
+
+.framed[data-frame="sparks"]::before { background: conic-gradient(from 45deg, #38bdf8 0deg, transparent 40deg, #38bdf8 90deg, transparent 130deg, #38bdf8 180deg, transparent 220deg, #38bdf8 270deg, transparent 310deg); animation: fr-rot 1s steps(6, end) infinite; filter: drop-shadow(0 0 5px #38bdf8); }
+
+/* Profile Ambient Effects */
+.profile-effect { position: absolute; inset: 0; pointer-events: none; border-radius: inherit; overflow: hidden; z-index: 1; }
+.profile-effect.sakura { background-image: radial-gradient(#ffb7c5 1.5px, transparent 2px), radial-gradient(#f472b6 1px, transparent 1.5px); background-size: 32px 32px, 48px 48px; background-position: 0 0, 16px 24px; animation: eff-fall 10s linear infinite; opacity: 0.7; }
+.profile-effect.matrix { background: linear-gradient(rgba(14,15,20,0) 80%, rgba(34,197,94,0.18) 100%), repeating-linear-gradient(0deg, transparent, transparent 3px, rgba(34,197,94,0.08) 3px, rgba(34,197,94,0.08) 4px); animation: eff-matrix 6s linear infinite; }
+.profile-effect.fireflies { background-image: radial-gradient(circle, #facc15 1.5px, transparent 3px), radial-gradient(circle, #fbbf24 1px, transparent 2px); background-size: 60px 60px, 90px 90px; animation: eff-float 8s ease-in-out infinite alternate; opacity: 0.65; }
+.profile-effect.scanlines { background: linear-gradient(rgba(18, 16, 16, 0) 50%, rgba(0, 0, 0, 0.25) 50%), linear-gradient(90deg, rgba(255, 0, 0, 0.04), rgba(0, 255, 0, 0.02), rgba(0, 0, 255, 0.04)); background-size: 100% 3px, 4px 100%; }
+.profile-effect.flame { box-shadow: inset 0 0 24px rgba(239,68,68,0.25), inset 0 0 8px rgba(249,115,22,0.3); animation: fr-glow-orange 2s ease-in-out infinite; }
+
+@keyframes eff-fall { from { background-position: 0 0, 16px 24px; } to { background-position: 120px 400px, 136px 424px; } }
+@keyframes eff-matrix { from { background-position: 0 0; } to { background-position: 0 100px; } }
+@keyframes eff-float { 0% { transform: translateY(0) scale(1); } 100% { transform: translateY(-12px) scale(1.05); } }
+
 /* "Static profile pictures" in Settings, and the system's reduce-motion setting, freeze every frame (still drawn, no movement) */
 html.no-pfp-anim .framed, html.no-pfp-anim .framed::before, html.no-pfp-anim .framed::after { animation: none !important; }
 html[data-motion="off"] .framed, html[data-motion="off"] .framed::before, html[data-motion="off"] .framed::after { animation: none !important; }

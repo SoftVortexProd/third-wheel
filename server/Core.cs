@@ -153,6 +153,7 @@ public static class Core
             playing = u["playing"] as string,
             playingWith = PlayingPartyCount(uid, u["playing"] as string),
             banner = BannerUrl(uid, Col(u, "bannerVer")),
+            effect = Col(u, "effect") as string,
             tosAccepted = Convert.ToInt32(Col(u, "tosAccepted") ?? 0) == 1
         };
     }
@@ -190,6 +191,7 @@ public static class Core
         status = EffectiveStatus((long)r["id"]!, (string)r["status"]!), playing = r["playing"] as string,
         playingWith = PlayingPartyCount((long)r["id"]!, r["playing"] as string),
         banner = BannerUrl((long)r["id"]!, Col(r, "bannerVer")),
+        effect = Col(r, "effect") as string,
         region = (string)r["region"]!, isFriend
     };
 

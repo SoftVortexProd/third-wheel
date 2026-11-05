@@ -271,6 +271,87 @@ function pickEmoji(anchor, onPick) {
   pop.querySelector('.emo').focus();
 }
 
+/* ---------- lobby invite cards ---------- */
+function lobbyOf(text) {
+  if (!text) return null;
+  const match = text.match(/^\[lobby:(\{.*?\})\]$/);
+  if (match) {
+    try { return JSON.parse(match[1]); } catch {}
+  }
+  const steamMatch = text.match(/(steam:\/\/joinlobby\/\d+\/\d+\/\d+)/i);
+  if (steamMatch) {
+    return { game: 'Steam Game', url: steamMatch[1], slots: '', note: text.replace(steamMatch[1], '').trim() };
+  }
+  return null;
+}
+
+function renderLobbyCard(lobby) {
+  const joinBtn = h('button', {
+    class: 'btn primary lobby-join-btn',
+    type: 'button',
+    onclick: () => {
+      if (lobby.url) {
+        if (window.__TW_DESKTOP) {
+          window.location.href = lobby.url;
+        } else {
+          window.open(lobby.url, '_blank');
+        }
+      }
+    }
+  }, ico('rocket', 16), h('span', { text: TW.t('Join Game') }));
+
+  return h('div', { class: 'chat-lobby-card' },
+    h('div', { class: 'lobby-top-row' },
+      ico('gamepad', 22),
+      h('div', { class: 'lobby-meta' },
+        h('b', { class: 'lobby-game-title', text: lobby.game || 'Game Lobby' }),
+        lobby.slots ? h('span', { class: 'lobby-slots-tag', text: lobby.slots }) : null
+      )
+    ),
+    lobby.note ? h('p', { class: 'lobby-desc', text: lobby.note }) : null,
+    h('div', { class: 'lobby-action-row' },
+      joinBtn,
+      lobby.url && !/^steam:\/\//i.test(lobby.url) ? h('span', { class: 'lobby-code-chip', text: lobby.url, title: TW.t('Click to copy'), onclick: () => { navigator.clipboard.writeText(lobby.url); TW.toast(TW.t('Copied join code')); } }) : null
+    )
+  );
+}
+
+function openLobbyModal(onSend) {
+  const me = TW.me || {};
+  const gameIn = h('input', { class: 'input', type: 'text', placeholder: TW.t('e.g. Counter-Strike 2'), value: me.playing || '' });
+  const urlIn = h('input', { class: 'input', type: 'text', placeholder: TW.t('steam://joinlobby/... or server IP:port') });
+  const slotsIn = h('input', { class: 'input', type: 'text', placeholder: TW.t('e.g. 2 spots open or 3/5') });
+  const noteIn = h('input', { class: 'input', type: 'text', placeholder: TW.t('e.g. Playing Premier, need 2!') });
+
+  const sendBtn = h('button', { class: 'btn primary', type: 'button' }, ico('rocket', 16), h('span', { text: TW.t('Send Lobby Invite') }));
+
+  const formEl = h('div', { class: 'stack', style: 'gap:12px;padding:8px 0;' },
+    h('div', { class: 'field' }, h('span', { class: 'label', text: TW.t('Game') }), gameIn),
+    h('div', { class: 'field' }, h('span', { class: 'label', text: TW.t('Join link, Steam URL or Server IP') }), urlIn),
+    h('div', { class: 'row' },
+      h('div', { class: 'field' }, h('span', { class: 'label', text: TW.t('Open spots') }), slotsIn),
+      h('div', { class: 'field' }, h('span', { class: 'label', text: TW.t('Note (optional)') }), noteIn)
+    ),
+    h('div', { style: 'display:flex;justify-content:flex-end;margin-top:8px;' }, sendBtn)
+  );
+
+  let closeSheet = null;
+  sendBtn.onclick = () => {
+    const game = gameIn.value.trim() || 'Game';
+    const url = urlIn.value.trim();
+    if (!url) {
+      TW.toast(TW.t('Please enter a join URL or server IP'), 'error');
+      return;
+    }
+    const slots = slotsIn.value.trim();
+    const note = noteIn.value.trim();
+    onSend({ game, url, slots, note });
+    if (closeSheet) closeSheet();
+  };
+
+  closeSheet = TW.openSheet(TW.t('Invite to Game Lobby'), formEl);
+}
+
 /* ======================================================================== */
 /*  The chat pane                                                           */
 /* ======================================================================== */
@@ -290,7 +371,11 @@ function make(cfg) {
   const attach = h('button', { class: 'icon-btn attach', type: 'button', 'aria-label': 'Attach a file', title: 'Attach a file' }, ico('clip', 20));
   const gifBtn = h('button', { class: 'icon-btn gif-btn', type: 'button', 'aria-label': 'Send a GIF', title: 'GIFs', 'aria-haspopup': 'dialog', 'aria-expanded': 'false' }, h('span', { class: 'gif-glyph', 'aria-hidden': 'true', text: 'GIF' }));
   const micBtn = h('button', { class: 'icon-btn mic-btn', type: 'button', 'aria-label': TW.t('Record a voice message'), title: TW.t('Record a voice message') }, ico('mic', 20));
-  const form = h('form', { class: 'composer' }, attach, gifBtn, micBtn, input, send);
+  const lobbyBtn = h('button', { class: 'icon-btn lobby-btn', type: 'button', 'aria-label': TW.t('Share game lobby invite'), title: TW.t('Share game lobby invite'), onclick: () => openLobbyModal((cardData) => {
+    input.value = `[lobby:${JSON.stringify(cardData)}]`;
+    form.dispatchEvent(new Event('submit', { cancelable: true }));
+  }) }, ico('gamepad', 20));
+  const form = h('form', { class: 'composer' }, attach, gifBtn, micBtn, lobbyBtn, input, send);
   const recBar = h('div', { class: 'rec-bar', hidden: true, role: 'group', 'aria-label': TW.t('Recording a voice message') });
   const wrap = h('div', { class: 'composer-wrap' }, typingEl, replyBar, chip, recBar, form, fileInput);
 
@@ -345,11 +430,13 @@ function make(cfg) {
     }
     if (m.deleted) body.append(h('p', { class: 'gone', text: 'Message deleted' }));
     else {
-      const gifUrl = gifOf(m.text), tr = trState.get(m.id);
+      const gifUrl = gifOf(m.text), lobbyData = lobbyOf(m.text), tr = trState.get(m.id);
       const showTr = !!(tr && tr.shown && !tr.unchanged && tr.src === T(m.text));
       if (gifUrl) {
         body.append(h('button', { class: 'gif-card', type: 'button', 'aria-label': 'Open GIF', onclick: () => lightbox({ url: proxied(gifUrl), name: 'animated.gif' }) },
           h('img', { src: proxied(gifUrl), alt: 'GIF', loading: 'lazy', decoding: 'async' }), h('span', { class: 'gif-tag', 'aria-hidden': 'true', text: 'GIF' })));
+      } else if (lobbyData) {
+        body.append(renderLobbyCard(lobbyData));
       } else if (m.text) {
         let displayTxt = showTr ? tr.text : T(m.text);
         if (shouldMask()) displayTxt = maskProfanity(displayTxt);

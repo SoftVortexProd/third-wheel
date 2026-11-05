@@ -221,9 +221,20 @@ function button(g) {
   return wrap;
 }
 
+function openCinema(sourceVideo, title) {
+  const modal = h('div', { class: 'vc-cinema-modal' });
+  const vid = h('video', { autoplay: true, playsinline: true, controls: true });
+  vid.srcObject = sourceVideo.srcObject;
+  vid.play().catch(() => {});
+  const closeBtn = h('button', { class: 'icon-btn vc-cinema-close', type: 'button', 'aria-label': t('Close cinema'), onclick: () => modal.remove() }, icon('x', 20));
+  const bar = h('div', { class: 'vc-cinema-bar' }, h('b', { text: title }), closeBtn);
+  modal.append(bar, vid);
+  document.body.append(modal);
+}
+
 function updateVideoPanel() {
   if (!room) return;
-  const hasLocalVideo = room.cam && room.videoTrack && room.videoTrack.readyState === 'live';
+  const hasLocalVideo = (room.cam || room.screen) && room.videoTrack && room.videoTrack.readyState === 'live';
   const remoteVideos = [...room.peers.values()].filter(p => p.videoTrack && p.videoTrack.readyState === 'live');
   const total = (hasLocalVideo ? 1 : 0) + remoteVideos.length;
 
@@ -247,7 +258,10 @@ function updateVideoPanel() {
     if (!entry) {
       const v = h('video', { autoplay: true, playsinline: true, muted: true });
       v.srcObject = new MediaStream([room.videoTrack]);
-      const tile = h('div', { class: 'vc-video-tile' }, v,
+      const isScreen = !!room.screen;
+      const cinemaBtn = h('button', { class: 'vc-cinema-btn', type: 'button', title: t('Cinema mode'), onclick: (e) => { e.stopPropagation(); openCinema(v, t('Your stream')); } }, icon('expand', 14));
+      const badge = isScreen ? h('span', { class: 'vc-video-badge screen', text: t('Screen') }) : null;
+      const tile = h('div', { class: 'vc-video-tile' }, v, badge, cinemaBtn,
         h('span', { class: 'vc-video-label' }, avatar(TW.me, 'sm'), h('b', { text: t('You') }))
       );
       v.play().catch(() => {});
@@ -271,7 +285,10 @@ function updateVideoPanel() {
       const v = h('video', { autoplay: true, playsinline: true });
       v.srcObject = stream;
       const u = p.person || { id: p.uid, username: p.name, displayName: p.name };
-      const tile = h('div', { class: 'vc-video-tile' }, v,
+      const isScreen = !!p.isScreen;
+      const cinemaBtn = h('button', { class: 'vc-cinema-btn', type: 'button', title: t('Cinema mode'), onclick: (e) => { e.stopPropagation(); openCinema(v, nm(u)); } }, icon('expand', 14));
+      const badge = isScreen ? h('span', { class: 'vc-video-badge screen', text: t('Screen') }) : null;
+      const tile = h('div', { class: 'vc-video-tile' }, v, badge, cinemaBtn,
         h('span', { class: 'vc-video-label' }, avatar(u, 'sm'), h('b', { text: nm(u) }))
       );
       v.play().catch(() => {});
@@ -291,6 +308,65 @@ function updateVideoPanel() {
       entry.tile.remove();
       currentTiles.delete(key);
     }
+  }
+}
+
+async function toggleScreenShare() {
+  if (!room) return;
+  if (!room.screen) {
+    try {
+      const sStream = await navigator.mediaDevices.getDisplayMedia({
+        video: { frameRate: { ideal: 60 } },
+        audio: true
+      });
+      const track = sStream.getVideoTracks()[0];
+      if (!track) return;
+      if (room.cam) await toggleCamera();
+      room.screen = true;
+      room.videoTrack = track;
+      track.onended = () => { if (room && room.screen) toggleScreenShare(); };
+      try { room.stream.addTrack(track); } catch {}
+
+      for (const p of room.peers.values()) {
+        try {
+          const senders = p.pc.getSenders();
+          let vs = senders.find(s => s.track && s.track.kind === 'video') || senders.find(s => s.kind === 'video');
+          if (vs) {
+            await vs.replaceTrack(track);
+          } else {
+            p.pc.addTrack(track, room.stream);
+          }
+          const offer = await p.pc.createOffer();
+          await p.pc.setLocalDescription(offer);
+          TWRT.send({ t: 'vc.signal', gid: room.gid, to: p.uid, data: { sdp: p.pc.localDescription } });
+        } catch (e) { console.warn('screen share offer failed', e); }
+      }
+      TWRT.send({ t: 'vc.state', gid: room.gid, screen: true });
+      drawBar();
+      updateVideoPanel();
+    } catch {
+      toast(t('Could not share screen.'), 'error');
+    }
+  } else {
+    room.screen = false;
+    if (room.videoTrack) {
+      room.videoTrack.stop();
+      try { room.stream.removeTrack(room.videoTrack); } catch {}
+      for (const p of room.peers.values()) {
+        try {
+          const senders = p.pc.getSenders();
+          const vs = senders.find(s => s.track && s.track.kind === 'video') || senders.find(s => s.kind === 'video');
+          if (vs) await vs.replaceTrack(null);
+          const offer = await p.pc.createOffer();
+          await p.pc.setLocalDescription(offer);
+          TWRT.send({ t: 'vc.signal', gid: room.gid, to: p.uid, data: { sdp: p.pc.localDescription } });
+        } catch {}
+      }
+      room.videoTrack = null;
+    }
+    TWRT.send({ t: 'vc.state', gid: room.gid, screen: false });
+    drawBar();
+    updateVideoPanel();
   }
 }
 
@@ -393,6 +469,14 @@ function drawBar() {
       onclick: toggleCamera
     }, icon('camera', 18));
 
+    room.screenBtn = h('button', {
+      class: 'icon-btn vc-ctl' + (!room.screen ? ' off' : ''),
+      type: 'button',
+      'aria-label': room.screen ? t('Stop sharing screen') : t('Share screen'),
+      title: room.screen ? t('Stop sharing screen') : t('Share screen'),
+      onclick: toggleScreenShare
+    }, icon('monitor', 18));
+
     room.settingsBtn = h('button', {
       class: 'icon-btn vc-ctl',
       type: 'button',
@@ -407,7 +491,7 @@ function drawBar() {
       onclick: leave
     }, t('Leave'));
 
-    const actions = h('div', { class: 'vc-actions' }, room.muteBtn, room.deafBtn, room.camBtn, room.settingsBtn, room.leaveBtn);
+    const actions = h('div', { class: 'vc-actions' }, room.muteBtn, room.deafBtn, room.camBtn, room.screenBtn, room.settingsBtn, room.leaveBtn);
     room.bar.append(room.nameLink, room.facesContainer, actions);
     document.body.append(room.bar);
   }
@@ -426,6 +510,10 @@ function drawBar() {
   room.camBtn.classList.toggle('off', !room.cam);
   room.camBtn.setAttribute('aria-label', room.cam ? t('Turn off camera') : t('Turn on camera'));
   room.camBtn.title = room.cam ? t('Turn off camera') : t('Turn on camera');
+
+  room.screenBtn.classList.toggle('off', !room.screen);
+  room.screenBtn.setAttribute('aria-label', room.screen ? t('Stop sharing screen') : t('Share screen'));
+  room.screenBtn.title = room.screen ? t('Stop sharing screen') : t('Share screen');
 
   room.facesContainer.replaceChildren(...people.map(face));
 }
@@ -556,7 +644,7 @@ async function join(gid, name) {
   }
   room = {
     gid, name, stream, peers: new Map(),
-    muted: false, deaf: false, cam: false,
+    muted: false, deaf: false, cam: false, screen: false,
     joined: false, speaking: false,
     bar: null, stopMeter: null,
     videoTrack: null, videoGrid: null
@@ -608,7 +696,16 @@ TWRT.on('vc.peer', (m) => {
 });
 TWRT.on('vc.left', (m) => { if (room && m.gid === room.gid) { const p = room.peers.get(m.uid); if (p) toast(t('{name} left the voice chat', { name: p.name })); dropPeer(m.uid); } });
 TWRT.on('vc.signal', onSignal);
-TWRT.on('vc.state', (m) => { if (room && m.gid === room.gid) { const p = room.peers.get(m.uid); if (p) { p.muted = !!m.muted; drawBar(); } } });
+TWRT.on('vc.state', (m) => {
+  if (room && m.gid === room.gid) {
+    const p = room.peers.get(m.uid);
+    if (p) {
+      if ('muted' in m) p.muted = !!m.muted;
+      if ('screen' in m) { p.isScreen = !!m.screen; updateVideoPanel(); }
+      drawBar();
+    }
+  }
+});
 TWRT.on('vc.update', (m) => {
   present.set(m.gid, m.who || []);
   if (m.people) presentUsers.set(m.gid, m.people);
@@ -618,5 +715,32 @@ TWRT.on('vc.error', (m) => { toast(m.error || 'Voice chat error.', 'error'); if 
 TWRT.on('rt.down', () => { if (room) { toast(t('Live connection is down. Voice chat needs it.'), 'error'); leave(); } });
 addEventListener('beforeunload', () => { if (room) TWRT.send({ t: 'vc.leave', gid: room.gid }); });
 
-window.TWVoice = { button, join, leave, active: () => (room ? room.gid : null), openSettings: openAudioSettings };
+function toggleMute() {
+  if (!room) return;
+  setMuted(!room.muted);
+  toast(room.muted ? t('Microphone muted') : t('Microphone unmuted'));
+}
+function toggleDeafen() {
+  if (!room) return;
+  setDeaf(!room.deaf);
+  toast(room.deaf ? t('Audio deafened') : t('Audio undeafened'));
+}
+
+window.addEventListener('keydown', (e) => {
+  if (e.ctrlKey && e.shiftKey && (e.key === 'M' || e.key === 'm')) {
+    e.preventDefault();
+    toggleMute();
+  } else if (e.ctrlKey && e.shiftKey && (e.key === 'D' || e.key === 'd')) {
+    e.preventDefault();
+    toggleDeafen();
+  }
+});
+
+window.TWVoice = {
+  button, join, leave,
+  active: () => (room ? room.gid : null),
+  openSettings: openAudioSettings,
+  toggleMute, toggleDeafen,
+  toggleCamera, toggleScreenShare
+};
 })();

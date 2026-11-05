@@ -40,14 +40,23 @@ const PATHS = {
   award: 'M12 15l-4 6 1.5-6.5L6 11l6.5-.5L12 4l-9.5 6.5L18 11l-3.5 3.5L16 21z',
   check: 'M20 6L9 17l-5-5',
   refresh: 'M23 4v6h-6M1 20v-6h6M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15',
-  steam: 'M12 2a10 10 0 0 0-10 9.8l5.7 2.4a3.3 3.3 0 0 1 1.9-.6l2.3-3.4a4.4 4.4 0 0 1 4.1-6.2 4.4 4.4 0 1 1-4.4 4.4c0-.1 0-.3.1-.4L9.5 11.4a3.3 3.3 0 0 1-2.9 3.2l-2.4 5.7A10 10 0 1 0 12 2z',
-  discord: 'M18 6H6a3 3 0 0 0-3 3v8l3-3h12a3 3 0 0 0 3-3V9a3 3 0 0 0-3-3zM9 11a1.5 1.5 0 1 1 0-3 1.5 1.5 0 0 1 0 3zm6 0a1.5 1.5 0 1 1 0-3 1.5 1.5 0 0 1 0 3z',
+  steam: 'M11.979 2a10 10 0 0 0-9.979 9.805l5.727 2.368a3.298 3.298 0 0 1 1.867-.577l2.29-3.31a4.34 4.34 0 0 1 4.1-6.286 4.35 4.35 0 1 1-4.35 4.35c0-.097.009-.192.025-.286L8.41 11.23a3.3 3.3 0 0 1-2.915 3.193L3.11 20.08A10 10 0 1 0 11.979 2zm3.98 4.35a2.175 2.175 0 1 0 0 4.35 2.175 2.175 0 0 0 0-4.35zm-8.48 9.35a1.8 1.8 0 1 0 0 3.6 1.8 1.8 0 0 0 0-3.6z',
+  discord: 'M20.317 4.37a19.791 19.791 0 0 0-4.885-1.515.074.074 0 0 0-.079.037c-.21.375-.444.864-.608 1.25a18.27 18.27 0 0 0-5.487 0 12.64 12.64 0 0 0-.617-1.25.077.077 0 0 0-.079-.037A19.736 19.736 0 0 0 3.677 4.37a.07.07 0 0 0-.032.027C.533 9.046-.32 13.58.099 18.057a.082.082 0 0 0 .031.057 19.9 19.9 0 0 0 5.993 3.03.078.078 0 0 0 .084-.028c.462-.63.874-1.295 1.226-1.994.021-.041.001-.09-.041-.106a13.107 13.107 0 0 1-1.872-.892.077.077 0 0 1-.008-.128 10.2 10.2 0 0 0 .372-.292.074.074 0 0 1 .077-.01c3.929 1.793 8.18 1.793 12.061 0a.074.074 0 0 1 .078.01c.12.098.246.198.373.292a.077.077 0 0 1-.006.127 12.299 12.299 0 0 1-1.873.894.077.077 0 0 0-.041.107c.36.698.772 1.362 1.225 1.993a.076.076 0 0 0 .084.028 19.839 19.839 0 0 0 6.002-3.03.077.077 0 0 0 .032-.054c.5-5.177-.838-9.674-3.549-13.66a.061.061 0 0 0-.031-.028zM8.02 15.33c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.956-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.956 2.418-2.157 2.418zm7.975 0c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.955-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.946 2.418-2.157 2.418z',
   mic: 'M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3zM19 10v1a7 7 0 0 1-14 0v-1M12 18v4M8 22h8',
+  sparkles: 'M12 2l2.4 5.6L20 10l-5.6 2.4L12 18l-2.4-5.6L4 10l5.6-2.4z',
+  sparkle: 'M12 2l2.4 5.6L20 10l-5.6 2.4L12 18l-2.4-5.6L4 10l5.6-2.4z',
   gear: 'M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z'
 };
 function ico(name, size = 20) {
   const s = document.createElementNS(SVGNS, 'svg');
-  for (const [k, v] of Object.entries({ viewBox: '0 0 24 24', width: size, height: size, fill: 'none', stroke: 'currentColor', 'stroke-width': 2, 'stroke-linecap': 'round', 'stroke-linejoin': 'round', 'aria-hidden': 'true' })) s.setAttribute(k, v);
+  const isFilled = name === 'steam' || name === 'discord';
+  for (const [k, v] of Object.entries({
+    viewBox: '0 0 24 24', width: size, height: size,
+    fill: isFilled ? 'currentColor' : 'none',
+    stroke: isFilled ? 'none' : 'currentColor',
+    'stroke-width': isFilled ? 0 : 2,
+    'stroke-linecap': 'round', 'stroke-linejoin': 'round', 'aria-hidden': 'true'
+  })) s.setAttribute(k, v);
   const p = document.createElementNS(SVGNS, 'path'); p.setAttribute('d', PATHS[name] || PATHS.gear); s.append(p);
   return s;
 }
@@ -231,7 +240,8 @@ function profileTab(panel, ctx) {
 
   /* region, age (locked once chosen), status, playing, favorite games */
   const autoReg = (TW.detectRegion ? TW.detectRegion() : 'EU');
-  const region = selectEl(TW.S.meta.regions, me.region || autoReg, t('Choose a region'));
+  const metaRegions = (TW.S && TW.S.meta && TW.S.meta.regions) || [];
+  const region = selectEl(metaRegions, (me && me.region) || autoReg, t('Choose a region'));
   const calcAge = TW.calcAge || ((bd) => {
     if (!bd) return 0;
     const b = new Date(bd), today = new Date();
@@ -279,7 +289,7 @@ function profileTab(panel, ctx) {
 
 /* ---- Profile look: frame + the order of the sections on your profile ---- */
 function lookTab(panel) {
-  panel.append(framesCard(), layoutCard());
+  panel.append(framesCard(), effectsCard(), layoutCard());
 }
 
 /* ---- Connections: gamer tags, verified Steam / Discord, Steam import ---- */
@@ -339,6 +349,46 @@ function framesCard() {
   };
   build();
   return card(cardHead(t('Avatar frame'), t('Animated rings around your profile picture. Shown next to your name everywhere.')), note, grid);
+}
+
+/* Profile effects: atmospheric animations on your profile sheet. Exclusive to RCKT. */
+function effectsCard() {
+  const grid = h('div', { class: 'frame-grid', role: 'radiogroup', 'aria-label': t('Profile effect') });
+  const note = h('div');
+  let current = (TW.me && TW.me.effect) || '';
+  const build = async () => {
+    let r; try { r = await api('GET', '/api/effects'); } catch { return; }
+    current = r.mine || '';
+    const mk = (id, name) => {
+      const b = h('button', {
+        type: 'button',
+        class: 'frame-tile' + (current === id ? ' active' : ''),
+        role: 'radio',
+        'aria-checked': String(current === id),
+        'aria-label': name,
+        disabled: !r.rckt && !!id
+      },
+      h('div', {
+        class: 'effect-preview-box ' + (id || 'none'),
+        style: 'width:48px;height:48px;border-radius:12px;background:var(--color-surface);border:1px solid var(--color-border);display:flex;align-items:center;justify-content:center;position:relative;overflow:hidden;'
+      },
+        id ? h('div', { class: 'profile-effect ' + id }) : ico('sparkles', 20)
+      ),
+      h('span', { text: name }));
+      b.addEventListener('click', () => busy(b, async () => {
+        await api('PUT', '/api/me/effect', { effect: id });
+        TW.me = await api('GET', '/api/me');
+        toast(t(id ? 'Effect applied' : 'Effect removed'));
+        build();
+      }));
+      return b;
+    };
+    grid.replaceChildren(mk('', t('None')), ...(r.effects || []).map(e => mk(e.id, t(e.name))));
+    note.replaceChildren(...(r.rckt ? [] : [h('div', { class: 'frame-lock' }, h('b', { text: 'RCKT ' }), t('Profile effects are exclusive to RCKT. Ask an admin for RCKT to wear one.'))]));
+    grid.querySelectorAll('.frame-tile[disabled]').forEach(b => { b.style.opacity = '.75'; });
+  };
+  build();
+  return card(cardHead(t('Profile effect'), t('Atmospheric particle effects shown on your profile card.')), note, grid);
 }
 
 /* Profile layout: the order of the sections on your profile, and which ones everybody else can see. */
@@ -767,7 +817,11 @@ function build() {
       const def = TABS[idx];
       const p = h('section', { class: 'settings-panel', 'aria-label': t(def[1]), hidden: true });
       panels[tab] = p; body.append(p);
-      def[3](p, ctx);
+      try {
+        def[3](p, ctx);
+      } catch (err) {
+        console.error('Settings tab failed:', tab, err);
+      }
       document.dispatchEvent(new CustomEvent('tw:settings-tab', { detail: { tab, root: p } }));
       foldify(p, tab === 'connections' || tab === 'language');
       if (window.MutationObserver) { let q = 0; new MutationObserver(() => { clearTimeout(q); q = setTimeout(() => foldify(p, false), 30); }).observe(p, { childList: true, subtree: true }); }   // cards that arrive later (profile extras, RCKT, ...)

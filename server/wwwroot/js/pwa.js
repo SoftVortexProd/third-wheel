@@ -77,6 +77,7 @@ function card() {
 }
 
 document.addEventListener('tw:settings-tab', (e) => {
+  if (window.__TW_DESKTOP) return;
   if (e.detail.tab === 'account' && !e.detail.root.querySelector('.pwa-card')) { const c = card(); c.classList.add('pwa-card'); e.detail.root.append(c); }
 });
 window.TWPwa = { card };

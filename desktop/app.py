@@ -31,7 +31,7 @@ except ImportError:  # pragma: no cover
 ROUTE_RE = re.compile(r"^#/(dm|group)/\d{1,12}$")
 
 # ---- update check: compares this version with the latest GitHub release (bump APP_VERSION when you publish a release) ----
-APP_VERSION = os.environ.get("TW_APP_VERSION", "0.9.4")
+APP_VERSION = os.environ.get("TW_APP_VERSION", "0.9.5")
 UPDATE_REPO = "SoftVortexProd/third-wheel"
 
 
@@ -668,7 +668,11 @@ class Main(QMainWindow):
         self.clip_catcher = ClipCatcher(self)
         if os.name == "nt":
             self.hotkey_clip_id = 1088
-            ctypes.windll.user32.RegisterHotKey(int(self.winId()), self.hotkey_clip_id, 0, 0x77)
+            ctypes.windll.user32.RegisterHotKey(int(self.winId()), self.hotkey_clip_id, 0, 0x77)  # F8
+            self.hotkey_mute_id = 1089
+            ctypes.windll.user32.RegisterHotKey(int(self.winId()), self.hotkey_mute_id, 0x0006, 0x4D)  # Ctrl+Shift+M
+            self.hotkey_deaf_id = 1090
+            ctypes.windll.user32.RegisterHotKey(int(self.winId()), self.hotkey_deaf_id, 0x0006, 0x44)  # Ctrl+Shift+D
 
     def setIcon(self):
         for p in (resource("app.ico"), base_dir() / "app.ico"):
@@ -864,6 +868,12 @@ class Main(QMainWindow):
                     if msg.wParam == 1088:
                         self.clip_catcher.capture()
                         return True, 0
+                    elif msg.wParam == 1089:
+                        self.web.page().runJavaScript("if (window.TWVoice) TWVoice.toggleMute();")
+                        return True, 0
+                    elif msg.wParam == 1090:
+                        self.web.page().runJavaScript("if (window.TWVoice) TWVoice.toggleDeafen();")
+                        return True, 0
             except Exception:
                 pass
         return super().nativeEvent(event_type, message)
@@ -871,11 +881,13 @@ class Main(QMainWindow):
     def closeEvent(self, e):
         self.settings.setValue("geometry", self.saveGeometry())
         self.tray.hide()   # no ghost icon left in the notification area
-        if os.name == "nt" and hasattr(self, "hotkey_clip_id"):
-            try:
-                ctypes.windll.user32.UnregisterHotKey(int(self.winId()), self.hotkey_clip_id)
-            except Exception:
-                pass
+        if os.name == "nt":
+            for hid in (getattr(self, "hotkey_clip_id", None), getattr(self, "hotkey_mute_id", None), getattr(self, "hotkey_deaf_id", None)):
+                if hid:
+                    try:
+                        ctypes.windll.user32.UnregisterHotKey(int(self.winId()), hid)
+                    except Exception:
+                        pass
         self.stop_server()
         super().closeEvent(e)
 
