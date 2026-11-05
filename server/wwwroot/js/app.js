@@ -203,9 +203,20 @@ function groupTile(g, sz = '') {
 }
 
 /* ================= api ================= */
+function getDeviceId() {
+  let d = '';
+  try {
+    d = localStorage.getItem('tw_device_id') || '';
+    if (!d || d.length < 8) {
+      d = 'dev_' + Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
+      localStorage.setItem('tw_device_id', d);
+    }
+  } catch {}
+  return d;
+}
 class ApiError extends Error { constructor(m, status, data) { super(m); this.status = status; this.data = data; } }
 async function api(method, url, body) {
-  const o = { method, credentials: 'same-origin', headers: {} };
+  const o = { method, credentials: 'same-origin', headers: { 'X-TW-Device-ID': getDeviceId() } };
   if (method !== 'GET') {
     o.headers['X-TW'] = '1'; o.headers['Content-Type'] = 'application/json';
     if (body !== undefined) o.body = JSON.stringify(body);
@@ -798,7 +809,62 @@ function renderOnboarding() {
       };
     } else if (step === 1) {
       const gp = gamePicker({ multi: true, value: d.games || [] });
-      body.append(h('p', { class: 'muted', text: 'Search or choose the games you love. Pick as many as you like.' }), gp);
+      const steamSyncBtn = h('button', { class: 'btn secondary sm', type: 'button' }, icon('steam', 16), 'Sync Steam Games');
+      steamSyncBtn.addEventListener('click', async () => {
+        await busy(steamSyncBtn, async () => {
+          try {
+            let tags = [];
+            try { tags = await api('GET', '/api/verify/mine'); } catch {}
+            const hasSteam = tags.some(t => t.platform === 'Steam');
+            if (!hasSteam) {
+              const res = await api('POST', '/api/verify/steam/start');
+              const pop = window.open(res.url, 'steam_link', 'width=800,height=600');
+              await new Promise(resolve => {
+                const handler = (ev) => {
+                  if (ev.data && ev.data.type === 'tw:verified') {
+                    window.removeEventListener('message', handler);
+                    resolve(true);
+                  }
+                };
+                window.addEventListener('message', handler);
+                const timer = setInterval(() => {
+                  if (!pop || pop.closed) {
+                    clearInterval(timer);
+                    window.removeEventListener('message', handler);
+                    resolve(true);
+                  }
+                }, 1000);
+              });
+            }
+            const lib = await api('GET', '/api/verify/steam/library');
+            if (lib.isPrivate) {
+              toast('Your Steam game list is private. Set "Game details" to Public in Steam settings.', 'error');
+              return;
+            }
+            if (lib.games && lib.games.length > 0) {
+              const names = lib.games.map(g => g.name);
+              d.games = [...new Set([...(d.games || []), ...names])];
+              gp.value = d.games;
+              toast(`Imported ${names.length} games from Steam!`);
+            } else {
+              toast('No games found in your Steam library.');
+            }
+          } catch (e) {
+            toast(e.message || 'Could not sync Steam library', 'error');
+          }
+        });
+      });
+      const steamRow = h('div', { class: 'ob-steam-row', style: 'display:flex;align-items:center;justify-content:space-between;padding:10px 14px;background:var(--color-surface);border:1px solid var(--color-line-2);border-radius:var(--radius-md);margin-bottom:12px;gap:8px;' },
+        h('div', { style: 'display:flex;align-items:center;gap:10px' },
+          icon('steam', 24),
+          h('div',
+            h('strong', { style: 'font-size:13px;display:block' }, 'Own games on Steam?'),
+            h('span', { class: 'muted small', text: 'Sync your Steam library automatically' })
+          )
+        ),
+        steamSyncBtn
+      );
+      body.append(h('p', { class: 'muted', text: 'Search or choose the games you love. Pick as many as you like.' }), steamRow, gp);
       next = () => { d.games = gp.value; return true; };
     } else if (step === 2) {
       // Optional: play style + availability (profile.js). Skippable.
@@ -840,13 +906,13 @@ function navLink(href, ico, label, cls) {
 }
 /* The left sidebar (and the phone menu) are built from this list: [section, [[hash, icon, label], ...]]. */
 const NAV = () => [
-  ['Home', [['#/feed', 'feed', 'Feed'], ['#/discover', 'compass', 'Discover'], ['#/search', 'search', 'Find groups'], ['#/lfg', 'mega', 'Looking for group']]],
+  ['Home', [['#/find', 'compass', 'Find & LFG']]],
   ['Social', [['#/messages', 'msg', 'Messages'], ['#/friends', 'users', 'Friends']]],
   ['Play', [['#/games', 'pad', 'My games'], ['#/history', 'clock', 'History']]]
 ];
 /* The sidebar shows four main links and folds the rest under "More". */
-const NAV_MAIN = () => [['#/feed', 'feed', 'Feed'], ['#/discover', 'compass', 'Discover'], ['#/messages', 'msg', 'Messages'], ['#/lfg', 'mega', 'Looking for group']];
-const NAV_MORE = () => [['#/search', 'search', 'Find groups'], ['#/friends', 'users', 'Friends'], ['#/games', 'pad', 'My games'], ['#/history', 'clock', 'History']];
+const NAV_MAIN = () => [['#/find', 'compass', 'Find & LFG'], ['#/messages', 'msg', 'Messages'], ['#/friends', 'users', 'Friends'], ['#/games', 'pad', 'My games']];
+const NAV_MORE = () => [['#/history', 'clock', 'History']];
 function railLinks() {
   let open = false; try { open = localStorage.getItem('tw_nav_more') === '1'; } catch { /* storage unavailable */ }
   const extras = NAV_MORE().map(([href, ico, label]) => { const a = navLink(href, ico, tr(label)); a.classList.add('nav-extra'); return a; });
@@ -1078,31 +1144,76 @@ function show(node, o = {}) {
 }
 function clearTimers() { clearInterval(S.chatTimer); S.chatTimer = null; S.onData = null; (S.rtOff || []).forEach(f => { try { f(); } catch { /* ignore */ } }); S.rtOff = []; }
 function markNav() {
-  const hash = location.hash || '#/feed';
+  const hash = location.hash || '#/find';
   document.querySelectorAll('[data-route]').forEach(a => {
-    const on = hash.startsWith(a.dataset.route);
+    const r = a.dataset.route;
+    const isFindRoute = r === '#/find' && (hash.startsWith('#/find') || hash === '#/feed' || hash === '#/search' || hash === '#/discover' || hash === '#/lfg');
+    const on = isFindRoute || (r !== '#/find' && hash.startsWith(r));
     if (on) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current');
   });
   const curExtra = document.querySelector('.nav-extra[aria-current="page"]'); if (curExtra && curExtra.hidden && S.el.setMore) S.el.setMore(true);
   renderRail(); TWM.nav();
 }
+async function findView(sub, tok) {
+  const activeSub = (sub === 'groups' || sub === 'search') ? 'groups' :
+                    (sub === 'discover') ? 'discover' :
+                    (sub === 'activity' || sub === 'feed') ? 'activity' : 'lfg';
+
+  if (activeSub === 'lfg') {
+    if (TWPages.lfg) await TWPages.lfg(null, tok);
+  } else if (activeSub === 'groups') {
+    await searchView(null, tok);
+  } else if (activeSub === 'discover') {
+    if (TWPages.discover) await TWPages.discover(null, tok);
+  } else if (activeSub === 'activity') {
+    await feedView(null, tok);
+  }
+
+  if (S.el.view) {
+    const page = S.el.view.querySelector('.page');
+    if (page && !page.querySelector('.find-subtabs')) {
+      const phead = page.querySelector('.page-head');
+      const navEl = tabs([
+        ['lfg', tr('LFG')],
+        ['groups', tr('Browse Groups')],
+        ['discover', tr('Discover')],
+        ['activity', tr('Activity')]
+      ], activeSub, (k) => {
+        location.hash = '#/find/' + k;
+      }, 'Find & LFG sections');
+      navEl.classList.add('find-subtabs');
+      if (phead) phead.after(navEl);
+      else page.prepend(navEl);
+    }
+  }
+}
+
 async function route() {
   if (!S.me || !S.el.view) return;
   clearTimers();
   const tok = ++S.tok;
-  const parts = (location.hash || '#/feed').replace(/^#\/?/, '').split('/');
+  const parts = (location.hash || '#/find').replace(/^#\/?/, '').split('/');
   const gh = S.el.view.querySelector('.ghead');
   S.leaving = gh ? { el: gh, id: S.viewGroup } : null;
   S.viewGroup = null;
   TWM.prog.start();
   markNav();
-  const closedKey = { feed: 'feed', search: 'search', friends: 'friends', dm: 'dms', messages: 'dms', group: 'groups' }[parts[0]];
+  const p0 = parts[0] || 'find';
+  if (p0 === 'find' || p0 === 'feed' || p0 === 'search' || p0 === 'discover' || p0 === 'lfg') {
+    let sub = parts[1] || (p0 === 'find' ? 'lfg' : p0 === 'feed' ? 'activity' : p0 === 'search' ? 'groups' : p0);
+    try { await findView(sub, tok); }
+    catch (e) { if (tok === S.tok) show(h('div', { class: 'page' }, emptyState('That didn’t load', e.message || 'Please try again.', btn('Try again', { onclick: route })))); }
+    if (tok === S.tok) TWM.prog.done();
+    document.title = 'Third Wheel';
+    return;
+  }
+  const closedKey = { friends: 'friends', dm: 'dms', messages: 'dms', group: 'groups' }[p0];
   const closedMsg = closedKey && S.site.closed[closedKey];
   if (closedMsg && !S.me.isAdmin) {
     show(h('div', { class: 'page' }, emptyState('This page is closed', T(closedMsg))));
     return;
   }
-  const fn = { feed: feedView, search: searchView, group: groupView, dm: dmView, friends: friendsView, settings: settingsView, admin: adminView, join: (c, t) => window.TWG ? TWG.joinView(c, t) : feedView(c, t) }[parts[0]] || TWPages[parts[0]] || feedView;
+  const fn = { group: groupView, dm: dmView, friends: friendsView, settings: settingsView, admin: adminView, join: (c, t) => window.TWG ? TWG.joinView(c, t) : findView('lfg', t) }[p0] || TWPages[p0] || findView;
   try { await fn(parts[1], tok); }
   catch (e) { if (tok === S.tok) show(h('div', { class: 'page' }, emptyState('That didn’t load', e.message || 'Please try again.', btn('Try again', { onclick: route })))); }
   if (tok === S.tok) TWM.prog.done();
@@ -1349,7 +1460,29 @@ async function openProfile(id, opts) {
       h('div', { class: 'profile-names' }, h('h2', { text: nm(p) }), h('p', { class: 'muted', text: '@' + T(p.username) }),
         h('p', { class: 'status-line' + (p.playing ? ' playing' : '') }, p.playing ? gameThumb(p.playing) : null, h('span', { class: 'status-txt', text: p.playing ? playingStatusText(p) : STATUS[sk] }))), more),
     h('div', { class: 'prows' }, row('Region', T(p.region)), row('Age', p.ageRange), row('Member since', isNaN(joined) ? '' : joined.toLocaleDateString(undefined, { month: 'long', year: 'numeric' }))),
-    games.length ? h('div', { class: 'section', 'data-sec': 'games' }, h('div', { class: 'section-title', text: 'Favorite games' }), h('div', { class: 'chips favgames' }, games.map(g => h('span', { class: 'chip', style: 'display:inline-flex;align-items:center;gap:4px;' }, gameThumb(g), h('span', { class: 'chip-txt', text: T(g) }))))) : null,
+    (() => {
+      if (!games.length) return null;
+      let expanded = false;
+      const chipsContainer = h('div', { class: 'chips favgames' });
+      const renderChips = () => {
+        chipsContainer.innerHTML = '';
+        const visible = expanded ? games : games.slice(0, 5);
+        for (const g of visible) {
+          chipsContainer.append(h('span', { class: 'chip', style: 'display:inline-flex;align-items:center;gap:4px;' }, gameThumb(g), h('span', { class: 'chip-txt', text: T(g) })));
+        }
+        if (games.length > 5) {
+          const toggleBtn = h('button', {
+            class: 'chip toggle-more-games',
+            type: 'button',
+            style: 'cursor:pointer;background:var(--color-surface);border:1px dashed var(--color-line-2);font-weight:600;',
+            onclick: () => { expanded = !expanded; renderChips(); }
+          }, expanded ? tr('Show less') : `+${games.length - 5} ${tr('more')}`);
+          chipsContainer.append(toggleBtn);
+        }
+      };
+      renderChips();
+      return h('div', { class: 'section', 'data-sec': 'games' }, h('div', { class: 'section-title', text: 'Favorite games' }), chipsContainer);
+    })(),
     extra, actions);
   if (window.TWProfile) TWProfile.profileDetails(extra, p.id);   // bio, play style, ranks/roles, availability (profile.js)
   close = openSheet('Profile', body);
@@ -1507,8 +1640,89 @@ async function adminView(_, tok) {
     function card(r) {
       const done = r.status !== 'pending';
       const who = (name, id) => name ? h('button', { class: 'linklike', type: 'button', onclick: () => id && openProfile(id) }, '@' + T(name)) : h('span', { class: 'muted', text: 'deleted user' });
+      function openResolveModal(rep) {
+        let close = () => {};
+        const targetName = rep.reportedName ? '@' + T(rep.reportedName) : 'User';
+
+        const actionRadios = [
+          { id: 'dismiss', label: 'Dismiss report', desc: 'No penalty or action against the reported user.' },
+          { id: 'warn', label: 'Issue a warning', desc: 'Send an official moderation warning notification.' },
+          { id: 'delete_messages', label: 'Delete user messages', desc: 'Delete all messages posted by this user.' },
+          { id: 'suspend', label: 'Suspend account', desc: 'Temporarily or permanently suspend user.' },
+          { id: 'delete_account', label: 'Delete account permanently', desc: 'Delete account and ban IP & device.' }
+        ];
+
+        let selectedAction = 'dismiss';
+        const actionList = h('div', { class: 'stack', style: 'gap:8px;' });
+
+        const suspendOptions = h('div', { class: 'stack', style: 'display:none;padding:12px;background:var(--color-surface);border:1px solid var(--color-line-2);border-radius:var(--radius-md);margin-top:6px;gap:10px;' });
+        const suspendDays = selectEl([
+          ['1', '1 Day'],
+          ['7', '7 Days'],
+          ['30', '30 Days'],
+          ['0', 'Permanent Ban']
+        ], '7', 'Suspension duration');
+        const delMsgCheck = h('input', { type: 'checkbox', checked: true });
+        const banIpCheck = h('input', { type: 'checkbox', checked: true });
+
+        suspendOptions.append(
+          h('div', { class: 'field' }, h('label', { class: 'label', text: 'Suspension duration' }), suspendDays),
+          h('label', { style: 'display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;' }, delMsgCheck, 'Delete all messages posted by user'),
+          h('label', { style: 'display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;' }, banIpCheck, 'Ban IP and Device ID (prevent troll alt accounts)')
+        );
+
+        const noteInput = h('textarea', { class: 'input', rows: 2, placeholder: 'Optional reason or note for audit log...', style: 'width:100%;resize:vertical;' });
+
+        actionRadios.forEach((act, idx) => {
+          const radio = h('input', { type: 'radio', name: 'report_action', value: act.id, checked: idx === 0 });
+          const row = h('label', { style: 'display:flex;align-items:flex-start;gap:10px;padding:8px 12px;border:1px solid var(--color-line-2);border-radius:var(--radius-md);cursor:pointer;' },
+            radio,
+            h('div',
+              h('strong', { style: 'display:block;font-size:14px;', text: act.label }),
+              h('span', { class: 'muted small', text: act.desc })
+            )
+          );
+          radio.addEventListener('change', () => {
+            selectedAction = act.id;
+            suspendOptions.style.display = selectedAction === 'suspend' ? 'flex' : 'none';
+          });
+          actionList.append(row);
+        });
+
+        const submitBtn = btn('Apply Action & Resolve', { cls: 'primary' });
+        submitBtn.addEventListener('click', () => busy(submitBtn, async () => {
+          const payload = {
+            action: selectedAction,
+            note: noteInput.value.trim(),
+            suspendDays: selectedAction === 'suspend' ? parseInt(suspendDays.value, 10) : null,
+            deleteMessages: selectedAction === 'suspend' ? delMsgCheck.checked : selectedAction === 'delete_messages',
+            banIpAndDevice: selectedAction === 'suspend' ? banIpCheck.checked : selectedAction === 'delete_account'
+          };
+          await api('POST', `/api/admin/reports/${enc(rep.id)}/resolve`, payload);
+          rep.status = 'resolved';
+          toast(`Report resolved (${selectedAction})`);
+          close();
+          paint();
+        }));
+
+        const modalBody = h('div', { class: 'stack', style: 'gap:14px;' },
+          h('p', { class: 'muted small', text: `Choose moderation action to take on ${targetName} for: "${rep.reason || 'Report'}"` }),
+          actionList,
+          suspendOptions,
+          h('div', { class: 'field' },
+            h('label', { class: 'label', text: 'Resolution Note / Reason' }),
+            noteInput
+          ),
+          h('div', { class: 'sheet-actions', style: 'display:flex;justify-content:flex-end;gap:8px;' },
+            h('button', { class: 'btn ghost', type: 'button', onclick: () => close() }, 'Cancel'),
+            submitBtn
+          )
+        );
+
+        close = openSheet(`Resolve Report: ${targetName}`, modalBody);
+      }
       const resolve = btn('Resolve', { cls: 'small', icon: 'check' });
-      resolve.addEventListener('click', () => busy(resolve, async () => { await api('POST', '/api/admin/reports/' + enc(r.id) + '/resolve'); r.status = 'resolved'; paint(); }));
+      resolve.addEventListener('click', () => openResolveModal(r));
       const where = r.groupName ? 'in ' + T(r.groupName) : r.messageKind === 'd' ? 'in a direct message' : '';
       return h('article', { class: 'card report' + (done ? ' done' : ''), 'data-key': 'r' + r.id, style: 'padding:16px;display:flex;flex-direction:column;gap:10px' },
         h('div', { class: 'row', style: 'gap:8px;flex-wrap:wrap;align-items:center' },
@@ -2222,7 +2436,7 @@ async function start() {
   if (window.TWRT) TWRT.start();
   try { await Promise.all([loadSocial(), refreshMine()]); } catch (e) { toast(e.message, 'error'); }
   clearInterval(S.pollTimer); S.pollTimer = every(poll, POLL_MS);
-  if (!location.hash || location.hash === '#/') location.hash = '#/feed';
+  if (!location.hash || location.hash === '#/') location.hash = '#/find';
   route();
   applyAutoGame();
 }

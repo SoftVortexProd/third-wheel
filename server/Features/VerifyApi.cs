@@ -176,10 +176,13 @@ CREATE UNIQUE INDEX IF NOT EXISTS ux_verified_ext ON verified_tags(platform, ext
     static IResult Page(string title, string message, bool ok)
     {
         var t = WebUtility.HtmlEncode(title); var m = WebUtility.HtmlEncode(message);
+        var check = ok ? "\u2713 " : "";
+        var okJs = ok ? "true" : "false";
+        var script = $"<script>if(window.opener){{try{{window.opener.postMessage({{type:'tw:verified',ok:{okJs},title:'{t}'}},'*');}}catch(e){{}}if({okJs})setTimeout(function(){{try{{window.close();}}catch(e){{}}}},1200);}}</script>";
         var html = $"<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>{t}</title>" +
             "<style>body{margin:0;min-height:100vh;display:grid;place-items:center;background:#000;color:#fafafa;font:16px system-ui,sans-serif}.c{max-width:420px;margin:24px;padding:28px;border:1px solid #26262c;border-radius:16px;background:#111114;text-align:center}" +
             "h1{font-size:22px;margin:0 0 10px}p{color:#a3a3ad;line-height:1.5}a{display:inline-block;margin-top:14px;padding:10px 18px;border-radius:10px;background:#4f5ee6;color:#fff;text-decoration:none;font-weight:600}</style></head>" +
-            $"<body><div class=\"c\"><h1>{(ok ? "✓ " : "")}{t}</h1><p>{m}</p><a href=\"/#/settings/connections\">Back to Third Wheel</a></div></body></html>";
+            $"<body><div class=\"c\"><h1>{check}{t}</h1><p>{m}</p><a href=\"/#/settings/connections\">Back to Third Wheel</a></div>{script}</body></html>";
         return Results.Content(html, "text/html; charset=utf-8");
     }
 
@@ -238,7 +241,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS ux_verified_ext ON verified_tags(platform, ext
                 matched++;
                 list.Add(new { name, hours = g.Hours, inFavorites = favs.Contains(name, StringComparer.OrdinalIgnoreCase) });
             }
-            return Results.Json(new { isPrivate = false, games = list.Take(60).ToList(), unmatched = owned.Count - matched, max = 12 });
+            return Results.Json(new { isPrivate = false, games = list.ToList(), unmatched = owned.Count - matched, max = 200 });
         });
 
         api.MapPost("verify/steam/import", async (HttpContext c, ImportIn b) =>
@@ -247,7 +250,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS ux_verified_ext ON verified_tags(platform, ext
             var steamId = Db.Scalar("SELECT extId FROM verified_tags WHERE userId=@u AND platform='Steam'", ("@u", me)) as string;
             if (steamId == null) return Err("Verify your Steam account first.", 409);
             if (Limited($"imp:{me}", 10, TimeSpan.FromHours(1), true)) return Err("Try again in a little while.", 429);
-            var want = (b.Games ?? Array.Empty<string>()).Select(GamesApi.Canonical).Where(x => x != null).Cast<string>().Distinct(StringComparer.OrdinalIgnoreCase).Take(12).ToList();
+            var want = (b.Games ?? Array.Empty<string>()).Select(GamesApi.Canonical).Where(x => x != null).Cast<string>().Distinct(StringComparer.OrdinalIgnoreCase).Take(200).ToList();
             if (want.Count == 0) return Err("Pick at least one game.");
             List<(long App, string Name, int Hours)> owned;
             try { owned = await FetchOwned(steamId); } catch { return Err("Couldn't reach Steam. Try again in a moment.", 502); }   // hours come from Steam, never from the browser
@@ -270,7 +273,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS ux_verified_ext ON verified_tags(platform, ext
                 if (n != null) hours[n] = g.Hours;
             }
             var cur = (JsonSerializer.Deserialize<string[]>(Db.Scalar("SELECT games FROM users WHERE id=@i", ("@i", me)) as string ?? "[]") ?? Array.Empty<string>()).ToList();
-            foreach (var g in want) { if (!cur.Contains(g, StringComparer.OrdinalIgnoreCase)) { if (cur.Count >= 12) break; cur.Add(g); } }
+            foreach (var g in want) { if (!cur.Contains(g, StringComparer.OrdinalIgnoreCase)) { if (cur.Count >= 200) break; cur.Add(g); } }
             Db.Exec("UPDATE users SET games=@g WHERE id=@i", ("@g", JsonSerializer.Serialize(cur)), ("@i", me));
             foreach (var g in want.Where(g => cur.Contains(g, StringComparer.OrdinalIgnoreCase)))
                 Db.Exec("INSERT INTO user_games(userId,game,rank,role,hours) VALUES(@u,@g,'','',@h) ON CONFLICT(userId,game) DO UPDATE SET hours=@h", ("@u", me), ("@g", g), ("@h", hours.GetValueOrDefault(g)));

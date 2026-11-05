@@ -12,7 +12,10 @@ TWPrefs.addStrings('sv', {
   'Leave': 'Lämna', 'Connecting…': 'Ansluter…', 'Voice chat needs a secure connection (https) or the desktop app.': 'Röstchatt kräver en säker anslutning (https) eller skrivbordsappen.',
   'Couldn’t use the microphone. Check that it is allowed.': 'Kunde inte använda mikrofonen. Kontrollera att den är tillåten.', 'You': 'Du', 'Muted': 'Avstängd',
   'Live connection is down. Voice chat needs it.': 'Den levande anslutningen är nere. Röstchatt behöver den.', '{name} joined the voice chat': '{name} gick med i röstchatten', '{name} left the voice chat': '{name} lämnade röstchatten',
-  'Deafen': 'Stäng av ljud', 'Undeafen': 'Slå på ljud'
+  'Deafen': 'Stäng av ljud', 'Undeafen': 'Slå på ljud', 'Audio settings': 'Ljudinställningar', 'Microphone (Input)': 'Mikrofon (Ingång)',
+  'Headphones / Speakers (Output)': 'Hörlurar / Högtalare (Utgång)', 'Input level test:': 'Testa mikrofonnivå:', 'Default microphone': 'Standardmikrofon',
+  'Default speaker / headphones': 'Standardhörlurar / högtalare', 'Select where you want to hear incoming voice audio.': 'Välj var du vill höra inkommande röster.',
+  'Done': 'Klar', 'Audio & Voice Settings': 'Ljud- & röstinställningar'
 });
 
 let ice = null, room = null;                      // room: { gid, name, stream, peers: Map(uid -> peer), muted, deaf, bar }
@@ -24,6 +27,138 @@ async function iceServers() {
   try { ice = (await api('GET', '/api/voice/ice')).iceServers; } catch { ice = [{ urls: ['stun:stun.l.google.com:19302'] }]; }
   return ice;
 }
+
+/* ---------- Audio device preferences & settings ---------- */
+function getSavedMicId() { return localStorage.getItem('tw_audio_mic') || ''; }
+function getSavedSpeakerId() { return localStorage.getItem('tw_audio_speaker') || ''; }
+
+function applySpeakerToPeers(speakerId) {
+  if (!room) return;
+  for (const p of room.peers.values()) {
+    if (p.audio && typeof p.audio.setSinkId === 'function') {
+      p.audio.setSinkId(speakerId || '').catch(() => {});
+    }
+  }
+}
+
+async function restartLocalStream() {
+  if (!room) return;
+  const micId = getSavedMicId();
+  const aConfig = { echoCancellation: true, noiseSuppression: true, autoGainControl: true };
+  if (micId) aConfig.deviceId = { exact: micId };
+  try {
+    const newStream = await navigator.mediaDevices.getUserMedia({ audio: aConfig, video: false });
+    if (room.stopMeter) room.stopMeter();
+    room.stream.getTracks().forEach(t => t.stop());
+    room.stream = newStream;
+    const newTrack = newStream.getAudioTracks()[0];
+    newTrack.enabled = !room.muted;
+    for (const p of room.peers.values()) {
+      const senders = p.pc.getSenders();
+      const aSender = senders.find(s => s.track && s.track.kind === 'audio');
+      if (aSender) aSender.replaceTrack(newTrack).catch(() => {});
+    }
+    room.stopMeter = meter(newStream, (on) => { if (room) { room.speaking = on && !room.muted; drawBar(); } });
+  } catch (e) { console.warn('Could not switch mic in-call', e); }
+}
+
+async function openAudioSettings() {
+  let devices = [];
+  try {
+    devices = await navigator.mediaDevices.enumerateDevices();
+  } catch {}
+  const mics = devices.filter(d => d.kind === 'audioinput');
+  const speakers = devices.filter(d => d.kind === 'audiooutput');
+
+  let curMic = getSavedMicId();
+  let curSpk = getSavedSpeakerId();
+
+  const micSelect = h('select', { class: 'input' },
+    h('option', { value: '' }, t('Default microphone')),
+    ...mics.map(m => h('option', { value: m.deviceId, selected: m.deviceId === curMic }, m.label || t('Microphone ({id})', { id: m.deviceId.slice(0, 5) })))
+  );
+
+  const spkSelect = h('select', { class: 'input' },
+    h('option', { value: '' }, t('Default speaker / headphones')),
+    ...speakers.map(s => h('option', { value: s.deviceId, selected: s.deviceId === curSpk }, s.label || t('Headphones ({id})', { id: s.deviceId.slice(0, 5) })))
+  );
+
+  const meterFill = h('div', { style: 'height:100%;width:0%;background:var(--color-primary,#4f5ee6);border-radius:4px;transition:width 0.08s ease;' });
+  const meterBar = h('div', { style: 'height:8px;background:var(--color-line-2,#26262c);border-radius:4px;overflow:hidden;margin-top:6px;' }, meterFill);
+
+  let testStream = null, testMeterStop = null;
+  async function startTest(deviceId) {
+    if (testMeterStop) { testMeterStop(); testMeterStop = null; }
+    if (testStream) { testStream.getTracks().forEach(t => t.stop()); testStream = null; }
+    try {
+      const constraints = { audio: deviceId ? { deviceId: { exact: deviceId } } : true, video: false };
+      testStream = await navigator.mediaDevices.getUserMedia(constraints);
+      testMeterStop = meter(testStream, (active, pct) => {
+        meterFill.style.width = Math.min(100, Math.max(0, pct || (active ? 60 : 0))) + '%';
+      });
+    } catch {
+      meterFill.style.width = '0%';
+    }
+  }
+
+  micSelect.addEventListener('change', () => {
+    localStorage.setItem('tw_audio_mic', micSelect.value);
+    startTest(micSelect.value);
+    restartLocalStream();
+  });
+
+  spkSelect.addEventListener('change', () => {
+    localStorage.setItem('tw_audio_speaker', spkSelect.value);
+    applySpeakerToPeers(spkSelect.value);
+  });
+
+  startTest(curMic);
+
+  let close = () => {};
+  const content = h('div', { class: 'stack', style: 'gap:16px;' },
+    h('div', { class: 'field' },
+      h('label', { class: 'label', text: t('Microphone (Input)') }),
+      micSelect,
+      h('div', { style: 'margin-top:4px;' },
+        h('span', { class: 'muted small', text: t('Input level test:') }),
+        meterBar
+      )
+    ),
+    h('div', { class: 'field' },
+      h('label', { class: 'label', text: t('Headphones / Speakers (Output)') }),
+      spkSelect,
+      h('span', { class: 'muted small', text: t('Select where you want to hear incoming voice audio.') })
+    ),
+    h('div', { style: 'display:flex;justify-content:flex-end;margin-top:12px;' },
+      h('button', { class: 'btn', type: 'button', onclick: () => close() }, t('Done'))
+    )
+  );
+
+  close = TW.openSheet(t('Audio & Voice Settings'), content);
+  const origClose = close;
+  close = () => {
+    if (testMeterStop) testMeterStop();
+    if (testStream) testStream.getTracks().forEach(t => t.stop());
+    origClose();
+  };
+}
+
+/* User interaction unlock for browser audio autoplay policy */
+function unlockAutoplay() {
+  if (actx && actx.state === 'suspended') {
+    actx.resume().catch(() => {});
+  }
+  if (room) {
+    for (const p of room.peers.values()) {
+      if (p.audio && p.audio.paused) {
+        p.audio.play().catch(() => {});
+      }
+    }
+  }
+}
+window.addEventListener('click', unlockAutoplay, { passive: true });
+window.addEventListener('touchstart', unlockAutoplay, { passive: true });
+window.addEventListener('keydown', unlockAutoplay, { passive: true });
 
 /* ---------- UI ---------- */
 function paintOne(b) {
@@ -60,9 +195,10 @@ function drawBar() {
   };
   const mute = h('button', { class: 'icon-btn vc-ctl' + (room.muted ? ' off' : ''), type: 'button', 'aria-label': room.muted ? t('Unmute') : t('Mute'), title: room.muted ? t('Unmute') : t('Mute'), onclick: () => setMuted(!room.muted) }, icon('mic', 18));
   const deaf = h('button', { class: 'icon-btn vc-ctl' + (room.deaf ? ' off' : ''), type: 'button', 'aria-label': room.deaf ? t('Undeafen') : t('Deafen'), title: room.deaf ? t('Undeafen') : t('Deafen'), onclick: () => setDeaf(!room.deaf) }, icon('speaker', 18));
+  const settingsBtn = h('button', { class: 'icon-btn vc-ctl', type: 'button', 'aria-label': t('Audio settings'), title: t('Audio settings'), onclick: openAudioSettings }, icon('gear', 18));
   const leaveBtn = h('button', { class: 'btn small danger', type: 'button', onclick: leave }, t('Leave'));
   room.bar.replaceChildren(h('a', { class: 'vc-name', href: '#/group/' + TW.enc(room.gid) }, h('b', { text: room.name }), h('span', { class: 'muted small', text: room.joined ? t('Voice chat') : t('Connecting…') })),
-    h('div', { class: 'vc-faces' }, ...people.map(face)), h('div', { class: 'vc-actions' }, mute, deaf, leaveBtn));
+    h('div', { class: 'vc-faces' }, ...people.map(face)), h('div', { class: 'vc-actions' }, mute, deaf, settingsBtn, leaveBtn));
 }
 
 /* ---------- audio level (shows who is talking) ---------- */
@@ -75,8 +211,10 @@ function meter(stream, onLevel) {
     const loop = () => {
       if (!alive) return;
       an.getByteTimeDomainData(buf); let peak = 0; for (let i = 0; i < buf.length; i++) peak = Math.max(peak, Math.abs(buf[i] - 128));
-      const now = peak > 9; if (now !== on) { on = now; onLevel(now); }
-      setTimeout(loop, 160);
+      const now = peak > 9;
+      const pct = Math.min(100, Math.round((peak / 128) * 100 * 2.5));
+      if (now !== on || pct > 0) { on = now; onLevel(now, pct); }
+      setTimeout(loop, 120);
     };
     loop();
     return () => { alive = false; try { src.disconnect(); } catch { /* ignore */ } };
@@ -92,10 +230,25 @@ async function makePeer(uid, name, initiator) {
   api('GET', '/api/users/' + uid).then(p => { peer.person = p; peer.name = nm(p); drawBar(); }).catch(() => {});
   room.stream.getTracks().forEach(tr => pc.addTrack(tr, room.stream));
   pc.onicecandidate = (e) => { if (e.candidate) TWRT.send({ t: 'vc.signal', gid: room.gid, to: uid, data: { ice: e.candidate } }); };
-  pc.onconnectionstatechange = () => { peer.state = pc.connectionState; drawBar(); if (pc.connectionState === 'failed') { try { pc.restartIce(); } catch { /* ignore */ } } };
+  pc.onconnectionstatechange = () => {
+    peer.state = pc.connectionState;
+    drawBar();
+    if (pc.connectionState === 'failed' || pc.connectionState === 'disconnected') {
+      try { pc.restartIce(); } catch { /* ignore */ }
+    }
+  };
   pc.ontrack = (e) => {
-    if (!peer.audio) { peer.audio = h('audio', { autoplay: true, playsinline: true }); peer.audio.style.display = 'none'; document.body.append(peer.audio); }
-    peer.audio.srcObject = e.streams[0]; peer.audio.muted = !!room.deaf;
+    if (!peer.audio) {
+      peer.audio = h('audio', { autoplay: true, playsinline: true });
+      peer.audio.style.display = 'none';
+      document.body.append(peer.audio);
+    }
+    peer.audio.srcObject = e.streams[0];
+    peer.audio.muted = !!room.deaf;
+    const spk = getSavedSpeakerId();
+    if (spk && typeof peer.audio.setSinkId === 'function') {
+      peer.audio.setSinkId(spk).catch(() => {});
+    }
     peer.audio.play().catch(() => {});
     if (!peer.stopMeter) peer.stopMeter = meter(e.streams[0], (on) => { peer.speaking = on; drawBar(); });
   };
@@ -136,9 +289,22 @@ async function join(gid, name) {
   if (room) { if (room.gid === gid) return; await leave(); }
   if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia || !window.RTCPeerConnection) { toast(t('Voice chat needs a secure connection (https) or the desktop app.'), 'error'); return; }
   if (!TWRT.connected()) { toast(t('Live connection is down. Voice chat needs it.'), 'error'); return; }
+  
+  const micId = getSavedMicId();
+  const aConfig = { echoCancellation: true, noiseSuppression: true, autoGainControl: true };
+  if (micId) aConfig.deviceId = { exact: micId };
+
   let stream;
-  try { stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }, video: false }); }
-  catch { toast(t('Couldn’t use the microphone. Check that it is allowed.'), 'error'); return; }
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ audio: aConfig, video: false });
+  } catch {
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }, video: false });
+    } catch {
+      toast(t('Couldn’t use the microphone. Check that it is allowed.'), 'error');
+      return;
+    }
+  }
   room = { gid, name, stream, peers: new Map(), muted: false, deaf: false, joined: false, speaking: false, bar: null, stopMeter: null };
   room.stopMeter = meter(stream, (on) => { if (room) { room.speaking = on && !room.muted; drawBar(); } });
   drawBar(); paintButtons();
@@ -172,7 +338,17 @@ TWRT.on('vc.joined', async (m) => {
   for (const p of m.peers || []) await makePeer(p.uid, p.name, true);   // the newcomer calls everyone already there
   setMuted(room.muted);
 });
-TWRT.on('vc.peer', (m) => { if (room && m.gid === room.gid) { toast(t('{name} joined the voice chat', { name: m.name })); } });   // they will call us: nothing to do until their offer arrives
+TWRT.on('vc.peer', (m) => {
+  if (room && m.gid === room.gid) {
+    toast(t('{name} joined the voice chat', { name: m.name }));
+    // Fallback if newcomer's offer doesn't arrive within 4 seconds: initiate call to resolve connection
+    setTimeout(async () => {
+      if (room && room.gid === m.gid && !room.peers.has(m.uid)) {
+        await makePeer(m.uid, m.name, true);
+      }
+    }, 4000);
+  }
+});
 TWRT.on('vc.left', (m) => { if (room && m.gid === room.gid) { const p = room.peers.get(m.uid); if (p) toast(t('{name} left the voice chat', { name: p.name })); dropPeer(m.uid); } });
 TWRT.on('vc.signal', onSignal);
 TWRT.on('vc.state', (m) => { if (room && m.gid === room.gid) { const p = room.peers.get(m.uid); if (p) { p.muted = !!m.muted; drawBar(); } } });
@@ -181,5 +357,5 @@ TWRT.on('vc.error', (m) => { toast(m.error || 'Voice chat error.', 'error'); if 
 TWRT.on('rt.down', () => { if (room) { toast(t('Live connection is down. Voice chat needs it.'), 'error'); leave(); } });
 addEventListener('beforeunload', () => { if (room) TWRT.send({ t: 'vc.leave', gid: room.gid }); });
 
-window.TWVoice = { button, join, leave, active: () => (room ? room.gid : null) };
+window.TWVoice = { button, join, leave, active: () => (room ? room.gid : null), openSettings: openAudioSettings };
 })();

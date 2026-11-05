@@ -45,11 +45,28 @@ CREATE INDEX IF NOT EXISTS ix_lfg_open ON lfg_posts(closed, expiresAt);");
         }
     }
 
-    static bool Open(Dictionary<string, object?> p) => Convert.ToInt32(p["closed"]) == 0 && string.CompareOrdinal((string)p["expiresAt"]!, Now()) > 0;
+    static bool Open(Dictionary<string, object?> p)
+    {
+        var closed = p.TryGetValue("closed", out var c) && c is long cl ? (int)cl : 0;
+        return closed == 0 && string.CompareOrdinal((string)p["expiresAt"]!, Now()) > 0;
+    }
+
+    static int PosterAge(Dictionary<string, object?> u)
+    {
+        var bd = u.TryGetValue("birthDate", out var b) ? b as string : null;
+        var a = u.TryGetValue("age", out var v) && v is long l ? (int)l : 0;
+        return CalculateAge(bd, a);
+    }
 
     /// <summary>Can `me` see (and answer) a post by this poster? Age separation, blocks and suspensions apply.</summary>
-    static bool CanSee(long me, int myAge, Dictionary<string, object?> poster) =>
-        Convert.ToInt32(poster["banned"]) == 0 && !IsBlocked(me, (long)poster["id"]!) && (me == (long)poster["id"]! || Age.UserVisible(myAge, Convert.ToInt32(poster["age"])));
+    static bool CanSee(long me, int myAge, Dictionary<string, object?> poster)
+    {
+        var banned = poster.TryGetValue("banned", out var b) && b is long bl ? (int)bl : 0;
+        if (banned != 0) return false;
+        var pid = (long)poster["id"]!;
+        if (IsBlocked(me, pid)) return false;
+        return me == pid || Age.UserVisible(myAge, PosterAge(poster));
+    }
 
     static object Lite(Dictionary<string, object?> u) => new
     {
@@ -89,12 +106,12 @@ CREATE INDEX IF NOT EXISTS ix_lfg_open ON lfg_posts(closed, expiresAt);");
             if (rows.Count == 0) return Results.Json(Array.Empty<object>());
             var users = Db.Rows($"SELECT * FROM users WHERE id IN ({string.Join(",", rows.Select(r => (long)r["userId"]!).Distinct())})").ToDictionary(r => (long)r["id"]!);
             var resp = Db.Rows($"SELECT r.postId, u.* FROM lfg_responses r JOIN users u ON u.id=r.userId WHERE r.postId IN ({string.Join(",", rows.Select(r => (long)r["id"]!))}) ORDER BY r.at ASC")
-                .GroupBy(r => (long)r["postId"]!).ToDictionary(g => g.Key, g => g.Where(u => Convert.ToInt32(u["banned"]) == 0 && !IsBlocked(me, (long)u["id"]!)).ToList());
+                .GroupBy(r => (long)r["postId"]!).ToDictionary(g => g.Key, g => g.Where(u => (u.TryGetValue("banned", out var b) && b is long bl ? (int)bl : 0) == 0 && !IsBlocked(me, (long)u["id"]!)).ToList());
             var canon = string.IsNullOrWhiteSpace(game) ? null : GamesApi.Canonical(game);
             var list = new List<object>();
             foreach (var p in rows)
             {
-                var poster = users[(long)p["userId"]!];
+                if (!users.TryGetValue((long)p["userId"]!, out var poster)) continue;
                 if (mine == true ? (long)p["userId"]! != me : !CanSee(me, myAge, poster)) continue;
                 if (canon != null && !string.Equals((string)p["game"]!, canon, StringComparison.OrdinalIgnoreCase)) continue;
                 if (mode is "casual" or "competitive" && (string)p["mode"]! != mode) continue;

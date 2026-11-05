@@ -153,7 +153,8 @@ GamesApi.Map(api);
 // ---------- auth ----------
 api.MapPost("auth/signup", (HttpContext c, Creds b) =>
 {
-    var ip = c.Connection.RemoteIpAddress?.ToString() ?? "?";
+    if (IsBanned(c, out var banReason)) return Results.Json(new { error = banReason ?? "Your network or device has been suspended." }, statusCode: 403);
+    var ip = ClientIp(c);
     if (Limited("su:" + ip, 10, TimeSpan.FromHours(1), true)) return Err("Too many sign-ups. Try later.", 429);
     var name = (b.Username ?? "").Trim(); var pw = b.Password ?? "";
     if (!userRx.IsMatch(name)) return Err("Username must be 3-20 letters, numbers or underscores.");
@@ -161,6 +162,8 @@ api.MapPost("auth/signup", (HttpContext c, Creds b) =>
     if (pw.Length < 8 || pw.Length > 72) return Err("Password must be 8-72 characters.");
     if (Db.Scalar("SELECT 1 FROM users WHERE username=@u COLLATE NOCASE", ("@u", name)) != null) return Err("That username is taken.", 409);
     var id = Db.CreateUser(name, pw, "NA-East", 0, Array.Empty<string>(), "online", null, false);
+    var dev = ClientDeviceId(c);
+    Db.Exec("UPDATE users SET lastIp=@ip, deviceId=@d WHERE id=@i", ("@ip", ip), ("@d", dev), ("@i", id));
     StartSession(c, id);
     return Results.Json(new { user = UserDto(id) });
 });
@@ -168,7 +171,8 @@ api.MapPost("auth/signup", (HttpContext c, Creds b) =>
 var dummy = Db.Hash("dummy-password", RandomNumberGenerator.GetBytes(16));
 api.MapPost("auth/login", (HttpContext c, Creds b) =>
 {
-    var ip = c.Connection.RemoteIpAddress?.ToString() ?? "?";
+    if (IsBanned(c, out var banReason)) return Results.Json(new { error = banReason ?? "Your network or device has been suspended." }, statusCode: 403);
+    var ip = ClientIp(c);
     var name = (b.Username ?? "").Trim();
     var key = "li:" + ip + ":" + name.ToLowerInvariant();
     if (Limited(key, 5, TimeSpan.FromMinutes(5), false)) return Err("Too many attempts. Wait a few minutes.", 429);
@@ -180,11 +184,15 @@ api.MapPost("auth/login", (HttpContext c, Creds b) =>
     if (Convert.ToInt32(u["banned"]) == 1)
     {
         var why = u["banReason"] as string;
+        var bIp = ClientIp(c); var bDev = ClientDeviceId(c);
+        Db.Exec("INSERT OR IGNORE INTO banned_ips(ip, reason, bannedAt, bannedBy) VALUES(@ip, @r, @t, 0)", ("@ip", bIp), ("@r", "Suspended user: " + name), ("@t", Now()));
+        if (bDev != null) Db.Exec("INSERT OR IGNORE INTO banned_devices(deviceId, reason, bannedAt, bannedBy) VALUES(@d, @r, @t, 0)", ("@d", bDev), ("@r", "Suspended user: " + name), ("@t", Now()));
         return Results.Json(new { error = "This account has been suspended." + (string.IsNullOrEmpty(why) ? "" : " Reason: " + why), banned = true, reason = why, username = name }, statusCode: 403);
     }
     rate.TryRemove(key, out _);
     var id = (long)u["id"]!;
-    Db.Exec("UPDATE users SET status='online' WHERE id=@i AND status='offline'", ("@i", id));
+    ip = ClientIp(c); var dev = ClientDeviceId(c);
+    Db.Exec("UPDATE users SET status='online', lastIp=@ip, deviceId=COALESCE(@dev, deviceId) WHERE id=@i", ("@ip", ip), ("@dev", dev), ("@i", id));
     StartSession(c, id);
     return Results.Json(new { user = UserDto(id) });
 });
@@ -237,7 +245,7 @@ api.MapPut("me/settings", (HttpContext c, SettingsIn b) => WithUser(c, uid =>
     else if (b.Age is < 13 or > 99) return Err("Age must be 13-99.");
 
     // Only real games from the catalog; anything else (free text, adult titles) is dropped.
-    var games = GamesApi.FilterKnown(b.FavoriteGames, 12);
+    var games = GamesApi.FilterKnown(b.FavoriteGames, 200);
     var status = b.Status ?? "online";
     if (status is not ("online" or "idle" or "dnd" or "offline")) return Err("Bad status.");
     var playingGame = GamesApi.Canonical(b.Playing);
@@ -491,7 +499,23 @@ api.MapPost("admin/users/{id:long}/ban", (HttpContext c, long id, BanIn b) => Wi
         Db.Exec("UPDATE users SET isAdmin=0 WHERE id=@i", ("@i", id));
     }
     Db.Exec("UPDATE users SET banned=@b, banReason=@r WHERE id=@i", ("@b", ban ? 1 : 0), ("@r", ban ? Enc(Clean(b.Reason, 120)) : null), ("@i", id));
-    if (ban) { Db.Exec("DELETE FROM sessions WHERE userId=@i", ("@i", id)); Db.Exec("UPDATE users SET status='offline', playing=NULL WHERE id=@i", ("@i", id)); }
+    if (ban)
+    {
+        Db.Exec("DELETE FROM sessions WHERE userId=@i", ("@i", id));
+        Db.Exec("UPDATE users SET status='offline', playing=NULL WHERE id=@i", ("@i", id));
+        var rsn = !string.IsNullOrWhiteSpace(b.Reason) ? b.Reason : "Suspended by admin";
+        if (u["lastIp"] is string uIp && !string.IsNullOrWhiteSpace(uIp))
+            Db.Exec("INSERT OR REPLACE INTO banned_ips(ip, reason, bannedAt, bannedBy) VALUES(@ip, @r, @t, @me)", ("@ip", uIp), ("@r", rsn), ("@t", Now()), ("@me", me));
+        if (u["deviceId"] is string uDev && !string.IsNullOrWhiteSpace(uDev))
+            Db.Exec("INSERT OR REPLACE INTO banned_devices(deviceId, reason, bannedAt, bannedBy) VALUES(@d, @r, @t, @me)", ("@d", uDev), ("@r", rsn), ("@t", Now()), ("@me", me));
+    }
+    else
+    {
+        if (u["lastIp"] is string uIp && !string.IsNullOrWhiteSpace(uIp))
+            Db.Exec("DELETE FROM banned_ips WHERE ip=@ip", ("@ip", uIp));
+        if (u["deviceId"] is string uDev && !string.IsNullOrWhiteSpace(uDev))
+            Db.Exec("DELETE FROM banned_devices WHERE deviceId=@d", ("@d", uDev));
+    }
     Audit(me, ban ? "suspended" : "unsuspended", (string)u["username"]!);
     return Results.Json(new { ok = true });
 }));
@@ -552,18 +576,7 @@ api.MapDelete("admin/users/{id:long}", (HttpContext c, long id) => WithAdmin(c, 
     if (u == null) return Err("User not found.", 404);
     if (id == me) return Err("You can't delete yourself.");
     if (Convert.ToInt32(u["isAdmin"]) == 1) return Err("Remove their admin role first.");
-    var ps = new (string, object?)[] { ("@i", id) };
-    // leave their groups properly first (hands ownership on, deletes groups that empty out), then clear moderation rows
-    foreach (var gm in Db.Rows("SELECT groupId FROM members WHERE userId=@i", ps)) GroupsApi.RemoveMember((long)gm["groupId"]!, id);
-    Db.Exec("DELETE FROM group_bans WHERE userId=@i", ps); Db.Exec("DELETE FROM group_mutes WHERE userId=@i", ps); Db.Exec("DELETE FROM join_requests WHERE userId=@i", ps);
-    foreach (var sql in new[] {
-        "DELETE FROM reactions WHERE kind='g' AND msgId IN (SELECT id FROM messages WHERE userId=@i)",
-        "DELETE FROM reactions WHERE kind='d' AND msgId IN (SELECT id FROM dms WHERE a=@i OR b=@i)",
-        "DELETE FROM sessions WHERE userId=@i", "DELETE FROM messages WHERE userId=@i", "DELETE FROM dms WHERE a=@i OR b=@i",
-        "DELETE FROM friends WHERE a=@i OR b=@i", "DELETE FROM frequests WHERE fromId=@i OR toId=@i", "DELETE FROM invites WHERE fromId=@i OR toId=@i",
-        "DELETE FROM members WHERE userId=@i", "DELETE FROM avatars WHERE userId=@i", "DELETE FROM reactions WHERE userId=@i", "DELETE FROM users WHERE id=@i" })
-        Db.Exec(sql, ps);
-    foreach (var g in Db.Rows("SELECT g.id FROM grps g WHERE NOT EXISTS (SELECT 1 FROM members m WHERE m.groupId=g.id)")) DeleteGroup((long)g["id"]!);
+    DeleteAccount(id);
     Audit(me, "deleted user", (string)u["username"]!);
     return Results.Json(new { ok = true });
 }));
@@ -806,7 +819,7 @@ return 0;
 record Creds(string? Username, string? Password);
 record PlayingIn(string? Playing);
 record StatusIn(string? Status);
-record BanIn(bool Banned, string? Reason);
+record BanIn(bool Banned, string? Reason, int? SuspendDays = null, bool? BanIp = true, bool? BanDevice = true);
 record RoleIn(bool IsAdmin);
 record MaintIn(bool On, string? Message);
 record SiteIn(MaintIn? Maintenance, Dictionary<string, string>? Closed, bool? AgeSeparation = null);
@@ -946,6 +959,11 @@ CREATE TABLE IF NOT EXISTS group_icons(groupId INTEGER PRIMARY KEY, mime TEXT NO
         if (!cols.Contains("banned")) Exec("ALTER TABLE users ADD COLUMN banned INTEGER DEFAULT 0");
         if (!cols.Contains("banReason")) Exec("ALTER TABLE users ADD COLUMN banReason TEXT");
         if (!cols.Contains("birthDate")) Exec("ALTER TABLE users ADD COLUMN birthDate TEXT");
+        if (!cols.Contains("lastIp")) Exec("ALTER TABLE users ADD COLUMN lastIp TEXT");
+        if (!cols.Contains("deviceId")) Exec("ALTER TABLE users ADD COLUMN deviceId TEXT");
+        if (!cols.Contains("suspendedUntil")) Exec("ALTER TABLE users ADD COLUMN suspendedUntil TEXT");
+        Exec(@"CREATE TABLE IF NOT EXISTS banned_ips(ip TEXT PRIMARY KEY, reason TEXT, bannedAt TEXT, bannedBy INTEGER);
+CREATE TABLE IF NOT EXISTS banned_devices(deviceId TEXT PRIMARY KEY, reason TEXT, bannedAt TEXT, bannedBy INTEGER);");
         Exec("UPDATE users SET banned=0 WHERE banned IS NULL");
         Exec("UPDATE users SET isAdmin=0 WHERE isAdmin IS NULL");
         Exec(@"CREATE TABLE IF NOT EXISTS ban_appeals(id INTEGER PRIMARY KEY, userId INTEGER, username TEXT, reason TEXT, message TEXT, status TEXT DEFAULT 'pending', createdAt TEXT, reviewedAt TEXT, reviewedBy INTEGER);");

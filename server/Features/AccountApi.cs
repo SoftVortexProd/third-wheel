@@ -6,6 +6,7 @@ using static Core;
 /// <summary>Password changes for users, and admin tools to edit a user's profile/settings/password and to rename groups.</summary>
 public static class AccountApi
 {
+    public record ReportResolveIn(string? Action, string? Note, int? SuspendDays, bool? DeleteMessages, bool? BanIpAndDevice);
     static readonly Regex Ctrl = new(@"[\p{C}\p{Zl}\p{Zp}]", RegexOptions.Compiled);
     static readonly string[] Statuses = { "online", "idle", "dnd", "offline" };
     /// <summary>For the media proxy: never follows redirects, so a Tenor URL can't bounce the server to another host.</summary>
@@ -26,10 +27,12 @@ public static class AccountApi
         Db.Exec(@"CREATE TABLE IF NOT EXISTS user_blocks(userId INTEGER, blockedId INTEGER, at TEXT, PRIMARY KEY(userId, blockedId));
 CREATE TABLE IF NOT EXISTS user_reports(id INTEGER PRIMARY KEY, reporterId INTEGER, reportedUserId INTEGER, messageId INTEGER, groupId INTEGER, reason TEXT, details TEXT, status TEXT DEFAULT 'pending', at TEXT);
 CREATE TABLE IF NOT EXISTS user_prefs(userId INTEGER PRIMARY KEY, accentColor TEXT DEFAULT '#7c8cff', fontScale REAL DEFAULT 1.0, language TEXT DEFAULT 'en', nsfwFilter INTEGER DEFAULT 1, profanityFilter INTEGER DEFAULT 1, disablePfpAnimation INTEGER DEFAULT 0, favGifs TEXT DEFAULT '[]', gamerTags TEXT DEFAULT '{}');");
-        // A report about a chat message records which chat it came from ('g' group / 'd' DM) and a snapshot of the text, so admins still see it after a delete.
         var rcols = Db.Rows("PRAGMA table_info(user_reports)").Select(r => (string)r["name"]!).ToHashSet(StringComparer.OrdinalIgnoreCase);
         if (!rcols.Contains("messageKind")) Db.Exec("ALTER TABLE user_reports ADD COLUMN messageKind TEXT");
         if (!rcols.Contains("snippet")) Db.Exec("ALTER TABLE user_reports ADD COLUMN snippet TEXT");
+        if (!rcols.Contains("resolution")) Db.Exec("ALTER TABLE user_reports ADD COLUMN resolution TEXT");
+        if (!rcols.Contains("resolvedBy")) Db.Exec("ALTER TABLE user_reports ADD COLUMN resolvedBy INTEGER");
+        if (!rcols.Contains("resolvedAt")) Db.Exec("ALTER TABLE user_reports ADD COLUMN resolvedAt TEXT");
         var pcols = Db.Rows("PRAGMA table_info(user_prefs)").Select(r => (string)r["name"]!).ToHashSet(StringComparer.OrdinalIgnoreCase);
         if (!pcols.Contains("disablePfpAnimation")) Db.Exec("ALTER TABLE user_prefs ADD COLUMN disablePfpAnimation INTEGER DEFAULT 0");
     }
@@ -155,11 +158,85 @@ CREATE TABLE IF NOT EXISTS user_prefs(userId INTEGER PRIMARY KEY, accentColor TE
             return Results.Json(list);
         }));
 
-        api.MapPost("admin/reports/{id:long}/resolve", (HttpContext c, long id) => WithAdmin(c, me =>
+        api.MapPost("admin/reports/{id:long}/resolve", (HttpContext c, long id, ReportResolveIn? b) => WithAdmin(c, me =>
         {
-            Db.Exec("UPDATE user_reports SET status='resolved' WHERE id=@i", ("@i", id));
-            Audit(me, "resolved report", id.ToString());
-            return Results.Json(new { ok = true });
+            var rep = Db.Row("SELECT * FROM user_reports WHERE id=@i", ("@i", id));
+            if (rep == null) return Err("Report not found.", 404);
+
+            var act = b?.Action?.ToLowerInvariant() ?? "dismiss";
+            var note = Clean(b?.Note, 250);
+            var reportedUserId = rep["reportedUserId"] is long ruid ? ruid : (long?)null;
+
+            if (reportedUserId != null && reportedUserId > 0)
+            {
+                var targetUser = Db.Row("SELECT username, lastIp, deviceId FROM users WHERE id=@i", ("@i", reportedUserId.Value));
+                if (targetUser != null)
+                {
+                    if (act == "warn")
+                    {
+                        var warnMsg = !string.IsNullOrWhiteSpace(note) ? note : "You have received an official warning from the Third Wheel moderators for violating community guidelines.";
+                        PushApi.Notify(reportedUserId.Value, "Community Warning", warnMsg, "/#/settings", "mod_warn");
+                        Db.Exec("INSERT INTO notifications(userId,type,fromId,snippet,createdAt) VALUES(@u,'warning',@f,@s,@t)",
+                            ("@u", reportedUserId.Value), ("@f", me), ("@s", Enc(warnMsg)), ("@t", Now()));
+                    }
+                    else if (act == "delete_messages")
+                    {
+                        if (rep["groupId"] is long gid && gid > 0)
+                        {
+                            Db.Exec("DELETE FROM messages WHERE groupId=@g AND userId=@u", ("@g", gid), ("@u", reportedUserId.Value));
+                        }
+                        else
+                        {
+                            Db.Exec("DELETE FROM messages WHERE userId=@u", ("@u", reportedUserId.Value));
+                            Db.Exec("DELETE FROM dms WHERE fromId=@u", ("@u", reportedUserId.Value));
+                        }
+                    }
+                    else if (act == "suspend")
+                    {
+                        var reason = !string.IsNullOrWhiteSpace(note) ? note : $"Reported: {rep["reason"]}";
+                        var days = b?.SuspendDays ?? 7;
+                        string? until = days > 0 ? DateTime.UtcNow.AddDays(days).ToString("o") : null;
+                        if (until != null)
+                        {
+                            Db.Exec("UPDATE users SET suspendedUntil=@u, banReason=@r WHERE id=@i", ("@u", until), ("@r", reason), ("@i", reportedUserId.Value));
+                        }
+                        else
+                        {
+                            Db.Exec("UPDATE users SET banned=1, isAdmin=0, banReason=@r, suspendedUntil=NULL WHERE id=@i", ("@r", reason), ("@i", reportedUserId.Value));
+                        }
+                        Db.Exec("DELETE FROM sessions WHERE userId=@i", ("@i", reportedUserId.Value));
+                        Db.Exec("UPDATE users SET status='offline', playing=NULL WHERE id=@i", ("@i", reportedUserId.Value));
+
+                        if (b?.DeleteMessages == true)
+                        {
+                            Db.Exec("DELETE FROM messages WHERE userId=@u", ("@u", reportedUserId.Value));
+                        }
+                        if (b?.BanIpAndDevice != false)
+                        {
+                            if (targetUser["lastIp"] is string ip && !string.IsNullOrWhiteSpace(ip))
+                                Db.Exec("INSERT OR REPLACE INTO banned_ips(ip, reason, bannedAt, bannedBy) VALUES(@ip, @r, @t, @me)", ("@ip", ip), ("@r", reason), ("@t", Now()), ("@me", me));
+                            if (targetUser["deviceId"] is string dev && !string.IsNullOrWhiteSpace(dev))
+                                Db.Exec("INSERT OR REPLACE INTO banned_devices(deviceId, reason, bannedAt, bannedBy) VALUES(@d, @r, @t, @me)", ("@d", dev), ("@r", reason), ("@t", Now()), ("@me", me));
+                        }
+                    }
+                    else if (act == "delete_account")
+                    {
+                        var reason = !string.IsNullOrWhiteSpace(note) ? note : $"Permanently removed following report: {rep["reason"]}";
+                        if (targetUser["lastIp"] is string ip && !string.IsNullOrWhiteSpace(ip))
+                            Db.Exec("INSERT OR REPLACE INTO banned_ips(ip, reason, bannedAt, bannedBy) VALUES(@ip, @r, @t, @me)", ("@ip", ip), ("@r", reason), ("@t", Now()), ("@me", me));
+                        if (targetUser["deviceId"] is string dev && !string.IsNullOrWhiteSpace(dev))
+                            Db.Exec("INSERT OR REPLACE INTO banned_devices(deviceId, reason, bannedAt, bannedBy) VALUES(@d, @r, @t, @me)", ("@d", dev), ("@r", reason), ("@t", Now()), ("@me", me));
+
+                        Core.DeleteAccount(reportedUserId.Value);
+                    }
+                }
+            }
+
+            var resText = $"{act}" + (!string.IsNullOrWhiteSpace(note) ? $": {note}" : "");
+            Db.Exec("UPDATE user_reports SET status='resolved', resolution=@res, resolvedBy=@me, resolvedAt=@t WHERE id=@i",
+                ("@res", resText), ("@me", me), ("@t", Now()), ("@i", id));
+            Audit(me, $"resolved report ({act})", id.ToString());
+            return Results.Json(new { ok = true, action = act });
         }));
 
         // ---- GIF search & media proxy (Klipy API + CSP 'self') ----

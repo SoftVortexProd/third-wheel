@@ -42,6 +42,7 @@ const PATHS = {
   refresh: 'M23 4v6h-6M1 20v-6h6M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15',
   steam: 'M12 2a10 10 0 0 0-10 9.8l5.7 2.4a3.3 3.3 0 0 1 1.9-.6l2.3-3.4a4.4 4.4 0 0 1 4.1-6.2 4.4 4.4 0 1 1-4.4 4.4c0-.1 0-.3.1-.4L9.5 11.4a3.3 3.3 0 0 1-2.9 3.2l-2.4 5.7A10 10 0 1 0 12 2z',
   discord: 'M18 6H6a3 3 0 0 0-3 3v8l3-3h12a3 3 0 0 0 3-3V9a3 3 0 0 0-3-3zM9 11a1.5 1.5 0 1 1 0-3 1.5 1.5 0 0 1 0 3zm6 0a1.5 1.5 0 1 1 0-3 1.5 1.5 0 0 1 0 3z',
+  mic: 'M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3zM19 10v1a7 7 0 0 1-14 0v-1M12 18v4M8 22h8',
   gear: 'M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z'
 };
 function ico(name, size = 20) {
@@ -629,8 +630,99 @@ function foldify(panel, openFirst) {
   }
 }
 
+
+/* ---- Voice & audio settings tab ---- */
+function voiceTab() {
+  const box = h('div', { class: 'settings-tab' });
+  const card = h('section', { class: 'scard' });
+  card.append(h('h3', { text: t('Audio devices') }),
+    h('p', { class: 'muted small', text: t('Choose your microphone and speaker or headphones for voice chat.') }));
+
+  const micSelect = h('select', { class: 'input' }, h('option', { value: '' }, t('Default microphone')));
+  const spkSelect = h('select', { class: 'input' }, h('option', { value: '' }, t('Default speaker / headphones')));
+  const meterFill = h('div', { style: 'height:100%;width:0%;background:var(--color-primary,#4f5ee6);border-radius:4px;transition:width 0.08s ease;' });
+  const meterBar = h('div', { style: 'height:8px;background:var(--color-line-2,#26262c);border-radius:4px;overflow:hidden;margin-top:6px;' }, meterFill);
+
+  async function loadDevices() {
+    try {
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      const mics = devices.filter(d => d.kind === 'audioinput');
+      const speakers = devices.filter(d => d.kind === 'audiooutput');
+      const curMic = localStorage.getItem('tw_audio_mic') || '';
+      const curSpk = localStorage.getItem('tw_audio_speaker') || '';
+
+      micSelect.replaceChildren(
+        h('option', { value: '' }, t('Default microphone')),
+        ...mics.map(m => h('option', { value: m.deviceId, selected: m.deviceId === curMic }, m.label || t('Microphone ({id})', { id: m.deviceId.slice(0, 5) })))
+      );
+
+      spkSelect.replaceChildren(
+        h('option', { value: '' }, t('Default speaker / headphones')),
+        ...speakers.map(s => h('option', { value: s.deviceId, selected: s.deviceId === curSpk }, s.label || t('Headphones ({id})', { id: s.deviceId.slice(0, 5) })))
+      );
+    } catch {}
+  }
+
+  let testStream = null, testMeterTimer = null;
+  async function testMic(deviceId) {
+    if (testStream) { testStream.getTracks().forEach(t => t.stop()); testStream = null; }
+    if (testMeterTimer) { clearInterval(testMeterTimer); testMeterTimer = null; }
+    try {
+      testStream = await navigator.mediaDevices.getUserMedia({ audio: deviceId ? { deviceId: { exact: deviceId } } : true, video: false });
+      const actx = new (window.AudioContext || window.webkitAudioContext)();
+      const src = actx.createMediaStreamSource(testStream);
+      const an = actx.createAnalyser(); an.fftSize = 512; src.connect(an);
+      const buf = new Uint8Array(an.frequencyBinCount);
+      testMeterTimer = setInterval(() => {
+        if (!box.isConnected) {
+          if (testStream) testStream.getTracks().forEach(t => t.stop());
+          clearInterval(testMeterTimer);
+          return;
+        }
+        an.getByteTimeDomainData(buf);
+        let peak = 0;
+        for (let i = 0; i < buf.length; i++) peak = Math.max(peak, Math.abs(buf[i] - 128));
+        const pct = Math.min(100, Math.round((peak / 128) * 100 * 2.5));
+        meterFill.style.width = pct + '%';
+      }, 100);
+    } catch {
+      meterFill.style.width = '0%';
+    }
+  }
+
+  micSelect.addEventListener('change', () => {
+    localStorage.setItem('tw_audio_mic', micSelect.value);
+    testMic(micSelect.value);
+  });
+  spkSelect.addEventListener('change', () => {
+    localStorage.setItem('tw_audio_speaker', spkSelect.value);
+  });
+
+  loadDevices();
+  testMic(localStorage.getItem('tw_audio_mic') || '');
+
+  card.append(
+    h('div', { class: 'field', style: 'margin-top:14px;' },
+      h('label', { class: 'label', text: t('Microphone (Input)') }),
+      micSelect,
+      h('div', { style: 'margin-top:6px;' },
+        h('span', { class: 'muted small', text: t('Input level test:') }),
+        meterBar
+      )
+    ),
+    h('div', { class: 'field', style: 'margin-top:14px;' },
+      h('label', { class: 'label', text: t('Headphones / Speakers (Output)') }),
+      spkSelect,
+      h('p', { class: 'muted small', text: t('Select where you want to hear incoming voice audio.') })
+    )
+  );
+
+  box.append(card);
+  return box;
+}
+
 /* ================= page ================= */
-const TABS = [['profile', 'Profile & identity', 'profile', profileTab], ['look', 'Profile look', 'look', lookTab], ['connections', 'Connections', 'connections', connectionsTab],
+const TABS = [['profile', 'Profile & identity', 'profile', profileTab], ['look', 'Profile look', 'look', lookTab], ['voice', 'Voice & audio', 'mic', voiceTab], ['connections', 'Connections', 'connections', connectionsTab],
   ['appearance', 'Appearance & theme', 'appearance', appearanceTab], ['safety', 'Content & safety', 'safety', safetyTab], ['language', 'Language', 'language', languageTab], ['account', 'Account & security', 'account', accountTab]];
 let SL = null;
 

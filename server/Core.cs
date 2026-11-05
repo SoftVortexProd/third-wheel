@@ -28,12 +28,59 @@ public static class Core
         }
     }
 
+    
+    public static string ClientIp(HttpContext c)
+    {
+        var fwd = c.Request.Headers["X-Forwarded-For"].FirstOrDefault();
+        if (!string.IsNullOrWhiteSpace(fwd))
+        {
+            var first = fwd.Split(',')[0].Trim();
+            if (first.Length > 0) return first;
+        }
+        var real = c.Request.Headers["X-Real-IP"].FirstOrDefault();
+        if (!string.IsNullOrWhiteSpace(real)) return real.Trim();
+        return c.Connection.RemoteIpAddress?.ToString() ?? "127.0.0.1";
+    }
+
+    public static string? ClientDeviceId(HttpContext c)
+    {
+        var d = c.Request.Headers["X-TW-Device-ID"].FirstOrDefault();
+        if (!string.IsNullOrWhiteSpace(d)) return Clean(d, 128);
+        return null;
+    }
+
+    public static bool IsBanned(HttpContext c, out string? reason)
+    {
+        reason = null;
+        var ip = ClientIp(c);
+        var r = Db.Row("SELECT reason FROM banned_ips WHERE ip=@ip", ("@ip", ip));
+        if (r != null)
+        {
+            var why = r["reason"] as string ?? "Network suspended"; reason = $"Your network has been suspended: {why}";
+            return true;
+        }
+        var dev = ClientDeviceId(c);
+        if (dev != null)
+        {
+            r = Db.Row("SELECT reason FROM banned_devices WHERE deviceId=@d", ("@d", dev));
+            if (r != null)
+            {
+                var why = r["reason"] as string ?? "Device suspended"; reason = $"This device has been suspended: {why}";
+                return true;
+            }
+        }
+        return false;
+    }
+
     public static long? CurrentUser(HttpContext c)
     {
+        if (IsBanned(c, out _)) return null;
         if (!c.Request.Cookies.TryGetValue("tw_session", out var tok) || string.IsNullOrEmpty(tok) || tok.Length > 100) return null;
-        var r = Db.Row("SELECT s.userId, u.banned FROM sessions s JOIN users u ON u.id=s.userId WHERE s.tokenHash=@t", ("@t", Sha(tok)));
+        var r = Db.Row("SELECT s.userId, u.banned, u.suspendedUntil FROM sessions s JOIN users u ON u.id=s.userId WHERE s.tokenHash=@t", ("@t", Sha(tok)));
         if (r == null) return null;
         if (Convert.ToInt32(r["banned"]) == 1) return null;
+        if (r["suspendedUntil"] is string su && !string.IsNullOrEmpty(su) && DateTime.TryParse(su, out var until) && DateTime.UtcNow < until)
+            return null;
         return (long)r["userId"]!;
     }
     public static string EffectiveStatus(long uid, string dbStatus)
@@ -186,6 +233,39 @@ public static class Core
     public static Func<long, long, string?> GroupPostBlock = (gid, uid) => null;
 
     /// <summary>Removes a group and everything attached to it.</summary>
+        /// <summary>Removes a user account and cleans up memberships, sessions, messages, and empty groups.</summary>
+    public static void DeleteAccount(long id)
+    {
+        var ps = new (string, object?)[] { ("@i", id) };
+        foreach (var gm in Db.Rows("SELECT groupId FROM members WHERE userId=@i", ps))
+        {
+            try { GroupsApi.RemoveMember((long)gm["groupId"]!, id); } catch { }
+        }
+        Db.Exec("DELETE FROM group_bans WHERE userId=@i", ps);
+        Db.Exec("DELETE FROM group_mutes WHERE userId=@i", ps);
+        Db.Exec("DELETE FROM join_requests WHERE userId=@i", ps);
+        foreach (var sql in new[] {
+            "DELETE FROM reactions WHERE kind='g' AND msgId IN (SELECT id FROM messages WHERE userId=@i)",
+            "DELETE FROM reactions WHERE kind='d' AND msgId IN (SELECT id FROM dms WHERE a=@i OR b=@i)",
+            "DELETE FROM sessions WHERE userId=@i",
+            "DELETE FROM messages WHERE userId=@i",
+            "DELETE FROM dms WHERE a=@i OR b=@i",
+            "DELETE FROM friends WHERE a=@i OR b=@i",
+            "DELETE FROM frequests WHERE fromId=@i OR toId=@i",
+            "DELETE FROM invites WHERE fromId=@i OR toId=@i",
+            "DELETE FROM members WHERE userId=@i",
+            "DELETE FROM avatars WHERE userId=@i",
+            "DELETE FROM reactions WHERE userId=@i",
+            "DELETE FROM users WHERE id=@i" })
+        {
+            Db.Exec(sql, ps);
+        }
+        foreach (var g in Db.Rows("SELECT g.id FROM grps g WHERE NOT EXISTS (SELECT 1 FROM members m WHERE m.groupId=g.id)"))
+        {
+            DeleteGroup((long)g["id"]!);
+        }
+    }
+
     public static void DeleteGroup(long id)
     {
         // message ids are reused after deletes (no AUTOINCREMENT), so reactions/files must go with the messages or a new message would inherit them
