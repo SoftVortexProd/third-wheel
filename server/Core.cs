@@ -31,8 +31,26 @@ public static class Core
     public static long? CurrentUser(HttpContext c)
     {
         if (!c.Request.Cookies.TryGetValue("tw_session", out var tok) || string.IsNullOrEmpty(tok) || tok.Length > 100) return null;
-        var r = Db.Scalar("SELECT userId FROM sessions WHERE tokenHash=@t", ("@t", Sha(tok)));
-        return r is long l ? l : null;
+        var r = Db.Row("SELECT s.userId, u.banned FROM sessions s JOIN users u ON u.id=s.userId WHERE s.tokenHash=@t", ("@t", Sha(tok)));
+        if (r == null) return null;
+        if (Convert.ToInt32(r["banned"]) == 1) return null;
+        return (long)r["userId"]!;
+    }
+    public static string EffectiveStatus(long uid, string dbStatus)
+    {
+        if (dbStatus == "offline") return "offline";
+        return Realtime.IsOnline(uid) ? dbStatus : "offline";
+    }
+    public static int CalculateAge(string? birthDate, int fallback = 0)
+    {
+        if (!string.IsNullOrEmpty(birthDate) && DateTime.TryParse(birthDate, out var bd))
+        {
+            var now = DateTime.UtcNow;
+            var a = now.Year - bd.Year;
+            if (now < bd.AddYears(a)) a--;
+            return a > 0 ? a : 0;
+        }
+        return fallback;
     }
     public static string Sha(string s) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(s)));
     public static void StartSession(HttpContext c, long uid)
@@ -80,18 +98,21 @@ public static class Core
     }
     public static object UserObj(Dictionary<string, object?> u)
     {
-        var age = Convert.ToInt32(u["age"]);
+        var uid = (long)u["id"]!;
+        var birthDate = Col(u, "birthDate") as string;
+        var rawAge = Convert.ToInt32(u["age"]);
+        var age = CalculateAge(birthDate, rawAge);
         return new
         {
-            id = (long)u["id"]!, username = (string)u["username"]!, displayName = u["display"] as string, avatar = AvatarUrl((long)u["id"]!, u["avatarVer"]),
+            id = uid, username = (string)u["username"]!, displayName = u["display"] as string, avatar = AvatarUrl(uid, u["avatarVer"]),
             avatarColor = (string)u["color"]!, frame = FrameOf(u), isAdmin = Convert.ToInt32(u["isAdmin"]) == 1,
             rckt = IsRckt(Col(u, "rcktUntil")), rcktUntil = Col(u, "rcktUntil") as string,
-            region = (string)u["region"]!, age, ageRange = AgeRange(age),
+            region = (string)u["region"]!, age, birthDate, ageRange = AgeRange(age),
             favoriteGames = JsonSerializer.Deserialize<string[]>((string)u["games"]!) ?? Array.Empty<string>(),
-            onboarded = Convert.ToInt32(u["onboarded"]) == 1, status = (string)u["status"]!,
+            onboarded = Convert.ToInt32(u["onboarded"]) == 1, status = EffectiveStatus(uid, (string)u["status"]!),
             playing = u["playing"] as string,
-            playingWith = PlayingPartyCount((long)u["id"]!, u["playing"] as string),
-            banner = BannerUrl((long)u["id"]!, Col(u, "bannerVer"))
+            playingWith = PlayingPartyCount(uid, u["playing"] as string),
+            banner = BannerUrl(uid, Col(u, "bannerVer"))
         };
     }
     public static string? AvatarUrl(long id, object? ver) => ver != null && Convert.ToInt64(ver) > 0 ? $"/api/avatars/{id}?v={Convert.ToInt64(ver)}" : null;
@@ -125,7 +146,7 @@ public static class Core
     {
         id = (long)r["id"]!, username = (string)r["username"]!, displayName = r["display"] as string, avatar = AvatarUrl((long)r["id"]!, r["avatarVer"]),
         avatarColor = (string)r["color"]!, frame = FrameOf(r), rckt = IsRckt(Col(r, "rcktUntil")),
-        status = (string)r["status"]!, playing = r["playing"] as string,
+        status = EffectiveStatus((long)r["id"]!, (string)r["status"]!), playing = r["playing"] as string,
         playingWith = PlayingPartyCount((long)r["id"]!, r["playing"] as string),
         banner = BannerUrl((long)r["id"]!, Col(r, "bannerVer")),
         region = (string)r["region"]!, isFriend
@@ -199,5 +220,10 @@ public static class Age
     public static bool IsMinor(int age) => age is > 0 and < 18;
     public static bool GroupVisible(int viewerAge, int groupAgeMin, int groupAgeMax) => !On || (IsMinor(viewerAge) ? groupAgeMax <= 17 : groupAgeMax >= 18);
     public static bool UserVisible(int viewerAge, int otherAge) => !On || IsMinor(viewerAge) == IsMinor(otherAge);
-    public static int Of(long userId) => Convert.ToInt32(Db.Scalar("SELECT age FROM users WHERE id=@i", ("@i", userId)));
+    public static int Of(long userId)
+    {
+        var r = Db.Row("SELECT age, birthDate FROM users WHERE id=@i", ("@i", userId));
+        if (r == null) return 0;
+        return Core.CalculateAge(r["birthDate"] as string, Convert.ToInt32(r["age"]));
+    }
 }

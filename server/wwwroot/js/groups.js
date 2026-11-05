@@ -114,8 +114,25 @@ function openReport(p, g) {
   const note = h('textarea', { class: 'textarea', maxlength: 500, rows: 4, placeholder: 'Anything that helps the admins understand (optional)', 'aria-label': 'Details' });
   const fr = field('Reason', reason), fn = field('Details', note);
   const send = btn('Send report', { cls: 'danger' });
+
+  const updateLabel = () => {
+    if (reason.value === 'Other') {
+      fn.setError('');
+      fn.querySelector('.label').textContent = 'Why are you reporting? (required)';
+      note.placeholder = 'Please explain why you are reporting this user (required)';
+    } else {
+      fn.querySelector('.label').textContent = 'Details';
+      note.placeholder = 'Anything that helps the admins understand (optional)';
+    }
+  };
+  reason.addEventListener('change', updateLabel);
+
   send.addEventListener('click', () => {
     if (!fr.setError(reason.value ? '' : 'Choose a reason')) return;
+    if (reason.value === 'Other' && !note.value.trim()) {
+      fn.setError('Please explain why you are reporting this user.');
+      return;
+    }
     busy(send, async () => {
       await api('POST', '/api/reports', { reportedUserId: p.id, groupId: g ? g.id : null, reason: reason.value, details: note.value.trim() });
       toast('Report sent. Thank you.'); close();
@@ -218,8 +235,45 @@ function headerButtons(g, reload) {
   return out;
 }
 
+async function promptCompetitiveRank(game, onDone) {
+  let m = { games: {} };
+  try { m = await api('GET', '/api/profile/meta'); } catch {}
+  const info = (m.games && m.games[game]) || { ranks: [] };
+  const ranks = info.ranks.length ? info.ranks : ['Unranked', 'Bronze', 'Silver', 'Gold', 'Platinum', 'Diamond', 'Master'];
+  const opts = [['', '— Select your rank —'], ...(ranks.includes('Unranked') ? [] : [['Unranked', 'Unranked']]), ...ranks.map(r => [r, r])];
+  const rSel = selectEl(opts, '', '— Select your rank —');
+  const rf = field('Rank in ' + T(game), rSel, 'Competitive groups require a rank. You can select Unranked.');
+  const submit = btn('Save rank & continue', { icon: 'check' });
+  let close = () => {};
+  submit.addEventListener('click', () => {
+    if (!rf.setError(rSel.value ? '' : 'Please select your rank')) return;
+    busy(submit, async () => {
+      await api('POST', '/api/me/game-rank', { game, rank: rSel.value });
+      toast('Rank saved');
+      close();
+      await onDone();
+    });
+  });
+  close = openSheet('Rank required for ' + T(game), h('div', { class: 'stack', style: 'gap:14px' },
+    h('p', { class: 'muted small', text: 'This group is competitive. Please choose your current rank to join.' }),
+    rf, submit));
+}
+
 function joinControls(g, reload) {
   const joined = async (msg) => { await TW.refreshMine(); toast(msg); reload(); };
+
+  const tryJoin = async (actionFn) => {
+    try {
+      await actionFn();
+    } catch (err) {
+      if (err.needsRank || (err.message && err.message.toLowerCase().includes('rank is required'))) {
+        promptCompetitiveRank(err.game || g.game, () => tryJoin(actionFn));
+      } else {
+        toast(err.message, 'error');
+      }
+    }
+  };
+
   if (g.requested) {
     const cancel = btn('Cancel request', { cls: 'small ghost' });
     cancel.addEventListener('click', () => busy(cancel, async () => { await api('DELETE', base(g) + '/request'); toast('Request cancelled'); reload(); }));
@@ -232,11 +286,15 @@ function joinControls(g, reload) {
   }
   if (g.privacy === 'request' && !g.invited) {
     const ask = btn('Request to join', { cls: 'small' });
-    ask.addEventListener('click', () => busy(ask, async () => { await api('POST', base(g) + '/request'); toast('Request sent'); reload(); }));
+    ask.addEventListener('click', () => busy(ask, () => tryJoin(async () => {
+      await api('POST', base(g) + '/request'); toast('Request sent'); reload();
+    })));
     return [ask];
   }
   const join = btn(g.invited ? 'Join (you’re invited)' : 'Join group', { cls: 'small' });
-  join.addEventListener('click', () => busy(join, async () => { await api('POST', base(g) + '/join'); await joined('You joined ' + T(g.name)); }));
+  join.addEventListener('click', () => busy(join, () => tryJoin(async () => {
+    await api('POST', base(g) + '/join'); await joined('You joined ' + T(g.name));
+  })));
   return [join];
 }
 
@@ -332,14 +390,34 @@ function openSettings(g, reload) {
   const fn = field('Group name', name), fd = field('Description', desc), fp = field('Who can join', privacy), fr = field('Rules', rules);
   const lim = limitFields(g);
   const save = h('button', { class: 'btn block', type: 'submit' }, 'Save changes');
-  const form = h('form', { class: 'stack', style: 'gap:12px', novalidate: true, onsubmit: async (e) => {
+  const onSave = async (e) => {
     e.preventDefault();
     if (!fn.setError(name.value.trim().length >= 3 ? '' : 'Give it a name (3+ characters)')) return;
     await busy(save, async () => {
       await api('PUT', base(g) + '/settings', { name: name.value.trim(), description: desc.value.trim(), privacy: privacy.value, rules: rules.value.trim(), ...lim.values() });
       await TW.refreshMine(); toast('Group updated'); close(); reload();
     });
-  } }, iconSection, fn, fd, fp, lim.el, fr, save);
+  };
+
+  const delBtn = (g.isOwner || (TW.me && TW.me.isAdmin)) ? h('div', { class: 'danger-zone', style: 'margin-top:16px;padding-top:16px;border-top:1px solid var(--border)' },
+    h('div', { class: 'section-title', text: 'Delete lobby' }),
+    h('p', { class: 'muted small', text: 'Permanently deletes this lobby, all its chat messages, voice rooms, and members. This cannot be undone.' }),
+    btn('Delete group', { cls: 'danger', onclick: () => confirmSheet(
+      'Delete ' + T(g.name) + '?',
+      'This will permanently delete the group and all its channels. This cannot be undone.',
+      'Delete group',
+      async () => {
+        await api('DELETE', '/api/groups/' + enc(g.id));
+        toast('Group deleted');
+        close();
+        await TW.refreshMine();
+        location.hash = '#/feed';
+      }
+    ) })) : null;
+
+  const stackElements = [iconSection, fn, fd, fp, lim.el, fr, save];
+  if (delBtn) stackElements.push(delBtn);
+  const form = h('form', { class: 'stack', style: 'gap:12px', novalidate: true, onsubmit: onSave }, ...stackElements);
   close = openSheet('Group settings', form);
 }
 

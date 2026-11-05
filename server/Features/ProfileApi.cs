@@ -19,16 +19,16 @@ public static class ProfileApi
     static readonly string[] Metal = { "Iron", "Bronze", "Silver", "Gold", "Platinum", "Diamond", "Master", "Grandmaster", "Challenger" };
     static readonly Dictionary<string, (string[] ranks, string[] roles)> GameMeta = new()
     {
-        ["Valorant"] = (new[] { "Iron", "Bronze", "Silver", "Gold", "Platinum", "Diamond", "Ascendant", "Immortal", "Radiant" }, new[] { "Duelist", "Initiator", "Controller", "Sentinel", "Flex" }),
-        ["League of Legends"] = (new[] { "Iron", "Bronze", "Silver", "Gold", "Platinum", "Emerald", "Diamond", "Master", "Grandmaster", "Challenger" }, new[] { "Top", "Jungle", "Mid", "ADC", "Support" }),
-        ["Counter-Strike 2"] = (new[] { "Silver", "Gold Nova", "Master Guardian", "Legendary Eagle", "Supreme", "Global Elite" }, new[] { "Entry", "Support", "Lurker", "AWPer", "IGL", "Anchor" }),
-        ["Apex Legends"] = (new[] { "Rookie", "Bronze", "Silver", "Gold", "Platinum", "Diamond", "Master", "Predator" }, new[] { "Assault", "Skirmisher", "Recon", "Support", "Controller" }),
-        ["Overwatch 2"] = (new[] { "Bronze", "Silver", "Gold", "Platinum", "Diamond", "Master", "Grandmaster", "Champion" }, new[] { "Tank", "DPS", "Support" }),
-        ["Rocket League"] = (new[] { "Bronze", "Silver", "Gold", "Platinum", "Diamond", "Champion", "Grand Champion", "Supersonic Legend" }, new[] { "Striker", "Midfield", "Defender" }),
-        ["Fortnite"] = (new[] { "Bronze", "Silver", "Gold", "Platinum", "Diamond", "Elite", "Champion", "Unreal" }, new[] { "Fragger", "Support", "IGL" }),
-        ["Dota 2"] = (new[] { "Herald", "Guardian", "Crusader", "Archon", "Legend", "Ancient", "Divine", "Immortal" }, new[] { "Carry", "Mid", "Offlane", "Soft Support", "Hard Support" }),
-        ["Rainbow Six Siege"] = (new[] { "Copper", "Bronze", "Silver", "Gold", "Platinum", "Emerald", "Diamond", "Champion" }, new[] { "Entry", "Support", "Anchor", "Flex" }),
-        ["Marvel Rivals"] = (new[] { "Bronze", "Silver", "Gold", "Platinum", "Diamond", "Grandmaster", "Celestial", "Eternity" }, new[] { "Vanguard", "Duelist", "Strategist" }),
+        ["Valorant"] = (new[] { "Unranked", "Iron", "Bronze", "Silver", "Gold", "Platinum", "Diamond", "Ascendant", "Immortal", "Radiant" }, new[] { "Duelist", "Initiator", "Controller", "Sentinel", "Flex" }),
+        ["League of Legends"] = (new[] { "Unranked", "Iron", "Bronze", "Silver", "Gold", "Platinum", "Emerald", "Diamond", "Master", "Grandmaster", "Challenger" }, new[] { "Top", "Jungle", "Mid", "ADC", "Support" }),
+        ["Counter-Strike 2"] = (new[] { "Unranked", "Silver", "Gold Nova", "Master Guardian", "Legendary Eagle", "Supreme", "Global Elite" }, new[] { "Entry", "Support", "Lurker", "AWPer", "IGL", "Anchor" }),
+        ["Apex Legends"] = (new[] { "Unranked", "Rookie", "Bronze", "Silver", "Gold", "Platinum", "Diamond", "Master", "Predator" }, new[] { "Assault", "Skirmisher", "Recon", "Support", "Controller" }),
+        ["Overwatch 2"] = (new[] { "Unranked", "Bronze", "Silver", "Gold", "Platinum", "Diamond", "Master", "Grandmaster", "Champion" }, new[] { "Tank", "DPS", "Support" }),
+        ["Rocket League"] = (new[] { "Unranked", "Bronze", "Silver", "Gold", "Platinum", "Diamond", "Champion", "Grand Champion", "Supersonic Legend" }, new[] { "Striker", "Midfield", "Defender" }),
+        ["Fortnite"] = (new[] { "Unranked", "Bronze", "Silver", "Gold", "Platinum", "Diamond", "Elite", "Champion", "Unreal" }, new[] { "Fragger", "Support", "IGL" }),
+        ["Dota 2"] = (new[] { "Unranked", "Herald", "Guardian", "Crusader", "Archon", "Legend", "Ancient", "Divine", "Immortal" }, new[] { "Carry", "Mid", "Offlane", "Soft Support", "Hard Support" }),
+        ["Rainbow Six Siege"] = (new[] { "Unranked", "Copper", "Bronze", "Silver", "Gold", "Platinum", "Emerald", "Diamond", "Champion" }, new[] { "Entry", "Support", "Anchor", "Flex" }),
+        ["Marvel Rivals"] = (new[] { "Unranked", "Bronze", "Silver", "Gold", "Platinum", "Diamond", "Grandmaster", "Celestial", "Eternity" }, new[] { "Vanguard", "Duelist", "Strategist" }),
         ["Call of Duty"] = (Array.Empty<string>(), new[] { "Slayer", "Objective", "Support" }),
         ["Destiny 2"] = (Array.Empty<string>(), new[] { "Titan", "Hunter", "Warlock" }),
         ["Helldivers 2"] = (Array.Empty<string>(), new[] { "Support", "Anti-armor", "Scout" }),
@@ -185,11 +185,44 @@ CREATE TABLE IF NOT EXISTS activity(userId INTEGER, hour INTEGER, n INTEGER DEFA
             {
                 var game = GamesApi.Canonical(g.Game);   // real catalog games only
                 if (game == null) continue;
-                var rank = Enc(Clean(g.Rank, 24)); var role = Enc(Clean(g.Role, 24));
+                var cleanRank = Clean(g.Rank, 24).Trim();
+                var cleanRole = Clean(g.Role, 60).Trim();
+                if (GameMeta.TryGetValue(game, out var meta))
+                {
+                    if (meta.ranks.Length > 0 && cleanRank.Length > 0)
+                    {
+                        var match = meta.ranks.FirstOrDefault(r => r.Equals(cleanRank, StringComparison.OrdinalIgnoreCase));
+                        cleanRank = match ?? "";
+                    }
+                    if (meta.roles.Length > 0 && cleanRole.Length > 0)
+                    {
+                        var parts = cleanRole.Split(new[] { '/', ',' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+                        var valid = parts.Select(p => meta.roles.FirstOrDefault(r => r.Equals(p, StringComparison.OrdinalIgnoreCase))).Where(r => !string.IsNullOrEmpty(r)).Take(2).ToList();
+                        cleanRole = valid.Count > 0 ? string.Join(" / ", valid) : "";
+                    }
+                }
+                var rank = Enc(cleanRank); var role = Enc(cleanRole);
                 if (rank.Length == 0 && role.Length == 0) continue;
                 Db.Exec("INSERT OR REPLACE INTO user_games(userId,game,rank,role) VALUES(@u,@g,@r,@o)", ("@u", uid), ("@g", game), ("@r", rank), ("@o", role));
             }
             return Results.Json(Details(uid, uid));
+        }));
+
+        api.MapPost("me/game-rank", (HttpContext c, GameRankIn b) => WithUser(c, uid =>
+        {
+            var game = GamesApi.Canonical(b.Game);
+            if (game == null) return Err("Game not recognized.");
+            var cleanRank = Clean(b.Rank, 24).Trim();
+            if (GameMeta.TryGetValue(game, out var meta) && meta.ranks.Length > 0)
+            {
+                var match = meta.ranks.FirstOrDefault(r => r.Equals(cleanRank, StringComparison.OrdinalIgnoreCase));
+                if (match == null) return Err("Invalid rank for this game.");
+                cleanRank = match;
+            }
+            if (string.IsNullOrWhiteSpace(cleanRank)) return Err("Rank cannot be empty.");
+            var existingRole = Db.Scalar("SELECT role FROM user_games WHERE userId=@u AND game=@g", ("@u", uid), ("@g", game)) as string ?? "";
+            Db.Exec("INSERT OR REPLACE INTO user_games(userId,game,rank,role) VALUES(@u,@g,@r,@o)", ("@u", uid), ("@g", game), ("@r", Enc(cleanRank)), ("@o", existingRole));
+            return Results.Json(new { ok = true, game, rank = cleanRank });
         }));
 
         // The page pings while it is open and visible (about every 10 minutes). The histogram is bumped at most once per ~10 minutes per user,
@@ -316,3 +349,5 @@ sealed class Why
 public record ExtrasIn(string? Bio, string? PlayMode, string[]? Tags, string[]? Languages, int? Tz, bool[]? Weekdays, bool[]? Weekends);
 public record GameDetail(string? Game, string? Rank, string? Role);
 public record GameDetailsIn(GameDetail[]? Games);
+
+public record GameRankIn(string? Game, string? Rank);

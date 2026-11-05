@@ -258,6 +258,13 @@ CREATE TABLE IF NOT EXISTS join_requests(id INTEGER PRIMARY KEY, groupId INTEGER
             if (g == null || x == null) return Err("Group not found.", 404);
             if (IsMember(id, uid)) return Results.Json(GroupObj(g));
             if (IsBanned(id, uid)) return Err("You are banned from this group.", 403);
+            if ((string)g["mode"]! == "competitive")
+            {
+                var gameName = (string)g["game"]!;
+                var urank = Db.Scalar("SELECT rank FROM user_games WHERE userId=@u AND game=@g", ("@u", uid), ("@g", gameName)) as string;
+                if (string.IsNullOrWhiteSpace(urank))
+                    return Results.Json(new { error = $"A rank is required for {gameName} to join a competitive group.", needsRank = true, game = gameName }, statusCode: 400);
+            }
             var maxMem = Convert.ToInt32(x["maxMembers"] ?? 0);
             if (maxMem > 0 && Convert.ToInt32(g["memberCount"]) >= maxMem && !IsAdmin(uid))
                 return Err($"This group is full (maximum {maxMem} members).", 409);
@@ -273,6 +280,17 @@ CREATE TABLE IF NOT EXISTS join_requests(id INTEGER PRIMARY KEY, groupId INTEGER
             return Results.Json(GroupObj(Db.Row(GroupSel + " WHERE g.id=@g", ("@g", id), ("@me", uid))!));
         }));
 
+        api.MapDelete("groups/{id:long}", (HttpContext c, long id) => WithUser(c, uid =>
+        {
+            var role = RoleOf(id, uid);
+            if (role != "owner" && !IsAdmin(uid)) return Err("Only the group owner or an admin can delete this group.", 403);
+            var name = Db.Scalar("SELECT name FROM grps WHERE id=@g", ("@g", id)) as string ?? "Group";
+            DeleteGroup(id);
+            Audit(uid, "deleted group", name);
+            Realtime.Social(uid);
+            return Results.Json(new { ok = true, deleted = true });
+        }));
+
         api.MapPost("groups/{id:long}/leave", (HttpContext c, long id) => WithUser(c, uid =>
         {
             if (!IsMember(id, uid)) return Err("You are not in this group.", 404);
@@ -284,6 +302,13 @@ CREATE TABLE IF NOT EXISTS join_requests(id INTEGER PRIMARY KEY, groupId INTEGER
         api.MapPost("groups/{id:long}/request", (HttpContext c, long id) => WithUser(c, uid =>
         {
             var g = Db.Row(GroupSel + " WHERE g.id=@g", ("@g", id), ("@me", uid));
+            if (g != null && (string)g["mode"]! == "competitive")
+            {
+                var gameName = (string)g["game"]!;
+                var urank = Db.Scalar("SELECT rank FROM user_games WHERE userId=@u AND game=@g", ("@u", uid), ("@g", gameName)) as string;
+                if (string.IsNullOrWhiteSpace(urank))
+                    return Results.Json(new { error = $"A rank is required for {gameName} to join a competitive group.", needsRank = true, game = gameName }, statusCode: 400);
+            }
             var x = Extra(id);
             if (g == null || x == null || !CanSee(id, g, x, uid)) return Err("Group not found.", 404);
             if (IsMember(id, uid)) return Err("You are already in this group.", 409);

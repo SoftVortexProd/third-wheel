@@ -130,3 +130,15 @@ h3 { line-height: calc(20px * var(--ts, 1)); }
 .steam-row[aria-checked="true"] { border-color: var(--color-accent); }
 .steam-row[aria-checked="true"] svg:last-child { opacity: 1; }
 .steam-list { max-height: 50vh; overflow-y: auto; }
+
+/* Icons in settings cards and folds */
+.fold-title-wrap { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.fold-icon { flex: none; color: var(--color-accent); }
+.fold-chev { flex: none; color: var(--color-text-3); transition: transform .25s var(--ease); }
+.scard-title-row { display: flex; align-items: center; gap: 8px; margin-bottom: 2px; }
+.scard-ico { flex: none; color: var(--color-accent); }
+.srow-left { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.srow-ico { flex: none; color: var(--color-accent); opacity: .85; }
+.verify-plat { display: flex; align-items: center; gap: 8px; }
+.verify-actions { display: flex; align-items: center; gap: 6px; margin-left: auto; }
+.pic-card .scard-title-row, .banner-card .scard-title-row, .logout-card .scard-title-row { display: flex; align-items: center; gap: 8px; margin-bottom: 2px; }

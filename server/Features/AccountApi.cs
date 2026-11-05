@@ -109,6 +109,8 @@ CREATE TABLE IF NOT EXISTS user_prefs(userId INTEGER PRIMARY KEY, accentColor TE
             var reason = Clean(b.Reason, 60);
             if (string.IsNullOrWhiteSpace(reason)) return Err("Report reason required.");
             var details = Clean(b.Details, 500);
+            if (reason.Equals("other", StringComparison.OrdinalIgnoreCase) && string.IsNullOrWhiteSpace(details))
+                return Err("Please explain the reason for your report when choosing 'Something else'.");
             long? reportedUser = b.ReportedUserId, groupId = b.GroupId; string? kind = null, snippet = null;
             if (b.MessageId != null)
             {

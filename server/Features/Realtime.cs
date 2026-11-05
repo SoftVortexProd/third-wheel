@@ -91,6 +91,11 @@ public static class Realtime
             var mine = Users.GetOrAdd(conn.Uid, _ => new());
             if (mine.Count >= MaxPerUser) { var oldest = mine.Values.First(); try { await oldest.Ws.CloseAsync(WebSocketCloseStatus.PolicyViolation, "too many tabs", CancellationToken.None); } catch { } mine.TryRemove(oldest.Id, out _); }
             mine[conn.Id] = conn;
+            if (mine.Count == 1)
+            {
+                Db.Exec("UPDATE users SET status='online' WHERE id=@i AND status='offline'", ("@i", conn.Uid));
+                FriendsOf(conn.Uid);
+            }
             try
             {
                 await SendAsync(conn, JsonSerializer.Serialize(new { t = "hello" }));
@@ -115,7 +120,12 @@ public static class Realtime
             finally
             {
                 mine.TryRemove(conn.Id, out _);
-                if (mine.IsEmpty) Users.TryRemove(conn.Uid, out _);
+                if (mine.IsEmpty)
+                {
+                    Users.TryRemove(conn.Uid, out _);
+                    Db.Exec("UPDATE users SET status='offline', playing=NULL WHERE id=@i AND status<>'offline'", ("@i", conn.Uid));
+                    FriendsOf(conn.Uid);
+                }
                 Voice.Dropped(conn.Uid, conn.Id);
                 try { if (ws.State is WebSocketState.Open or WebSocketState.CloseReceived) await ws.CloseAsync(WebSocketCloseStatus.NormalClosure, "bye", CancellationToken.None); } catch { }
             }

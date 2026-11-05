@@ -299,6 +299,27 @@ function make(cfg) {
   const trState = new Map();   // message id -> { src, text, from, to, shown, unchanged }  (translations are kept while you stay in this chat)
   const preview = (m) => gifOf(m.text) ? 'GIF' : ((shouldMask() ? maskProfanity(T(m.text)) : T(m.text)) || 'Attachment');
 
+  function formatMentions(text) {
+    const frag = document.createDocumentFragment();
+    const rx = /(?<![A-Za-z0-9_])@([A-Za-z0-9_]{3,20})/g;
+    let last = 0, match;
+    const myName = (TW.me && TW.me.username || '').toLowerCase();
+    while ((match = rx.exec(text)) !== null) {
+      if (match.index > last) {
+        frag.append(document.createTextNode(text.slice(last, match.index)));
+      }
+      const uname = match[1];
+      const isMe = uname.toLowerCase() === myName;
+      const pill = h('span', { class: 'mention-pill' + (isMe ? ' mention-me' : ''), text: '@' + uname });
+      frag.append(pill);
+      last = match.index + match[0].length;
+    }
+    if (last < text.length) {
+      frag.append(document.createTextNode(text.slice(last)));
+    }
+    return frag;
+  }
+
   /* ----- rendering ----- */
   const canDelete = (m) => m.userId === TW.me.id || TW.me.isAdmin || (typeof cfg.canModerate === 'function' && cfg.canModerate());
 
@@ -332,7 +353,9 @@ function make(cfg) {
       } else if (m.text) {
         let displayTxt = showTr ? tr.text : T(m.text);
         if (shouldMask()) displayTxt = maskProfanity(displayTxt);
-        body.append(h('p', { class: 'txt' + (showTr ? ' translated' : ''), text: displayTxt }));
+        const p = h('p', { class: 'txt' + (showTr ? ' translated' : '') });
+        p.append(formatMentions(displayTxt));
+        body.append(p);
         if (showTr) body.append(h('div', { class: 'tr-note' }, h('span', { text: tr.from && tr.from !== tr.to ? `Translated from ${langName(tr.from)} to ${langName(tr.to)}` : `Translated to ${langName(tr.to)}` }),
           h('button', { class: 'linklike', type: 'button', onclick: () => translate(m, null) }, 'Show original')));
       }
@@ -683,8 +706,23 @@ function make(cfg) {
     const fr = field('Reason', reason), fd = field('Details', details);
     const submit = btn('Send report', { cls: 'danger' });
     let close = () => {};
+    reason.addEventListener('change', () => {
+      if (reason.value === 'other') {
+        fd.setError('');
+        fd.querySelector('.label').textContent = 'Why are you reporting this? (required)';
+        details.placeholder = 'Please explain the reason for your report (required)';
+      } else {
+        fd.querySelector('.label').textContent = 'Details';
+        details.placeholder = 'Anything else we should know? (optional)';
+      }
+    });
+
     submit.addEventListener('click', () => {
       if (!fr.setError(reason.value ? '' : 'Choose a reason')) return;
+      if (reason.value === 'other' && !details.value.trim()) {
+        fd.setError('Please explain why you are reporting this message.');
+        return;
+      }
       TW.busy(submit, async () => {
         await api('POST', '/api/reports', { messageId: m.id, messageKind: k, groupId: k === 'g' ? Number(cid) : undefined, reportedUserId: m.userId, reason: reason.value, details: details.value.trim() });
         toast('Report sent. Thanks for helping keep Third Wheel safe.'); close();
@@ -757,9 +795,109 @@ function make(cfg) {
       upsert([m], true, rect);
     } catch (ex) { toast(ex.message, 'error'); } finally { send.disabled = false; input.focus(); }
   });
+  const mentionPop = h('div', { class: 'mention-pop', hidden: true });
+  wrap.append(mentionPop);
+
+  let mentionIdx = 0, mentionCandidates = [];
+
+  function getChatUsers() {
+    const map = new Map();
+    for (const m of data.values()) {
+      if (m.userId && m.username) {
+        map.set(m.username.toLowerCase(), { id: m.userId, username: m.username, displayName: m.displayName || m.username, avatarVer: m.avatarVer, color: m.avatarColor });
+      }
+    }
+    for (const f of (TW.S.friends || [])) {
+      if (f && f.username) {
+        map.set(f.username.toLowerCase(), { id: f.id, username: f.username, displayName: f.displayName || f.username, avatarVer: f.avatarVer, color: f.avatarColor });
+      }
+    }
+    if (TW.me && TW.me.username) map.delete(TW.me.username.toLowerCase());
+    return [...map.values()];
+  }
+
+  function hideMentions() {
+    mentionPop.hidden = true;
+    mentionPop.replaceChildren();
+    mentionCandidates = [];
+    mentionIdx = 0;
+  }
+
+  function renderMentions(query) {
+    const q = query.toLowerCase();
+    const all = getChatUsers();
+    mentionCandidates = all.filter(u => u.username.toLowerCase().startsWith(q) || (u.displayName && u.displayName.toLowerCase().includes(q))).slice(0, 5);
+    if (!mentionCandidates.length) {
+      hideMentions();
+      return;
+    }
+    mentionIdx = 0;
+    mentionPop.replaceChildren(...mentionCandidates.map((u, i) => {
+      const item = h('button', { type: 'button', class: 'mention-item' + (i === 0 ? ' active' : '') },
+        TW.avatar(u, 'xs'),
+        h('b', { text: T(u.displayName) }),
+        h('span', { text: '@' + T(u.username) })
+      );
+      item.addEventListener('mousedown', (e) => {
+        e.preventDefault();
+        pickMention(u);
+      });
+      return item;
+    }));
+    mentionPop.hidden = false;
+  }
+
+  function pickMention(user) {
+    const val = input.value;
+    const pos = input.selectionStart || val.length;
+    const before = val.slice(0, pos);
+    const after = val.slice(pos);
+    const replaced = before.replace(/(?:^|\s)@([A-Za-z0-9_]*)$/, (match) => {
+      return (match.startsWith(' ') ? ' ' : '') + '@' + user.username + ' ';
+    });
+    input.value = replaced + after;
+    input.selectionStart = input.selectionEnd = replaced.length;
+    hideMentions();
+    input.focus();
+  }
+
   input.addEventListener('input', () => {
     const now = Date.now();
     if (input.value && now - lastTyping > 3000) { lastTyping = now; api('POST', base + '/typing').catch(() => {}); }
+    const val = input.value;
+    const pos = input.selectionStart || 0;
+    const match = val.slice(0, pos).match(/(?:^|\s)@([A-Za-z0-9_]*)$/);
+    if (match) {
+      renderMentions(match[1]);
+    } else {
+      hideMentions();
+    }
+  });
+
+  input.addEventListener('keydown', (e) => {
+    if (!mentionPop.hidden && mentionCandidates.length) {
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        mentionIdx = (mentionIdx + 1) % mentionCandidates.length;
+        [...mentionPop.children].forEach((el, idx) => el.classList.toggle('active', idx === mentionIdx));
+        return;
+      }
+      if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        mentionIdx = (mentionIdx - 1 + mentionCandidates.length) % mentionCandidates.length;
+        [...mentionPop.children].forEach((el, idx) => el.classList.toggle('active', idx === mentionIdx));
+        return;
+      }
+      if (e.key === 'Enter' || e.key === 'Tab') {
+        e.preventDefault();
+        pickMention(mentionCandidates[mentionIdx]);
+        return;
+      }
+      if (e.key === 'Escape') {
+        hideMentions();
+        return;
+      }
+    }
   });
 
   let typingT = 0;
@@ -783,15 +921,18 @@ function make(cfg) {
     } catch { /* retry on the next tick */ }
   }
 
-  return {
+  const instance = {
     log, tools, composer: wrap, form, input, poll,
+    startUpload,
     fill(first, emptyTitle, emptyText) {
       if (!first.length) log.append(h('div', { class: 'empty', 'data-empty': '' }, h('b', { text: emptyTitle }), h('p', { text: emptyText })));
       upsert(first, true);
-      hasOlder = first.length >= 100; olderBtn.hidden = !hasOlder;   // the first load is the newest 100: there may be more above
+      hasOlder = first.length >= 100; olderBtn.hidden = !hasOlder;
     },
     done() { setTimeout(() => { initial = false; }, 0); }
   };
+  TW.activeChat = instance;
+  return instance;
 }
 
 /* ======================================================================== */
@@ -863,3 +1004,11 @@ new MutationObserver(() => {
 
 window.TWChat = { make };
 })();
+
+window.TW.uploadClip = (file) => {
+  if (TW.activeChat && TW.activeChat.startUpload) {
+    TW.activeChat.startUpload(file);
+  } else {
+    TW.toast('Open a chat room to upload the clip.', 'error');
+  }
+};

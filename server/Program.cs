@@ -180,13 +180,31 @@ api.MapPost("auth/login", (HttpContext c, Creds b) =>
     if (Convert.ToInt32(u["banned"]) == 1)
     {
         var why = u["banReason"] as string;
-        return Err("This account has been suspended." + (string.IsNullOrEmpty(why) ? "" : " Reason: " + why), 403);
+        return Results.Json(new { error = "This account has been suspended." + (string.IsNullOrEmpty(why) ? "" : " Reason: " + why), banned = true, reason = why, username = name }, statusCode: 403);
     }
     rate.TryRemove(key, out _);
     var id = (long)u["id"]!;
     Db.Exec("UPDATE users SET status='online' WHERE id=@i AND status='offline'", ("@i", id));
     StartSession(c, id);
     return Results.Json(new { user = UserDto(id) });
+});
+
+api.MapPost("auth/appeal", (HttpContext c, AppealIn b) =>
+{
+    var name = (b.Username ?? "").Trim();
+    var u = userRx.IsMatch(name) ? Db.Row("SELECT * FROM users WHERE username=@u COLLATE NOCASE", ("@u", name)) : null;
+    if (u == null) return Err("User not found.", 404);
+    if (!Db.Verify(b.Password ?? "", Convert.FromBase64String((string)u["salt"]!), Convert.FromBase64String((string)u["hash"]!)))
+        return Err("Wrong password.", 401);
+    if (Convert.ToInt32(u["banned"]) != 1) return Err("This account is not banned.");
+    var msg = Clean(b.Message, 500);
+    if (string.IsNullOrWhiteSpace(msg)) return Err("Please write an explanation for your appeal.");
+    var uid = (long)u["id"]!;
+    if (Db.Scalar("SELECT 1 FROM ban_appeals WHERE userId=@u AND status='pending'", ("@u", uid)) != null)
+        return Err("You already have a pending appeal.");
+    Db.Exec("INSERT INTO ban_appeals(userId,username,reason,message,status,createdAt) VALUES(@u,@un,@r,@m,'pending',@t)",
+        ("@u", uid), ("@un", (string)u["username"]!), ("@r", u["banReason"] as string), ("@m", Enc(msg)), ("@t", Now()));
+    return Results.Json(new { ok = true, message = "Your appeal has been submitted. Administrators will review it." });
 });
 
 api.MapPost("auth/logout", (HttpContext c) =>
@@ -207,18 +225,25 @@ api.MapGet("me", (HttpContext c) => WithUser(c, uid => Results.Json(UserDto(uid)
 api.MapPut("me/settings", (HttpContext c, SettingsIn b) => WithUser(c, uid =>
 {
     if (b.Region != null && !Db.Regions.Contains(b.Region)) return Err("Unknown region.");
-    if (b.Age is < 13 or > 99) return Err("Age must be 13-99.");
-    // Age is chosen once (at the starter menu). After that only an admin can change it, from the admin panel.
-    var currentAge = Convert.ToInt32(Db.Scalar("SELECT age FROM users WHERE id=@i", ("@i", uid)));
-    if (b.Age != null && currentAge > 0 && b.Age != currentAge) return Err("Your age can only be changed by an admin.", 403);
+    string? birthDate = null;
+    int? calcAge = b.Age;
+    if (!string.IsNullOrEmpty(b.BirthDate))
+    {
+        if (!DateTime.TryParse(b.BirthDate, out var parsedBd) || parsedBd > DateTime.UtcNow.AddYears(-13) || parsedBd < DateTime.UtcNow.AddYears(-120))
+            return Err("Birth date must indicate an age between 13 and 99.");
+        birthDate = parsedBd.ToString("yyyy-MM-dd");
+        calcAge = CalculateAge(birthDate, b.Age ?? 0);
+    }
+    else if (b.Age is < 13 or > 99) return Err("Age must be 13-99.");
+
     // Only real games from the catalog; anything else (free text, adult titles) is dropped.
     var games = GamesApi.FilterKnown(b.FavoriteGames, 12);
     var status = b.Status ?? "online";
     if (status is not ("online" or "idle" or "dnd" or "offline")) return Err("Bad status.");
     var playingGame = GamesApi.Canonical(b.Playing);
     string? playing = playingGame == null ? null : Enc(playingGame);
-    Db.Exec("UPDATE users SET region=COALESCE(@r,region), age=COALESCE(@a,age), games=@g, status=@s, playing=@p, onboarded=COALESCE(@o,onboarded) WHERE id=@i",
-        ("@r", b.Region), ("@a", b.Age), ("@g", JsonSerializer.Serialize(games)), ("@s", status), ("@p", playing),
+    Db.Exec("UPDATE users SET region=COALESCE(@r,region), age=COALESCE(@a,age), birthDate=COALESCE(@bd,birthDate), games=@g, status=@s, playing=@p, onboarded=COALESCE(@o,onboarded) WHERE id=@i",
+        ("@r", b.Region), ("@a", calcAge), ("@bd", birthDate), ("@g", JsonSerializer.Serialize(games)), ("@s", status), ("@p", playing),
         ("@o", b.Onboarded == null ? null : b.Onboarded.Value ? 1 : 0), ("@i", uid));
     return Results.Json(UserDto(uid));
 }));
@@ -460,8 +485,11 @@ api.MapPost("admin/users/{id:long}/ban", (HttpContext c, long id, BanIn b) => Wi
     var u = Db.Row("SELECT * FROM users WHERE id=@i", ("@i", id));
     if (u == null) return Err("User not found.", 404);
     if (id == me) return Err("You can't suspend yourself.");
-    if (Convert.ToInt32(u["isAdmin"]) == 1) return Err("Remove their admin role first.");
     var ban = b.Banned;
+    if (ban && Convert.ToInt32(u["isAdmin"]) == 1)
+    {
+        Db.Exec("UPDATE users SET isAdmin=0 WHERE id=@i", ("@i", id));
+    }
     Db.Exec("UPDATE users SET banned=@b, banReason=@r WHERE id=@i", ("@b", ban ? 1 : 0), ("@r", ban ? Enc(Clean(b.Reason, 120)) : null), ("@i", id));
     if (ban) { Db.Exec("DELETE FROM sessions WHERE userId=@i", ("@i", id)); Db.Exec("UPDATE users SET status='offline', playing=NULL WHERE id=@i", ("@i", id)); }
     Audit(me, ban ? "suspended" : "unsuspended", (string)u["username"]!);
@@ -476,6 +504,46 @@ api.MapPost("admin/users/{id:long}/role", (HttpContext c, long id, RoleIn b) => 
     Db.Exec("UPDATE users SET isAdmin=@a WHERE id=@i", ("@a", b.IsAdmin ? 1 : 0), ("@i", id));
     Audit(me, b.IsAdmin ? "made admin" : "removed admin", (string)u["username"]!);
     return Results.Json(new { ok = true });
+}));
+
+api.MapGet("admin/appeals", (HttpContext c) => WithAdmin(c, _ =>
+{
+    var rows = Db.Rows(@"SELECT a.id, a.userId, a.username, a.reason, a.message, a.status, a.createdAt, a.reviewedAt,
+        u.display, u.avatarVer, u.color
+        FROM ban_appeals a LEFT JOIN users u ON u.id=a.userId
+        ORDER BY CASE a.status WHEN 'pending' THEN 0 ELSE 1 END, a.id DESC LIMIT 50");
+    return Results.Json(rows.Select(r => new
+    {
+        id = (long)r["id"]!, userId = (long)r["userId"]!, username = (string)r["username"]!,
+        displayName = r["display"] as string, avatar = AvatarUrl((long)r["userId"]!, r["avatarVer"]),
+        avatarColor = r["color"] as string ?? "#7c8cff",
+        reason = r["reason"] as string, message = r["message"] as string,
+        status = (string)r["status"]!, createdAt = (string)r["createdAt"]!,
+        reviewedAt = r["reviewedAt"] as string
+    }));
+}));
+
+api.MapPost("admin/appeals/{id:long}/action", (HttpContext c, long id, AppealActionIn b) => WithAdmin(c, me =>
+{
+    var a = Db.Row("SELECT * FROM ban_appeals WHERE id=@i", ("@i", id));
+    if (a == null) return Err("Appeal not found.", 404);
+    var act = (b.Action ?? "").ToLowerInvariant();
+    var uid = (long)a["userId"]!;
+    var uname = (string)a["username"]!;
+    if (act == "approve")
+    {
+        Db.Exec("UPDATE users SET banned=0, banReason=NULL WHERE id=@u", ("@u", uid));
+        Db.Exec("UPDATE ban_appeals SET status='approved', reviewedAt=@t, reviewedBy=@me WHERE id=@i", ("@t", Now()), ("@me", me), ("@i", id));
+        Audit(me, "unbanned via appeal", uname);
+        return Results.Json(new { ok = true, unbanned = true });
+    }
+    if (act == "reject")
+    {
+        Db.Exec("UPDATE ban_appeals SET status='rejected', reviewedAt=@t, reviewedBy=@me WHERE id=@i", ("@t", Now()), ("@me", me), ("@i", id));
+        Audit(me, "rejected appeal", uname);
+        return Results.Json(new { ok = true, rejected = true });
+    }
+    return Err("Action must be 'approve' or 'reject'.");
 }));
 
 api.MapDelete("admin/users/{id:long}", (HttpContext c, long id) => WithAdmin(c, me =>
@@ -613,13 +681,27 @@ api.MapPut("me/playing", (HttpContext c, PlayingIn b) => WithUser(c, uid =>
         playing = Enc(game);
     }
     Db.Exec("UPDATE users SET playing=@p WHERE id=@i", ("@p", playing), ("@i", uid));
+    Realtime.FriendsOf(uid);
+    return Results.Json(UserDto(uid));
+}));
+
+api.MapPut("me/status", (HttpContext c, StatusIn b) => WithUser(c, uid =>
+{
+    var status = b.Status ?? "online";
+    if (status is not ("online" or "idle" or "dnd" or "offline" or "away" or "busy"))
+        return Err("Pick a valid status.");
+    Db.Exec("UPDATE users SET status=@s WHERE id=@i", ("@s", status), ("@i", uid));
+    Realtime.FriendsOf(uid);
     return Results.Json(UserDto(uid));
 }));
 
 // ---------- friends ----------
 api.MapGet("friends", (HttpContext c) => WithUser(c, uid =>
-    Results.Json(Db.Rows(@"SELECT u.* FROM friends f JOIN users u ON u.id=CASE WHEN f.a=@me THEN f.b ELSE f.a END WHERE f.a=@me OR f.b=@me
-        ORDER BY CASE u.status WHEN 'offline' THEN 1 ELSE 0 END, u.username COLLATE NOCASE", ("@me", uid)).Select(r => PersonObj(r, true)))));
+    Results.Json(Db.Rows(@"SELECT u.* FROM friends f JOIN users u ON u.id=CASE WHEN f.a=@me THEN f.b ELSE f.a END WHERE f.a=@me OR f.b=@me", ("@me", uid))
+        .Select(r => (Dictionary<string, object?>)r)
+        .OrderBy(r => EffectiveStatus((long)r["id"]!, (string)r["status"]!) == "offline" ? 1 : 0)
+        .ThenBy(r => (string)r["username"]!, StringComparer.OrdinalIgnoreCase)
+        .Select(r => PersonObj(r, true)))));
 
 api.MapPost("friends/request", (HttpContext c, FriendIn b) => WithUser(c, uid =>
 {
@@ -723,6 +805,7 @@ return 0;
 
 record Creds(string? Username, string? Password);
 record PlayingIn(string? Playing);
+record StatusIn(string? Status);
 record BanIn(bool Banned, string? Reason);
 record RoleIn(bool IsAdmin);
 record MaintIn(bool On, string? Message);
@@ -768,7 +851,9 @@ static class Site
     public static object Snapshot() { lock (L) return new { maintenance = new { on = Maintenance, message = MaintenanceMessage }, closed = new Dictionary<string, string>(Closed), pages = Pages, ageSeparation = AgeSeparation }; }
 }
 record ProfileIn(string? DisplayName, string? Username, string? Password);
-record SettingsIn(string? Region, int? Age, string[]? FavoriteGames, string? Playing, string? Status, bool? Onboarded);
+record AppealIn(string? Username, string? Password, string? Message);
+record AppealActionIn(string? Action);
+record SettingsIn(string? Region, int? Age, string? BirthDate, string[]? FavoriteGames, string? Playing, string? Status, bool? Onboarded);
 record GroupIn(string? Name, string? Game, string? Mode, string? Region, int? AgeMin, int? AgeMax, string? Description);
 record MessageIn(string? Text);
 record FriendIn(string? Username);
@@ -860,6 +945,10 @@ CREATE TABLE IF NOT EXISTS group_icons(groupId INTEGER PRIMARY KEY, mime TEXT NO
         if (!cols.Contains("isAdmin")) Exec("ALTER TABLE users ADD COLUMN isAdmin INTEGER DEFAULT 0");
         if (!cols.Contains("banned")) Exec("ALTER TABLE users ADD COLUMN banned INTEGER DEFAULT 0");
         if (!cols.Contains("banReason")) Exec("ALTER TABLE users ADD COLUMN banReason TEXT");
+        if (!cols.Contains("birthDate")) Exec("ALTER TABLE users ADD COLUMN birthDate TEXT");
+        Exec("UPDATE users SET banned=0 WHERE banned IS NULL");
+        Exec("UPDATE users SET isAdmin=0 WHERE isAdmin IS NULL");
+        Exec(@"CREATE TABLE IF NOT EXISTS ban_appeals(id INTEGER PRIMARY KEY, userId INTEGER, username TEXT, reason TEXT, message TEXT, status TEXT DEFAULT 'pending', createdAt TEXT, reviewedAt TEXT, reviewedBy INTEGER);");
         // Shared by several features: a group is 'public' (listed, anyone can join) or 'private' (hidden from feed/search/recommendations; invite or approval only).
         var gcols = Rows("PRAGMA table_info(grps)").Select(r => (string)r["name"]!).ToHashSet(StringComparer.OrdinalIgnoreCase);
         if (!gcols.Contains("privacy")) Exec("ALTER TABLE grps ADD COLUMN privacy TEXT DEFAULT 'public'");   // 'public' | 'request' (listed, needs approval) | 'private' (unlisted, invite only)

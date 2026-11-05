@@ -16,13 +16,71 @@ const PATHS = {
   account: 'M5 11h14v10H5zM8 11V7a4 4 0 0 1 8 0v4',
   look: 'M12 3l2.6 5.3 5.9.9-4.3 4.1 1 5.8L12 16.3 6.8 19.1l1-5.8L3.5 9.2l5.9-.9z',
   connections: 'M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7',
-  chev: 'M6 9l6 6 6-6'
+  chev: 'M6 9l6 6 6-6',
+  camera: 'M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2zM12 17a4 4 0 1 0 0-8 4 4 0 0 0 0 8z',
+  image: 'M19 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V5a2 2 0 0 0-2-2zM8.5 10a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3zm12.5 9H3l5-6.5 3.5 4.5 4.5-6z',
+  id: 'M4 4h16v16H4zM8 8h8M8 12h8M8 16h4',
+  sliders: 'M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6',
+  gamepad: 'M6 12h4M8 10v4M15 13h.01M18 11h.01M17.3 5H6.7a4 4 0 0 0-3.9 3.2l-1.3 6.5A3 3 0 0 0 4.4 18c1 0 1.8-.5 2.3-1.3L7.5 15h9l.8 1.7c.5.8 1.3 1.3 2.3 1.3a3 3 0 0 0 2.9-3.3l-1.3-6.5A4 4 0 0 0 17.3 5z',
+  frame: 'M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zm0 4a6 6 0 1 1 0 12 6 6 0 0 1 0-12z',
+  layers: 'M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5',
+  swatch: 'M12 2.7l5.5 6.8a7 7 0 1 1-11 0z',
+  type: 'M4 7V4h16v3M9 20h6M12 4v16',
+  zap: 'M13 2L3 14h9l-1 8 10-12h-9l1-8z',
+  eye: 'M1 12s4-7 11-7 11 7 11 7-4 7-11 7S1 12 1 12zM12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z',
+  filter: 'M22 3H2l8 9.46V19l4 2v-8.54L22 3z',
+  userX: 'M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2M8.5 3a4 4 0 1 0 0 8 4 4 0 0 0 0-8zM18 8l5 5M23 8l-5 5',
+  key: 'M21 2l-2 2m-1.5 1.5L14 9M3 21l9-9M12 6a3 3 0 1 1-6 0 3 3 0 0 1 6 0z',
+  logout: 'M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9',
+  rocket: 'M4.5 16.5c-1.5 1.26-2 5-2 5s3.74-.5 5-2c.71-.84.7-2.13-.09-2.91a2.18 2.18 0 0 0-2.91-.09zM12 15l-3-3a22 22 0 0 1 2-3.95A12.88 12.88 0 0 1 22 2c0 2.72-.78 7.5-6 11a22.35 22.35 0 0 1-4 2z',
+  bell: 'M18 8a6 6 0 1 0-12 0c0 7-3 9-3 9h18s-3-2-3-9M13.7 21a2 2 0 0 1-3.4 0',
+  download: 'M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3',
+  clock: 'M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20zM12 6v6l4 2',
+  compass: 'M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20zM16 8l-2 6-6 2 2-6z',
+  award: 'M12 15l-4 6 1.5-6.5L6 11l6.5-.5L12 4l-9.5 6.5L18 11l-3.5 3.5L16 21z',
+  check: 'M20 6L9 17l-5-5',
+  refresh: 'M23 4v6h-6M1 20v-6h6M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15',
+  steam: 'M12 2a10 10 0 0 0-10 9.8l5.7 2.4a3.3 3.3 0 0 1 1.9-.6l2.3-3.4a4.4 4.4 0 0 1 4.1-6.2 4.4 4.4 0 1 1-4.4 4.4c0-.1 0-.3.1-.4L9.5 11.4a3.3 3.3 0 0 1-2.9 3.2l-2.4 5.7A10 10 0 1 0 12 2z',
+  discord: 'M18 6H6a3 3 0 0 0-3 3v8l3-3h12a3 3 0 0 0 3-3V9a3 3 0 0 0-3-3zM9 11a1.5 1.5 0 1 1 0-3 1.5 1.5 0 0 1 0 3zm6 0a1.5 1.5 0 1 1 0-3 1.5 1.5 0 0 1 0 3z',
+  gear: 'M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z'
 };
 function ico(name, size = 20) {
   const s = document.createElementNS(SVGNS, 'svg');
   for (const [k, v] of Object.entries({ viewBox: '0 0 24 24', width: size, height: size, fill: 'none', stroke: 'currentColor', 'stroke-width': 2, 'stroke-linecap': 'round', 'stroke-linejoin': 'round', 'aria-hidden': 'true' })) s.setAttribute(k, v);
-  const p = document.createElementNS(SVGNS, 'path'); p.setAttribute('d', PATHS[name] || ''); s.append(p);
+  const p = document.createElementNS(SVGNS, 'path'); p.setAttribute('d', PATHS[name] || PATHS.gear); s.append(p);
   return s;
+}
+function iconFor(title) {
+  const s = String(title || '').toLowerCase();
+  if (s.includes('picture') || s.includes('avatar') || s.includes('bild')) return 'camera';
+  if (s.includes('banner')) return 'image';
+  if (s.includes('name') || s.includes('namn')) return 'id';
+  if (s.includes('about you') || s.includes('om dig')) return 'sliders';
+  if (s.includes('about me') || s.includes('om mig') || s.includes('bio')) return 'id';
+  if (s.includes('frame') || s.includes('ram')) return 'frame';
+  if (s.includes('layout')) return 'layers';
+  if (s.includes('gamer tag') || s.includes('tag')) return 'gamepad';
+  if (s.includes('verified') || s.includes('verifierad')) return 'connections';
+  if (s.includes('steam')) return 'steam';
+  if (s.includes('discord')) return 'discord';
+  if (s.includes('theme') || s.includes('tema')) return 'appearance';
+  if (s.includes('accent') || s.includes('colour') || s.includes('färg')) return 'swatch';
+  if (s.includes('text size') || s.includes('textstorlek') || s.includes('font')) return 'type';
+  if (s.includes('motion') || s.includes('animation') || s.includes('rörelse')) return 'zap';
+  if (s.includes('filter') || s.includes('safety') || s.includes('säkerhet') || s.includes('nsfw')) return 'safety';
+  if (s.includes('receipt') || s.includes('kvitto')) return 'check';
+  if (s.includes('block') || s.includes('blocker')) return 'userX';
+  if (s.includes('language') || s.includes('språk')) return 'language';
+  if (s.includes('password') || s.includes('lösenord')) return 'key';
+  if (s.includes('account') || s.includes('konto')) return 'account';
+  if (s.includes('rckt')) return 'rocket';
+  if (s.includes('notif') || s.includes('avisering')) return 'bell';
+  if (s.includes('install') || s.includes('app')) return 'download';
+  if (s.includes('logout') || s.includes('log out') || s.includes('logga ut')) return 'logout';
+  if (s.includes('availability') || s.includes('tillgänglig')) return 'clock';
+  if (s.includes('style') || s.includes('spelstil')) return 'compass';
+  if (s.includes('rank') || s.includes('teammate') || s.includes('lagkamrat')) return 'award';
+  return 'gear';
 }
 const gname = (g) => (typeof g === 'string' ? g : (g && g.name) || '');
 const errToast = (e) => toast(e && e.message ? e.message : t('Something went wrong.'), 'error');
@@ -58,13 +116,28 @@ function slider({ min, max, step, value, label, format, onInput, onCommit }) {
 }
 
 /* A labelled on/off row built on the shared switch. */
-function switchRow(label, hint, on, onChange, locked) {
+function switchRow(label, hint, on, onChange, locked, iconName) {
   const sw = switchEl(on, onChange, label);
   if (locked) { sw.disabled = true; sw.setAttribute('aria-disabled', 'true'); sw.classList.add('locked'); }
-  return h('div', { class: 'srow' }, h('div', { class: 'srow-text' }, h('b', { text: label }), hint ? h('span', { class: 'muted small', text: hint }) : null), sw);
+  const name = iconName || iconFor(label);
+  const icon = name ? ico(name, 18) : null;
+  if (icon) icon.classList.add('srow-ico');
+  return h('div', { class: 'srow' },
+    h('div', { class: 'srow-left' },
+      icon,
+      h('div', { class: 'srow-text' }, h('b', { text: label }), hint ? h('span', { class: 'muted small', text: hint }) : null)
+    ),
+    sw);
 }
 const card = (...kids) => h('div', { class: 'card scard' }, ...kids);
-const cardHead = (title, hint) => h('div', {}, h('h3', { text: title }), hint ? h('p', { class: 'muted small', text: hint }) : null);
+const cardHead = (title, hint, iconName) => {
+  const name = iconName || iconFor(title);
+  const icon = name ? ico(name, 20) : null;
+  if (icon) icon.classList.add('scard-ico');
+  return h('div', { class: 'scard-head' },
+    h('div', { class: 'scard-title-row' }, icon, h('h3', { text: title })),
+    hint ? h('p', { class: 'muted small', text: hint }) : null);
+};
 
 /* ================= tab builders: (panel, ctx) -> fill panel ================= */
 
@@ -91,7 +164,7 @@ function profileTab(panel, ctx) {
   });
   rmBtn.hidden = !me.avatar;
   const pic = h('div', { class: 'card pic-card' }, prev,
-    h('div', { class: 'pic-meta' }, h('h3', { text: t('Profile picture') }),
+    h('div', { class: 'pic-meta' }, h('div', { class: 'scard-title-row' }, ico('camera', 20), h('h3', { text: t('Profile picture') })),
       h('p', { class: 'muted small', text: t('PNG, JPG, WebP or GIF up to 5 MB. GIFs stay animated.') }),
       h('div', { class: 'row', style: 'gap:8px;flex:none;flex-wrap:wrap' }, upBtn, rmBtn), file));
 
@@ -127,7 +200,7 @@ function profileTab(panel, ctx) {
   });
   rmBannerBtn.hidden = !me.banner;
   const bannerCard = h('div', { class: 'card banner-card' }, bannerPrev,
-    h('div', { class: 'pic-meta' }, h('h3', { text: t('Profile banner') }),
+    h('div', { class: 'pic-meta' }, h('div', { class: 'scard-title-row' }, ico('image', 20), h('h3', { text: t('Profile banner') })),
       h('p', { class: 'muted small', text: t('Shown behind your nameplate and profile header. PNG, JPG, WebP or GIF up to 5 MB.') }),
       h('div', { class: 'row', style: 'gap:8px;flex:none;flex-wrap:wrap' }, upBannerBtn, rmBannerBtn), bannerFile));
 
@@ -157,23 +230,31 @@ function profileTab(panel, ctx) {
 
   /* region, age (locked once chosen), status, playing, favorite games */
   const region = selectEl(TW.S.meta.regions, me.region || '', t('Choose a region'));
-  const ageLocked = me.age > 0;
-  const age = h('input', { class: 'input', type: 'number', min: 13, max: 99, value: me.age || '', inputmode: 'numeric', disabled: ageLocked });
+  const calcAge = TW.calcAge || ((bd) => {
+    if (!bd) return 0;
+    const b = new Date(bd), today = new Date();
+    if (isNaN(b.getTime())) return 0;
+    let a = today.getFullYear() - b.getFullYear();
+    const m = today.getMonth() - b.getMonth();
+    if (m < 0 || (m === 0 && today.getDate() < b.getDate())) a--;
+    return a;
+  });
+  const bday = h('input', { class: 'input', type: 'date', value: me.birthDate || '' });
   const status = selectEl([['online', t('Online')], ['idle', t('Idle')], ['dnd', t('Do not disturb')], ['offline', t('Appear offline')]], TW.statusKey(me.status) || 'online');
   // "Currently playing" is a real game or nothing: pick it from the list (the desktop app also sets it automatically).
   const playing = gamePicker({ multi: false, value: T(me.playing || ''), placeholder: t('Not playing anything') });
   const gp = gamePicker({ multi: true, value: me.favoriteGames || [] });
   const fr = field(t('Region'), region);
-  const fa = field(t('Age'), age, ageLocked ? t('Your age can only be changed by an admin.') : t('Must be 13 or older.'));
+  const fa = field(t('Birthday'), bday, me.age ? t('Age: {0} (automatically updated each year)', me.age) : t('Must be 13 or older.'));
   const fs = field(t('Status'), status), fp = field(t('Currently playing'), playing, t('Pick a game. It shows next to your name in friends lists.'));
   const save = h('button', { class: 'btn', type: 'submit' }, t('Save changes'));
   const form = h('form', { class: 'stack', novalidate: true, onsubmit: async (e) => {
     e.preventDefault();
-    const a = parseInt(age.value, 10);
-    const ok = [fr.setError(region.value ? '' : t('Choose a region')), ageLocked || fa.setError(a >= 13 && a <= 99 ? '' : t('Enter an age from 13 to 99'))].every(Boolean);
+    const bd = bday.value;
+    const a = bd ? calcAge(bd) : me.age;
+    const ok = [fr.setError(region.value ? '' : t('Choose a region')), fa.setError(a >= 13 && a <= 99 ? '' : t('Must be 13 or older (enter a valid birthday)'))].every(Boolean);
     if (!ok) return;
-    const body = { region: region.value, favoriteGames: gp.value, playing: playing.value, status: status.value, onboarded: true };
-    if (!ageLocked) body.age = a;     // once an age is set only an admin can change it, so never send it again
+    const body = { region: region.value, favoriteGames: gp.value, playing: playing.value, status: status.value, birthDate: bd, age: a, onboarded: true };
     await busy(save, async () => {
       await api('PUT', '/api/me/settings', body);
       TW.me = await api('GET', '/api/me'); TW.renderUserPanel(); toast(t('Settings saved')); document.dispatchEvent(new Event('tw:me'));
@@ -284,6 +365,7 @@ function steamImport(box) {
   const go = btn(t('Import my Steam games'), { cls: 'small', icon: 'plus' });
   go.addEventListener('click', () => busy(go, async () => {
     const r = await api('GET', '/api/verify/steam/library');
+    if (r.needsKey) { toast(t('Steam API key not set up on this server. Contact the server admin.'), 'error'); return; }
     if (r.isPrivate) { toast(t('Your Steam game list is private. Set “Game details” to Public in Steam’s privacy settings, then try again.'), 'error'); return; }
     if (!r.games.length) { toast(t('None of your Steam games are in our catalog yet.'), 'error'); return; }
     const picked = new Set(r.games.filter(g => g.inFavorites).map(g => g.name));
@@ -304,7 +386,7 @@ function steamImport(box) {
     close = TW.openSheet(t('Import from Steam'), h('div', { class: 'stack', style: 'gap:10px' }, h('p', { class: 'muted small', text: t('Pick up to 12. Hours played come from Steam and show on your profile.') }), count,
       h('div', { class: 'stack steam-list', style: 'gap:6px' }, rows), h('div', { class: 'sheet-actions' }, save)));
   }));
-  box.append(h('div', { class: 'verify-row' }, h('b', { text: 'Steam' }), h('span', { class: 'muted small', text: t('Bring in the games you own, with hours played.') }), go));
+  box.append(h('div', { class: 'verify-row' }, h('div', { class: 'verify-plat' }, ico('steam', 18), h('b', { text: 'Steam' })), h('span', { class: 'muted small', text: t('Bring in the games you own, with hours played.') }), go));
 }
 
 /* Verified tags: sign in through Steam / Discord to prove the account is yours (a check mark on your profile). */
@@ -320,16 +402,36 @@ function verifyBlock() {
       if (v) {
         const rm = btn(t('Unlink'), { cls: 'small ghost' });
         rm.addEventListener('click', () => busy(rm, async () => { await api('DELETE', '/api/verify/' + enc(platform)); toast(t('Unlinked')); load(); }));
-        return h('div', { class: 'verify-row' }, h('span', { class: 'chip ok' }, TW.icon('check', 12), t('Verified')), h('b', { text: platform }), h('span', { class: 'tag-val muted', text: T(v.handle) }), rm);
+        const acts = [rm];
+        if (platform === 'Steam') {
+          const syncBtn = btn(t('Sync name'), { cls: 'small ghost', onclick: () => busy(syncBtn, async () => {
+            try {
+              const res = await api('POST', '/api/verify/steam/sync');
+              toast(t('Steam name updated to {name}', { name: res.handle }));
+              load();
+            } catch (e) { errToast(e); }
+          }) });
+          acts.unshift(syncBtn);
+        }
+        return h('div', { class: 'verify-row' },
+          h('div', { class: 'verify-plat' }, ico(platform.toLowerCase(), 18), h('b', { text: platform })),
+          h('span', { class: 'chip ok' }, TW.icon('check', 12), t('Verified')),
+          h('span', { class: 'tag-val muted', text: T(v.handle) }),
+          h('div', { class: 'verify-actions' }, ...acts));
       }
-      if (!enabled) return h('div', { class: 'verify-row muted small' }, h('b', { text: platform }), h('span', { text: t('Not set up on this server.') }));
+      if (!enabled) return h('div', { class: 'verify-row muted small' },
+        h('div', { class: 'verify-plat' }, ico(platform.toLowerCase(), 18), h('b', { text: platform })),
+        h('span', { text: t('Not set up on this server.') }));
       const go = btn(t('Verify {name}', { name: platform }), { cls: 'small', icon: 'check' });
       go.addEventListener('click', () => busy(go, async () => {
         const r = await api('POST', `/api/verify/${platform.toLowerCase()}/start`);
         toast(t('Finish signing in in your browser, then come back here.'));
         location.href = r.url;
       }));
-      return h('div', { class: 'verify-row' }, h('b', { text: platform }), h('span', { class: 'muted small', text: t('Prove it’s really your account.') }), go);
+      return h('div', { class: 'verify-row' },
+        h('div', { class: 'verify-plat' }, ico(platform.toLowerCase(), 18), h('b', { text: platform })),
+        h('span', { class: 'muted small', text: t('Prove it’s really your account.') }),
+        go);
     };
     box.replaceChildren(h('div', { class: 'section-title', text: t('Verified accounts') }), row('Steam', prov.steam), row('Discord', prov.discord),
       h('p', { class: 'muted small', text: t('You sign in on Steam’s or Discord’s own site. We never see your password, only your public name.') }));
@@ -424,6 +526,7 @@ function appearanceTab(panel) {
 
   const motion = selectEl([['system', t('Follow system')], ['on', t('Always on')], ['off', t('Off')]], TWM.motionPref());
   motion.addEventListener('change', () => { TWM.setMotionPref(motion.value); toast(motion.value === 'off' ? t('Animations off') : motion.value === 'on' ? t('Animations always on') : t('Animations follow your system')); });
+  const clipCatch = window.__TW_DESKTOP ? switchRow(t('Instant 30s Clip Catcher (F8)'), t('Press F8 in any game to capture the last 30 seconds and upload it directly into chat.'), TWPrefs.get('clip_catcher', true), (v) => TWPrefs.save({ clip_catcher: v })) : null;
   const detect = window.__TW_DESKTOP ? switchRow(t('Detect the game I’m playing'), t('Shows the game you’re playing as your status. Only the game’s name is shared.'), TW.autoOn(),
     (v) => { try { localStorage.setItem('tw_autogame', v ? 'on' : 'off'); } catch { /* ignore */ } TW.applyAutoGame(); }) : null;
 
@@ -495,7 +598,7 @@ function languageTab(panel) {
 function accountTab(panel) {
   const out = btn(t('Log out'), { cls: 'danger', onclick: async () => { try { await api('POST', '/api/auth/logout'); } catch { /* ignore */ } TW.loggedOut(); } });
   panel.append(window.TWAccount ? TWAccount.card() : h('span'),
-    h('div', { class: 'card scard logout-card' }, h('div', {}, h('h3', { text: t('Log out') }), h('p', { class: 'muted small', text: t('You’ll need your password to come back.') })), out));
+    h('div', { class: 'card scard logout-card' }, h('div', {}, h('div', { class: 'scard-title-row' }, ico('logout', 20), h('h3', { text: t('Log out') })), h('p', { class: 'muted small', text: t('You’ll need your password to come back.') })), out));
 }
 
 /* Folding rows: every settings card becomes one line (its title) that opens when you click it. Works on cards built by other modules too (RCKT, password, ...). */
@@ -510,7 +613,14 @@ function foldify(panel, openFirst) {
     const hint = headBlock === h3 ? [] : [...headBlock.children].filter(x => x !== h3 && !x.contains(h3));
     const rest = [...card.children].filter(x => x !== headBlock);
     const body = h('div', { class: 'fold-body' }, ...hint, ...rest);
-    const head = h('button', { class: 'fold-head', type: 'button', 'aria-expanded': 'false' }, h('span', { text: h3.textContent }), ico('chev'));
+    const iconName = card.dataset.icon || iconFor(h3.textContent);
+    const iconEl = iconName ? ico(iconName, 18) : null;
+    if (iconEl) iconEl.classList.add('fold-icon');
+    const chevEl = ico('chev');
+    chevEl.classList.add('fold-chev');
+    const head = h('button', { class: 'fold-head', type: 'button', 'aria-expanded': 'false' },
+      h('span', { class: 'fold-title-wrap' }, iconEl, h('span', { text: h3.textContent })),
+      chevEl);
     const open = !!openFirst && total <= 1;                    // tabs with a single card (Connections, Language) show it; everything else starts as one line each
     const set = (on) => { card.classList.toggle('open', on); head.setAttribute('aria-expanded', String(on)); body.hidden = !on; };
     head.addEventListener('click', () => set(!card.classList.contains('open')));

@@ -130,21 +130,51 @@ function gameCard(m, d) {
     const hasRanks = info.ranks && info.ranks.length > 0;
     const hasRoles = info.roles && info.roles.length > 0;
 
-    let rank = null;
+    let rankSelect = null;
     if (hasRanks) {
-      rank = h('input', { class: 'input', type: 'text', maxlength: 24, value: T(cur.rank), placeholder: 'Rank', 'aria-label': `${T(g)} rank`, autocomplete: 'off' });
-      suggestInput(rank, () => info.ranks.map(x => [x, x]));
+      const rankOpts = [['', '— Select rank —'], ...(info.ranks.includes('Unranked') ? [] : [['Unranked', 'Unranked']]), ...info.ranks.map(r => [r, r])];
+      rankSelect = selectEl(rankOpts, cur.rank || '', '— Select rank —');
+      rankSelect.setAttribute('aria-label', `${T(g)} rank`);
     }
 
-    let role = null;
+    let roleWrap = null;
+    let getRoles = () => '';
     if (hasRoles) {
-      role = h('input', { class: 'input', type: 'text', maxlength: 24, value: T(cur.role), placeholder: hasRanks ? 'Role' : 'Playstyle / Role', 'aria-label': `${T(g)} role`, autocomplete: 'off' });
-      suggestInput(role, () => info.roles.map(x => [x, x]));
+      const curParts = (cur.role || '').split(/\s*[/,]\s*/).filter(Boolean);
+      const r1Val = curParts[0] || '';
+      const r2Val = curParts[1] || '';
+      const roleOpts = [['', '— Select role —'], ...info.roles.map(r => [r, r])];
+      const r1 = selectEl(roleOpts, r1Val, '— Select primary role —');
+      r1.setAttribute('aria-label', `${T(g)} primary role`);
+      
+      let r2 = null;
+      const addBtn = btn('+ Role', { cls: 'small ghost role-add-btn', title: 'Add secondary role' });
+      roleWrap = h('div', { class: 'role-pair-wrap' }, r1);
+
+      const mountR2 = (val) => {
+        r2 = selectEl(roleOpts, val || '', '— Secondary role —');
+        r2.setAttribute('aria-label', `${T(g)} secondary role`);
+        const rm = h('button', { type: 'button', class: 'icon-btn small ghost', title: 'Remove role', onclick: () => {
+          r2.remove(); rm.remove(); r2 = null; addBtn.hidden = false;
+        } }, '×');
+        addBtn.hidden = true;
+        roleWrap.append(r2, rm);
+      };
+
+      addBtn.addEventListener('click', () => mountR2(''));
+      roleWrap.append(addBtn);
+
+      if (r2Val) mountR2(r2Val);
+
+      getRoles = () => {
+        const p = [r1.value, r2 ? r2.value : ''].filter(Boolean);
+        return p.join(' / ');
+      };
     }
 
-    const fields = [rank, role].filter(Boolean);
+    const fields = [rankSelect, roleWrap].filter(Boolean);
     const el = h('div', { class: 'gd-row' + (fields.length === 1 ? ' gd-single' : '') }, h('b', { class: 'gd-name', text: T(g) }), ...fields);
-    return { g, rank, role, el };
+    return { g, getRank: () => rankSelect ? rankSelect.value : '', getRoles, el };
   });
 
   const save = btn('Save game details', { icon: 'check' });
@@ -152,8 +182,8 @@ function gameCard(m, d) {
     await api('PUT', '/api/me/game-details', {
       games: rows.map(r => ({
         game: r.g,
-        rank: r.rank ? r.rank.value.trim() : '',
-        role: r.role ? r.role.value.trim() : ''
+        rank: r.getRank ? r.getRank() : '',
+        role: r.getRoles ? r.getRoles() : ''
       }))
     });
     toast('Game details saved');

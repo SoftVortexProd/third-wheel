@@ -31,7 +31,7 @@ except ImportError:  # pragma: no cover
 ROUTE_RE = re.compile(r"^#/(dm|group)/\d{1,12}$")
 
 # ---- update check: compares this version with the latest GitHub release (bump APP_VERSION when you publish a release) ----
-APP_VERSION = os.environ.get("TW_APP_VERSION", "0.9.0")
+APP_VERSION = os.environ.get("TW_APP_VERSION", "0.9.1")
 UPDATE_REPO = "SoftVortexProd/third-wheel"
 
 
@@ -376,6 +376,163 @@ class Page(QWebEnginePage):
         return page
 
 
+
+import collections
+from PySide6.QtCore import QBuffer, QIODevice, QByteArray
+
+class ClipCatcher(QObject):
+    def __init__(self, main_win):
+        super().__init__(main_win)
+        self.main = main_win
+        self.fps = 10
+        self.max_seconds = 30
+        self.buffer = collections.deque(maxlen=self.fps * self.max_seconds)
+        self.timer = QTimer(self)
+        self.timer.timeout.connect(self.tick)
+        self.is_capturing = False
+        self.ffmpeg_path = self.find_ffmpeg()
+        self.timer.start(100)  # every 100ms = 10 fps
+
+    def find_ffmpeg(self) -> str | None:
+        p = shutil.which("ffmpeg")
+        if p and Path(p).exists():
+            return p
+        local_app = os.environ.get("LOCALAPPDATA")
+        if local_app:
+            import glob
+            matches = glob.glob(os.path.join(local_app, "Microsoft", "WinGet", "Packages", "**", "ffmpeg.exe"), recursive=True)
+            if matches:
+                return matches[0]
+        for cand in [
+            base_dir() / "ffmpeg.exe",
+            base_dir() / "ffmpeg" / "ffmpeg.exe",
+            Path("C:/ffmpeg/bin/ffmpeg.exe"),
+            Path("C:/ProgramData/chocolatey/bin/ffmpeg.exe"),
+        ]:
+            if cand.exists():
+                return str(cand)
+        return None
+
+    def tick(self):
+        if self.is_capturing:
+            return
+        try:
+            screen = QApplication.primaryScreen()
+            if not screen:
+                return
+            pix = screen.grabWindow(0)
+            if pix.isNull():
+                return
+            scaled = pix.scaled(1280, 720, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            ba = QByteArray()
+            buf = QBuffer(ba)
+            buf.open(QIODevice.WriteOnly)
+            scaled.save(buf, "JPEG", 70)
+            self.buffer.append(bytes(ba))
+        except Exception:
+            pass
+
+    def capture(self):
+        if self.is_capturing:
+            return
+        if not self.ffmpeg_path:
+            self.ffmpeg_path = self.find_ffmpeg()
+            if not self.ffmpeg_path:
+                self.main.tray.showMessage(
+                    "Third Wheel Clip Catcher",
+                    "FFmpeg is needed to record clips. Run 'winget install Gyan.FFmpeg' to install it.",
+                    QSystemTrayIcon.MessageIcon.Warning,
+                    5000,
+                )
+                return
+
+        frames = list(self.buffer)
+        if len(frames) < 5:
+            self.main.tray.showMessage(
+                "Third Wheel Clip Catcher",
+                "Not enough gameplay frames buffered yet. Please wait a few seconds and try again.",
+                QSystemTrayIcon.MessageIcon.Information,
+                3000,
+            )
+            return
+
+        self.is_capturing = True
+        self.main.tray.showMessage(
+            "Third Wheel Clip",
+            f"Saving last {len(frames) // self.fps}s clip...",
+            QSystemTrayIcon.MessageIcon.Information,
+            2500,
+        )
+        threading.Thread(target=self._worker, args=(frames,), daemon=True).start()
+
+    def _worker(self, frames):
+        tmp_dir = None
+        try:
+            tmp_dir = Path(tempfile.gettempdir()) / f"tw_clip_{int(time.time())}_{os.getpid()}"
+            tmp_dir.mkdir(parents=True, exist_ok=True)
+            for idx, frame_bytes in enumerate(frames):
+                (tmp_dir / f"{idx:05d}.jpg").write_bytes(frame_bytes)
+
+            ts = time.strftime("%Y%m%d_%H%M%S")
+            clip_name = f"clip_{ts}.mp4"
+            out_file = tmp_dir / clip_name
+
+            cmd = [
+                self.ffmpeg_path,
+                "-y",
+                "-framerate", str(self.fps),
+                "-i", str(tmp_dir / "%05d.jpg"),
+                "-c:v", "libx264",
+                "-preset", "ultrafast",
+                "-pix_fmt", "yuv420p",
+                "-movflags", "+faststart",
+                str(out_file),
+            ]
+            flags = 0x08000000 if os.name == "nt" else 0
+            subprocess.run(cmd, creationflags=flags, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=40)
+
+            if out_file.exists() and out_file.stat().st_size > 0:
+                try:
+                    user_clips = Path.home() / "Videos" / "ThirdWheel Clips"
+                    user_clips.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(out_file, user_clips / clip_name)
+                except Exception:
+                    pass
+
+                data = out_file.read_bytes()
+                import base64
+                b64 = base64.b64encode(data).decode("ascii")
+                js = f"window.TWApp&&window.TWApp.uploadClip&&window.TWApp.uploadClip({json.dumps(clip_name)}, {json.dumps(b64)})"
+                self.main.page.runJavaScript(js)
+                self.main.tray.showMessage(
+                    "Third Wheel Clip",
+                    f"Saved {clip_name} and sent to chat!",
+                    QSystemTrayIcon.MessageIcon.Information,
+                    4000,
+                )
+            else:
+                self.main.tray.showMessage(
+                    "Third Wheel Clip Catcher",
+                    "Failed to encode clip.",
+                    QSystemTrayIcon.MessageIcon.Warning,
+                    4000,
+                )
+        except Exception as e:
+            self.main.tray.showMessage(
+                "Third Wheel Clip Catcher",
+                f"Clip error: {str(e)[:60]}",
+                QSystemTrayIcon.MessageIcon.Warning,
+                4000,
+            )
+        finally:
+            self.is_capturing = False
+            if tmp_dir:
+                try:
+                    shutil.rmtree(tmp_dir, ignore_errors=True)
+                except Exception:
+                    pass
+
+
 class Main(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -504,6 +661,12 @@ class Main(QMainWindow):
         self.notify_timer = QTimer(self)
         self.notify_timer.timeout.connect(self.drain_notifications)
         self.notify_timer.start(1500)
+
+        # Clip Catcher: F8 hotkey captures last 30 seconds of gameplay
+        self.clip_catcher = ClipCatcher(self)
+        if os.name == "nt":
+            self.hotkey_clip_id = 1088
+            ctypes.windll.user32.RegisterHotKey(int(self.winId()), self.hotkey_clip_id, 0, 0x77)
 
     def setIcon(self):
         for p in (resource("app.ico"), base_dir() / "app.ico"):
@@ -688,9 +851,27 @@ class Main(QMainWindow):
             except Exception:
                 self.proc.kill()
 
+    def nativeEvent(self, event_type, message):
+        if os.name == "nt":
+            try:
+                import ctypes.wintypes
+                msg = ctypes.wintypes.MSG.from_address(int(message))
+                if msg.message == 0x0312:  # WM_HOTKEY
+                    if msg.wParam == 1088:
+                        self.clip_catcher.capture()
+                        return True, 0
+            except Exception:
+                pass
+        return super().nativeEvent(event_type, message)
+
     def closeEvent(self, e):
         self.settings.setValue("geometry", self.saveGeometry())
         self.tray.hide()   # no ghost icon left in the notification area
+        if os.name == "nt" and hasattr(self, "hotkey_clip_id"):
+            try:
+                ctypes.windll.user32.UnregisterHotKey(int(self.winId()), self.hotkey_clip_id)
+            except Exception:
+                pass
         self.stop_server()
         super().closeEvent(e)
 

@@ -28,7 +28,7 @@ TWPrefs.addStrings('sv', {
   'Avatar frames are exclusive to RCKT. Ask an admin for RCKT to wear one.': 'Avatarramar är exklusiva för RCKT. Be en admin om RCKT för att bära en.', 'Aurora': 'Norrsken', 'Ember': 'Glöd', 'Neon': 'Neon', 'Glitch': 'Glitch', 'Royal': 'Kunglig', 'Frost': 'Frost', 'Toxic': 'Giftig', 'Void': 'Tomhet', 'Rainbow': 'Regnbåge', 'Heartbeat': 'Hjärtslag',
   'Profile layout': 'Profillayout', 'Drag sections (or use the arrows) to reorder them. Turn a section off to hide it from everyone else.': 'Dra sektioner (eller använd pilarna) för att ändra ordning. Stäng av en sektion för att dölja den för alla andra.',
   'About me': 'Om mig', 'Favorite games': 'Favoritspel', 'Gamer tags': 'Spelartaggar', 'How you play': 'Hur du spelar', 'When you play': 'När du spelar', 'Good teammate badge': 'Märket bra lagkamrat', 'Move up': 'Flytta upp', 'Move down': 'Flytta ner', 'Show {name}': 'Visa {name}',
-  'Import my Steam games': 'Importera mina Steam-spel', 'Import from Steam': 'Importera från Steam', 'Add to my games': 'Lägg till i mina spel', 'Games imported': 'Spel importerade', '{n} of {m} selected': '{n} av {m} valda', 'You can have up to {m} favorite games.': 'Du kan ha upp till {m} favoritspel.',
+  'Import my Steam games': 'Importera mina Steam-spel', 'Sync name': 'Synka namn', 'Steam name updated to {name}': 'Steam-namn uppdaterat till {name}', 'Steam API key not set up on this server. Contact the server admin.': 'Steam API-nyckel är inte konfigurerad på denna server. Kontakta serveradministratören.', 'Import from Steam': 'Importera från Steam', 'Add to my games': 'Lägg till i mina spel', 'Games imported': 'Spel importerade', '{n} of {m} selected': '{n} av {m} valda', 'You can have up to {m} favorite games.': 'Du kan ha upp till {m} favoritspel.',
   'Pick up to 12. Hours played come from Steam and show on your profile.': 'Välj upp till 12. Speltimmarna kommer från Steam och visas på din profil.', 'Bring in the games you own, with hours played.': 'Hämta spelen du äger, med speltimmar.',
   'Your Steam game list is private. Set “Game details” to Public in Steam’s privacy settings, then try again.': 'Din Steam-spellista är privat. Ställ in “Speldetaljer” på Offentlig i Steams sekretessinställningar och försök igen.', 'None of your Steam games are in our catalog yet.': 'Inga av dina Steam-spel finns i vår katalog än.',
   'Processing video…': 'Bearbetar video…', 'This video is being converted so it plays everywhere. It will appear here in a moment.': 'Videon konverteras så att den spelas överallt. Den dyker upp här strax.',
@@ -224,3 +224,36 @@ TWPages.history = async (_, tok) => {
 };
 
 })();
+
+
+TWPrefs.addStrings('sv', {
+  'Set Playing & Status': 'Ställ in spel och status',
+  'Currently playing': 'Spelar just nu',
+  'Clear game': 'Rensa spel',
+  'Status updated!': 'Status uppdaterad!',
+  'Account Suspended': 'Kontot är avstängt',
+  'Appeal this ban': 'Överklaga avstängningen',
+  'Explain why your account should be unbanned...': 'Förklara varför ditt konto borde öppnas igen...',
+  'Submit appeal': 'Skicka överklagan',
+  'Appeal submitted! An administrator will review your account.': 'Överklagan skickad! En administratör kommer att granska ditt konto.',
+  'Ban Appeals': 'Överklaganden',
+  'No ban appeals': 'Inga överklaganden',
+  'There are no pending or past appeals right now.': 'Det finns inga aktiva eller tidigare överklaganden just nu.',
+  'Unban & Approve': 'Häv bannlysning & godkänn',
+  'Reject': 'Avslå',
+  'Approved & Unbanned': 'Godkänd & återställd',
+  'Rejected': 'Avvisad',
+  'Birthday': 'Födelsedatum',
+  'Must be 13 or older (enter a valid birthday)': 'Du måste vara minst 13 år (ange giltigt födelsedatum)',
+  'Delete group': 'Radera grupp',
+  'Delete lobby': 'Radera lobby',
+  'Are you sure you want to delete this lobby? This cannot be undone.': 'Är du säker på att du vill ta bort den här gruppen? Detta kan inte ångras.',
+  'Select your rank to join': 'Välj din rank för att gå med',
+  'This group requires a competitive rank for {0}': 'Den här gruppen kräver en tävlingsrank för {0}',
+  'Primary role': 'Huvudroll',
+  'Secondary role': 'Sekundär roll',
+  'Add secondary role': 'Lägg till sekundär roll',
+  'Unranked': 'Orankad',
+  'Instant 30s Clip Catcher (F8)': 'Snabbklipp-inspelare 30 sek (F8)',
+  'Press F8 in any game to capture the last 30 seconds and upload it directly into chat.': 'Tryck F8 i valfritt spel för att spara de senaste 30 sekunderna och ladda upp direkt i chatten.'
+});

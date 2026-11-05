@@ -5,7 +5,7 @@
 #       Add -KeepPlainPort to ALSO keep the old http://IP:<Port> address working (old app versions, and a fallback while you check that HTTPS works).
 #   Add -KlipyKey <key> once to enable the GIF picker (stored as a service setting; later updates keep it). -TenorKey is the old name and still works.
 #   Add -DiscordClientId <id> -DiscordSecret <secret> once to enable "Verify Discord" (create an app at discord.com/developers, add the redirect https://YOUR-ADDRESS/api/verify/discord/callback).
-param([string]$Domain = "", [switch]$KeepPlainPort, [int]$Port = 1732, [string]$KlipyKey = "", [string]$TenorKey = "", [string]$DiscordClientId = "", [string]$DiscordSecret = "")
+param([string]$Domain = "", [switch]$KeepPlainPort, [int]$Port = 1732, [string]$KlipyKey = "", [string]$TenorKey = "", [string]$DiscordClientId = "", [string]$DiscordSecret = "", [string]$SteamApiKey = "")
 $ErrorActionPreference = "Stop"
 
 $src = Join-Path $PSScriptRoot "app"
@@ -37,6 +37,9 @@ if ($DiscordClientId -and $DiscordClientId -notmatch '^\d{5,25}$') { throw "The 
 if ($DiscordSecret -and $DiscordSecret -notmatch '^[A-Za-z0-9_\-]{10,120}$') { throw "That doesn't look like a Discord client secret." }
 if ($DiscordClientId -and $DiscordSecret) { $vars += "TW_DISCORD_CLIENT_ID=$DiscordClientId", "TW_DISCORD_CLIENT_SECRET=$DiscordSecret" }
 else { $vars += @((Get-ItemProperty $svcKey -Name Environment -ErrorAction SilentlyContinue).Environment) | Where-Object { $_ -like "TW_DISCORD_*" } }
+if ($SteamApiKey -and $SteamApiKey -notmatch '^[A-Za-z0-9]{16,64}$') { throw "The Steam API key doesn't look valid." }
+if ($SteamApiKey) { $vars += "TW_STEAM_API_KEY=$SteamApiKey" }
+else { $vars += @((Get-ItemProperty $svcKey -Name Environment -ErrorAction SilentlyContinue).Environment) | Where-Object { $_ -like "TW_STEAM_API_KEY=*" } }
 Set-ItemProperty $svcKey -Name Environment -Type MultiString -Value $vars
 icacls $data /grant "NT AUTHORITY\LocalService:(OI)(CI)M" | Out-Null
 icacls $app /grant "NT AUTHORITY\LocalService:(OI)(CI)RX" | Out-Null

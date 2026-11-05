@@ -55,8 +55,9 @@ CREATE UNIQUE INDEX IF NOT EXISTS ux_verified_ext ON verified_tags(platform, ext
     static string SteamKey => Environment.GetEnvironmentVariable("TW_STEAM_API_KEY") ?? "";
     static readonly Dictionary<string, (DateTime At, List<(long, string, int)> Games)> LibCache = new();
 
-    /// <summary>The games a Steam account owns, with hours played. Uses the Steam Web API when a key is set (TW_STEAM_API_KEY), otherwise the public profile page.
-    /// Throws InvalidOperationException when the profile's game list is private. Cached for 10 minutes.</summary>
+    /// <summary>The games a Steam account owns, with hours played. Uses the Steam Web API when a key is set (TW_STEAM_API_KEY).
+    /// If no API key is set, attempts to read recent games from the profile XML.
+    /// Throws KeyNotFoundException when an API key is required, or InvalidOperationException when the profile's game list is private. Cached for 10 minutes.</summary>
     static async Task<List<(long App, string Name, int Hours)>> FetchOwned(string steamId)
     {
         lock (LibCache) if (LibCache.TryGetValue(steamId, out var hit) && DateTime.UtcNow - hit.At < TimeSpan.FromMinutes(10)) return hit.Games.Select(x => (x.Item1, x.Item2, x.Item3)).ToList();
@@ -71,16 +72,32 @@ CREATE UNIQUE INDEX IF NOT EXISTS ux_verified_ext ON verified_tags(platform, ext
         }
         else
         {
-            var xml = await Http.GetStringAsync($"https://steamcommunity.com/profiles/{steamId}/games?tab=all&xml=1");
-            if (xml.Contains("<error>", StringComparison.OrdinalIgnoreCase) || !xml.Contains("<game>", StringComparison.OrdinalIgnoreCase)) throw new InvalidOperationException("private");
-            foreach (Match m in Regex.Matches(xml, @"<game>(.*?)</game>", RegexOptions.Singleline))
+            // Fallback: Valve deprecated /games?tab=all&xml=1. Try reading mostPlayedGames from the public profile XML if present.
+            try
             {
-                var b = m.Groups[1].Value;
-                var app = Regex.Match(b, @"<appID>(\d+)</appID>"); var nm = Regex.Match(b, @"<name><!\[CDATA\[(.*?)\]\]></name>", RegexOptions.Singleline);
-                var hrs = Regex.Match(b, @"<hoursOnRecord>([\d,\.]+)</hoursOnRecord>");
-                if (!app.Success) continue;
-                var h = hrs.Success && double.TryParse(hrs.Groups[1].Value.Replace(",", ""), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var hv) ? (int)hv : 0;
-                list.Add((long.Parse(app.Groups[1].Value), nm.Success ? WebUtility.HtmlDecode(nm.Groups[1].Value) : "", h));
+                var xml = await Http.GetStringAsync($"https://steamcommunity.com/profiles/{steamId}/?xml=1");
+                if (xml.Contains("<privacyState>private</privacyState>", StringComparison.OrdinalIgnoreCase)) throw new InvalidOperationException("private");
+                if (xml.Contains("<mostPlayedGames>", StringComparison.OrdinalIgnoreCase))
+                {
+                    foreach (Match m in Regex.Matches(xml, @"<mostPlayedGame>(.*?)</mostPlayedGame>", RegexOptions.Singleline))
+                    {
+                        var b = m.Groups[1].Value;
+                        var app = Regex.Match(b, @"<gameLink>.*?/app/(\d+)</gameLink>");
+                        var nm = Regex.Match(b, @"<gameName><!\[CDATA\[(.*?)\]\]></gameName>", RegexOptions.Singleline);
+                        var hrs = Regex.Match(b, @"<hoursOnRecord>([\d,\.]+)</hoursOnRecord>");
+                        if (!app.Success) continue;
+                        var h = hrs.Success && double.TryParse(hrs.Groups[1].Value.Replace(",", ""), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var hv) ? (int)hv : 0;
+                        list.Add((long.Parse(app.Groups[1].Value), nm.Success ? WebUtility.HtmlDecode(nm.Groups[1].Value) : "", h));
+                    }
+                }
+            }
+            catch (InvalidOperationException) { throw; }
+            catch { /* network error or Steam busy */ }
+
+            if (list.Count == 0)
+            {
+                // No API key and XML didn't have mostPlayedGames: an API key is required on the server to query full libraries from Steam.
+                throw new KeyNotFoundException("needs_api_key");
             }
         }
         lock (LibCache) LibCache[steamId] = (DateTime.UtcNow, list);
@@ -126,7 +143,8 @@ CREATE UNIQUE INDEX IF NOT EXISTS ux_verified_ext ON verified_tags(platform, ext
             if (Limited($"lib:{me}", 8, TimeSpan.FromHours(1), true)) return Err("Try again in a little while.", 429);
             List<(long App, string Name, int Hours)> owned;
             try { owned = await FetchOwned(steamId); }
-            catch (InvalidOperationException) { return Results.Json(new { isPrivate = true, games = Array.Empty<object>(), unmatched = 0 }); }
+            catch (KeyNotFoundException) { return Results.Json(new { needsKey = true, isPrivate = false, games = Array.Empty<object>(), unmatched = 0 }); }
+            catch (InvalidOperationException) { return Results.Json(new { needsKey = false, isPrivate = true, games = Array.Empty<object>(), unmatched = 0 }); }
             catch { return Err("Couldn't reach Steam. Try again in a moment.", 502); }
             var catalog = Db.Rows("SELECT name, steamAppId FROM games WHERE COALESCE(hidden,0)=0");
             var byApp = catalog.Where(r => r["steamAppId"] != null).GroupBy(r => Convert.ToInt64(r["steamAppId"])).ToDictionary(g => g.Key, g => (string)g.First()["name"]!);
@@ -213,6 +231,25 @@ CREATE UNIQUE INDEX IF NOT EXISTS ux_verified_ext ON verified_tags(platform, ext
             if (name.Length == 0) name = steamId;
             if (!Save(uid.Value, "Steam", name, steamId, out var err)) return Page("Already linked", err, false);
             return Page("Steam linked", $"Your Steam account “{name}” is now verified on your profile.", true);
+        });
+
+        api.MapPost("verify/steam/sync", async (HttpContext c) =>
+        {
+            var me = CurrentUser(c); if (me == null) return Err("Not signed in.", 401);
+            var steamId = Db.Scalar("SELECT extId FROM verified_tags WHERE userId=@u AND platform='Steam'", ("@u", me)) as string;
+            if (steamId == null) return Err("Verify your Steam account first.", 409);
+            var name = steamId;
+            try
+            {
+                var xml = await Http.GetStringAsync($"https://steamcommunity.com/profiles/{steamId}/?xml=1");
+                var n = Regex.Match(xml, @"<steamID><!\[CDATA\[(.{1,64}?)\]\]></steamID>");
+                if (n.Success) name = n.Groups[1].Value.Trim();
+            }
+            catch { return Err("Couldn't reach Steam.", 502); }
+            name = new string(name.Where(ch => !char.IsControl(ch)).ToArray());
+            if (name.Length == 0) name = steamId;
+            Db.Exec("UPDATE verified_tags SET handle=@h, at=@t WHERE userId=@u AND platform='Steam'", ("@h", Enc(name)), ("@t", Now()), ("@u", me));
+            return Results.Json(new { ok = true, handle = name });
         });
 
         // ---------- Discord ----------

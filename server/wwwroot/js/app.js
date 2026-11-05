@@ -1,3 +1,46 @@
+
+function showSuspendedAppeal(u, p, banReason) {
+  const reasonMsg = h('p', { class: 'muted', style: 'margin-bottom:12px', text: tr('Your account has been suspended: {0}', banReason) });
+  const appealInput = h('textarea', { class: 'input', rows: 4, placeholder: tr('Explain why your account should be unbanned...'), maxlength: 2000 });
+  const submitBtn = h('button', { class: 'btn primary block', type: 'button', text: tr('Submit appeal') });
+  const errBox = h('div', { class: 'form-error', role: 'alert' });
+
+  const modalBox = modal(tr('Account Suspended'),
+    h('div', { class: 'stack', style: 'gap:12px;min-width:320px;padding:4px 0;' },
+      reasonMsg,
+      h('label', { class: 'label', text: tr('Appeal this ban') }),
+      appealInput,
+      errBox,
+      h('div', { style: 'display:flex;justify-content:flex-end;gap:8px;margin-top:8px;' },
+        h('button', { class: 'btn secondary', type: 'button', text: tr('Cancel'), onclick: () => modalBox.close() }),
+        submitBtn
+      )
+    )
+  );
+
+  submitBtn.onclick = async () => {
+    const text = appealInput.value.trim();
+    if (!text) { errBox.textContent = tr('Please write an explanation for your appeal.'); return; }
+    submitBtn.disabled = true;
+    try {
+      await api('POST', '/api/auth/appeal', { username: u, password: p, reason: text });
+      modalBox.close();
+      toast(tr('Appeal submitted! An administrator will review your account.'));
+    } catch (err) {
+      submitBtn.disabled = false;
+      errBox.textContent = err.message || tr('Failed to submit appeal');
+    }
+  };
+}
+function calcAge(bd) {
+  if (!bd) return 0;
+  const b = new Date(bd), today = new Date();
+  if (isNaN(b.getTime())) return 0;
+  let age = today.getFullYear() - b.getFullYear();
+  const m = today.getMonth() - b.getMonth();
+  if (m < 0 || (m === 0 && today.getDate() < b.getDate())) age--;
+  return age;
+}
 /* Third Wheel — client. DOM is built with createElement/textContent only (no innerHTML). */
 (() => {
 'use strict';
@@ -688,7 +731,13 @@ function renderAuth() {
     try {
       const r = await api('POST', '/api/auth/' + mode, { username: u, password: p });
       S.me = r.user || r; await start();
-    } catch (ex) { err.textContent = T(ex.message); }
+    } catch (ex) {
+      if ((ex.data && ex.data.banned) || (ex.status === 403 && /suspended|banned/i.test(ex.message))) {
+        showSuspendedAppeal(u, p, (ex.data && ex.data.reason) || ex.message);
+        return;
+      }
+      err.textContent = T(ex.message);
+    }
     finally { submit.disabled = false; idle(); }
   } }, fu, fp, err, submit);
   document.title = 'Third Wheel';
@@ -716,16 +765,19 @@ function renderOnboarding() {
     let next;
     if (step === 0) {
       const reg = selectEl(S.meta.regions, d.region, 'Choose a region');
-      // Once an age has been chosen only an admin can change it.
-      const ageLocked = (S.me.age || 0) > 0;
-      const age = h('input', { class: 'input', type: 'number', inputmode: 'numeric', min: 13, max: 99, value: d.age || '', placeholder: 'Your age', disabled: ageLocked });
-      const fr = field('Region', reg, 'We match you with groups close by.'), fa = field('Age', age, ageLocked ? 'Only an admin can change your age.' : 'Must be 13 or older. You can’t change it later.');
-      body.append(h('p', { class: 'muted', text: 'Pick your region and age so we can match you with the right groups.' }), h('div', { class: 'row' }, fr, fa));
+      const bday = h('input', { class: 'input', type: 'date', value: d.birthDate || S.me.birthDate || '' });
+      const fr = field('Region', reg, 'We match you with groups close by.');
+      const fa = field('Birthday', bday, 'Must be 13 or older. Your age updates automatically each year.');
+      body.append(h('p', { class: 'muted', text: 'Pick your region and birthday so we can match you with the right groups.' }), h('div', { class: 'row' }, fr, fa));
       next = () => {
         const okR = fr.setError(reg.value ? '' : 'Choose a region');
-        const a = ageLocked ? S.me.age : parseInt(age.value, 10);
-        const okA = fa.setError(a >= 13 && a <= 99 ? '' : 'Enter an age from 13 to 99');
-        if (!okR || !okA) return false; d.region = reg.value; d.age = a; return true;
+        const a = calcAge(bday.value);
+        const okA = fa.setError(a >= 13 && a <= 99 ? '' : 'Must be 13 or older (enter a valid birthday)');
+        if (!okR || !okA) return false;
+        d.region = reg.value;
+        d.birthDate = bday.value;
+        d.age = a;
+        return true;
       };
     } else if (step === 1) {
       const gp = gamePicker({ multi: true, value: d.games || [] });
@@ -747,7 +799,7 @@ function renderOnboarding() {
     nextBtn.addEventListener('click', async () => {
       if (step < 3) { if (next()) { step++; dir = 1; draw(); } return; }
       await busy(nextBtn, async () => {
-        await api('PUT', '/api/me/settings', { region: d.region, age: d.age, favoriteGames: d.games, playing: S.me.playing || '', status: S.me.status || 'online', onboarded: true });
+        await api('PUT', '/api/me/settings', { region: d.region, birthDate: d.birthDate, age: d.age, favoriteGames: d.games, playing: S.me.playing || '', status: S.me.status || 'online', onboarded: true });
         if (d.extras && window.TWProfile) await TWProfile.saveExtras(d.extras).catch(() => {});
         S.me = await api('GET', '/api/me'); await start();
       });
@@ -875,17 +927,80 @@ document.addEventListener('fullscreenchange', () => {
   const on = !!document.fullscreenElement;
   b.replaceChildren(icon(on ? 'fullexit' : 'full')); b.setAttribute('aria-label', tr(on ? 'Exit fullscreen' : 'Fullscreen'));
 });
+function openQuickStatus() {
+  const me = S.me; if (!me) return;
+  const gp = gamePicker({ multi: false, value: T(me.playing || ''), placeholder: tr('Not playing anything') });
+  const statusSel = h('select', { class: 'select' },
+    h('option', { value: 'online', text: tr('Online'), selected: (me.status || 'online') === 'online' }),
+    h('option', { value: 'idle', text: tr('Idle / Away'), selected: me.status === 'idle' || me.status === 'away' }),
+    h('option', { value: 'dnd', text: tr('Do Not Disturb'), selected: me.status === 'dnd' || me.status === 'busy' }),
+    h('option', { value: 'offline', text: tr('Invisible / Offline'), selected: me.status === 'offline' })
+  );
+  const saveBtn = h('button', { class: 'btn primary', type: 'button', text: tr('Save changes') });
+  const clearBtn = h('button', { class: 'btn secondary', type: 'button', text: tr('Clear game'), onclick: () => { gp.value = ''; } });
+
+  const sheet = modal(tr('Set Playing & Status'),
+    h('div', { class: 'quick-status-sheet', style: 'display:flex;flex-direction:column;gap:14px;min-width:300px;padding:4px 0;' },
+      h('div', {},
+        h('label', { class: 'label', style: 'font-weight:600;margin-bottom:6px;display:block;', text: tr('Currently playing') }),
+        gp,
+        h('div', { style: 'margin-top:6px;display:flex;justify-content:flex-end;' }, clearBtn)
+      ),
+      h('div', {},
+        h('label', { class: 'label', style: 'font-weight:600;margin-bottom:6px;display:block;', text: tr('Status') }),
+        statusSel
+      ),
+      h('div', { style: 'display:flex;justify-content:flex-end;gap:8px;margin-top:10px;' },
+        h('button', { class: 'btn secondary', type: 'button', text: tr('Cancel'), onclick: () => sheet.close() }),
+        saveBtn
+      )
+    )
+  );
+
+  saveBtn.onclick = async () => {
+    saveBtn.disabled = true;
+    try {
+      const chosenGame = gp.value || '';
+      const chosenStatus = statusSel.value;
+      await api('PUT', '/api/me/playing', { playing: chosenGame });
+      if (chosenStatus !== me.status) {
+        await api('PUT', '/api/me/status', { status: chosenStatus });
+        me.status = chosenStatus;
+      }
+      me.playing = chosenGame;
+      renderUserPanel();
+      sheet.close();
+      toast(tr('Status updated!'));
+    } catch (e) {
+      saveBtn.disabled = false;
+      toast(e.message || tr('Failed to update'), 'error');
+    }
+  };
+}
+
 function renderUserPanel() {
   const me = S.me; if (!me || !S.el.user) return;
   const av = avatar(me, 'sm', false);
   av.style.cursor = 'pointer';
   av.title = tr('View profile');
   av.addEventListener('click', () => openProfile(me.id));
-  const meta = h('div', { class: 'meta', style: 'cursor:pointer', title: tr('View profile') },
-    h('b', { text: nm(me) }),
-    me.playing ? h('span', { class: 'playing' }, gameThumb(me.playing), h('span', { class: 'playing-txt', text: playingStatusText(me) })) : h('span', { class: 'muted small', text: STATUS[statusKey(me.status)] })
-  );
-  meta.addEventListener('click', () => openProfile(me.id));
+
+  const statusLine = me.playing
+    ? h('span', { class: 'playing interactive-status', style: 'cursor:pointer', title: tr('Click to change currently playing / status') },
+        gameThumb(me.playing),
+        h('span', { class: 'playing-txt', text: playingStatusText(me) })
+      )
+    : h('span', { class: 'muted small interactive-status', style: 'cursor:pointer', title: tr('Click to set currently playing / status'), text: STATUS[statusKey(me.status)] });
+  statusLine.addEventListener('click', (e) => {
+    e.stopPropagation();
+    openQuickStatus();
+  });
+
+  const nameEl = h('b', { text: nm(me), style: 'cursor:pointer', title: tr('View profile') });
+  nameEl.addEventListener('click', () => openProfile(me.id));
+
+  const meta = h('div', { class: 'meta' }, nameEl, statusLine);
+
   S.el.user.replaceChildren(av, meta,
     h('a', { class: 'icon-btn', href: '#/settings', 'aria-label': tr('Settings') }, icon('gear', 20)));
   if (me.banner) {
@@ -1317,7 +1432,7 @@ async function adminView(_, tok) {
   if (!S.me.isAdmin) { show(h('div', { class: 'page' }, emptyState('Admins only', 'You don’t have access to this page.'))); return; }
   const body = h('div', { class: 'section' });
   let seq = 0;
-  const tb = tabs([['overview', 'Overview'], ['reports', 'Reports'], ['users', 'Users'], ['groups', 'Groups']], S.adminTab || 'overview', (k) => { S.adminTab = k; draw(); TWM.slide(body, 1); }, 'Admin sections');
+  const tb = tabs([['overview', 'Overview'], ['reports', 'Reports'], ['appeals', 'Appeals'], ['users', 'Users'], ['groups', 'Groups']], S.adminTab || 'overview', (k) => { S.adminTab = k; draw(); TWM.slide(body, 1); }, 'Admin sections');
   show(h('div', { class: 'page' }, h('div', { class: 'page-head' }, h('div', {}, h('h1', { text: 'Admin' }), h('p', { class: 'muted', text: 'Manage people, groups and the whole site.' }))), tb, body));
   draw();
 
@@ -1325,7 +1440,7 @@ async function adminView(_, tok) {
     const mine = ++seq, tab = S.adminTab || 'overview';
     tb.set(tab);
     body.replaceChildren(h('span', { class: 'spinner', role: 'status', 'aria-label': 'Loading' }));
-    const run = tab === 'users' ? usersTab : tab === 'groups' ? groupsTab : tab === 'reports' ? reportsTab : overviewTab;
+    const run = tab === 'users' ? usersTab : tab === 'groups' ? groupsTab : tab === 'reports' ? reportsTab : tab === 'appeals' ? appealsTab : overviewTab;
     run(() => mine !== seq || stale(tok)).catch(e => { if (mine === seq) body.replaceChildren(emptyState('That didn’t load', e.message || 'Please try again.')); });
   }
 
@@ -1406,6 +1521,55 @@ async function adminView(_, tok) {
     let paint = () => {};
     q.addEventListener('input', () => { clearTimeout(timer); timer = setTimeout(refresh, 250); });
     return { q, list, refresh, setPaint(fn) { paint = fn; } };
+  }
+
+  
+  async function appealsTab(dead) {
+    let rows = await api('GET', '/api/admin/appeals'); if (dead()) return;
+    const list = h('div', { class: 'stack', style: 'gap:10px' });
+    const head = h('div', { class: 'row', style: 'align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap' },
+      h('div', { class: 'section-title', text: tr('Ban Appeals') })
+    );
+
+    function appealCard(a) {
+      const isPending = a.status === 'pending';
+      const approveBtn = btn(tr('Unban & Approve'), { cls: 'small', icon: 'check' });
+      const rejectBtn = btn(tr('Reject'), { cls: 'small ghost', icon: 'x' });
+
+      approveBtn.onclick = () => busy(approveBtn, async () => {
+        await api('POST', `/api/admin/appeals/${a.id}/action`, { action: 'approve' });
+        toast(tr('User unbanned and appeal approved.'));
+        draw();
+      });
+
+      rejectBtn.onclick = () => busy(rejectBtn, async () => {
+        await api('POST', `/api/admin/appeals/${a.id}/action`, { action: 'reject' });
+        toast(tr('Appeal rejected.'));
+        draw();
+      });
+
+      const actions = isPending ? h('div', { class: 'row', style: 'gap:6px' }, approveBtn, rejectBtn)
+        : h('span', { class: `chip ${a.status === 'approved' ? 'accent' : 'muted'}`, text: a.status === 'approved' ? tr('Approved & Unbanned') : tr('Rejected') });
+
+      return h('div', { class: 'card', style: 'padding:14px 18px;display:flex;flex-direction:column;gap:10px;' },
+        h('div', { class: 'row', style: 'align-items:center;justify-content:space-between;' },
+          h('div', { class: 'row', style: 'align-items:center;gap:8px;' },
+            h('b', { text: '@' + (a.username || 'unknown') }),
+            a.banReason ? h('span', { class: 'muted small', text: tr('Banned for: {0}', a.banReason) }) : null
+          ),
+          h('span', { class: 'muted small', text: when(a.createdAt) })
+        ),
+        h('div', { class: 'appeal-msg', style: 'background:rgba(255,255,255,0.04);padding:10px 12px;border-radius:6px;font-size:13px;line-height:1.4;', text: a.message }),
+        h('div', { style: 'display:flex;justify-content:flex-end;margin-top:4px;' }, actions)
+      );
+    }
+
+    if (!rows.length) {
+      list.replaceChildren(emptyState(tr('No ban appeals'), tr('There are no pending or past appeals right now.')));
+    } else {
+      list.replaceChildren(...rows.map(appealCard));
+    }
+    body.replaceChildren(head, list);
   }
 
   async function usersTab(dead) {
@@ -2058,7 +2222,7 @@ document.addEventListener('visibilitychange', () => { if (!document.hidden) poll
    Read S/me through the getters; they change after login. */
 /* Pages added by modules: `TWPages.name = async (arg, tok) => {...}` makes `#/name/arg` a route (use TW.show(node) to display it). */
 const TWPages = window.TWPages = window.TWPages || {};
-window.TW = {
+window.TW = { calcAge,
   $, h, icon, api, qs, enc, toast, T, nm, avatar, safeColor, ink, STATUS, statusKey,
   openSheet, confirmSheet, btn, busy, field, tabs, selectEl, suggestInput, gamePicker, switchEl, emptyState, stagger, when,
   personRow, groupCard, makeChat, openProfile, go, show, route, stale, playingStatusText, gameThumb, groupTile,
@@ -2072,3 +2236,22 @@ window.TW = {
   catch (e) { renderAuth(); if (e.status === 0) toast(e.message, 'error'); }
 })();
 })();
+
+window.TWApp = window.TWApp || {};
+window.TWApp.uploadClip = (name, b64) => {
+  try {
+    const bin = atob(b64);
+    const len = bin.length;
+    const bytes = new Uint8Array(len);
+    for (let i = 0; i < len; i++) bytes[i] = bin.charCodeAt(i);
+    const blob = new Blob([bytes], { type: 'video/mp4' });
+    const file = new File([blob], name || 'gameplay_clip.mp4', { type: 'video/mp4' });
+    if (window.TW && window.TW.uploadClip) {
+      window.TW.uploadClip(file);
+    } else {
+      toast('Open a chat room to upload the clip.', 'error');
+    }
+  } catch (err) {
+    console.error('Error uploading clip:', err);
+  }
+};
