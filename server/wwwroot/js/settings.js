@@ -242,13 +242,18 @@ function profileTab(panel, ctx) {
     return a;
   });
   const bday = h('input', { class: 'input', type: 'date', value: me.birthDate || '' });
+  const isDesktop = !!window.__TW_DESKTOP;
   const status = selectEl([['online', t('Online')], ['idle', t('Idle')], ['dnd', t('Do not disturb')], ['offline', t('Appear offline')]], TW.statusKey(me.status) || 'online');
   // "Currently playing" is a real game or nothing: pick it from the list (the desktop app also sets it automatically).
   const playing = gamePicker({ multi: false, value: T(me.playing || ''), placeholder: t('Not playing anything') });
+  if (!isDesktop) {
+    playing.el.style.opacity = '0.6';
+    playing.el.style.pointerEvents = 'none';
+  }
   const gp = gamePicker({ multi: true, value: me.favoriteGames || [] });
   const fr = field(t('Region'), region, me.region ? t('Your matchmaking region.') : t('Auto-detected based on your location: {0}', autoReg));
   const fa = field(t('Birthday'), bday, me.age ? t('Age: {0} (automatically updated each year)', me.age) : t('Must be 13 or older.'));
-  const fs = field(t('Status'), status), fp = field(t('Currently playing'), playing, t('Pick a game. It shows next to your name in friends lists.'));
+  const fs = field(t('Status'), status), fp = field(t('Currently playing'), playing, isDesktop ? t('Pick a game. It shows next to your name in friends lists.') : t('Requires desktop app to update currently playing.'));
   const save = h('button', { class: 'btn', type: 'submit' }, t('Save changes'));
   const form = h('form', { class: 'stack', novalidate: true, onsubmit: async (e) => {
     e.preventDefault();
@@ -256,7 +261,7 @@ function profileTab(panel, ctx) {
     const a = bd ? calcAge(bd) : me.age;
     const ok = [fr.setError(region.value ? '' : t('Choose a region')), fa.setError(a >= 13 && a <= 99 ? '' : t('Must be 13 or older (enter a valid birthday)'))].every(Boolean);
     if (!ok) return;
-    const body = { region: region.value, favoriteGames: gp.value, playing: playing.value, status: status.value, birthDate: bd, age: a, onboarded: true };
+    const body = { region: region.value, favoriteGames: gp.value, playing: (isDesktop ? playing.value : (me.playing || '')), status: status.value, birthDate: bd, age: a, onboarded: true };
     await busy(save, async () => {
       await api('PUT', '/api/me/settings', body);
       TW.me = await api('GET', '/api/me'); TW.renderUserPanel(); toast(t('Settings saved')); document.dispatchEvent(new Event('tw:me'));
@@ -283,7 +288,7 @@ function connectionsTab(panel) {
 }
 
 /* gamer tags: platform -> handle, saved with the preferences */
-const PLATFORMS = ['Steam', 'Discord', 'Xbox', 'PlayStation', 'Nintendo', 'Epic Games', 'Riot ID', 'Battle.net', 'EA app', 'Other'];
+const PLATFORMS = ['Steam', 'Discord'];
 function gamerTagsCard() {
   const tags = { ...(P.get().gamerTags || {}) };
   const list = h('div', { class: 'chips tag-list' });
@@ -307,7 +312,7 @@ function gamerTagsCard() {
   add.addEventListener('click', submit);
   handle.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); submit(); } });
   draw();
-  return card(cardHead(t('Gamer tags'), t('Show friends where to find you: Steam, Discord, Xbox and more.')), verifyBlock(), list,
+  return card(cardHead(t('Gamer tags'), t('Show friends where to find you on supported platforms: Steam and Discord.')), verifyBlock(), list,
     h('div', { class: 'row tag-form' }, field(t('Platform'), platform), fh), h('div', {}, add));
 }
 
@@ -484,7 +489,7 @@ function themeCard() {
   document.addEventListener('tw:theme', paint);
   paint();
   return card(cardHead(t('Theme'), t('Pick a look. Accent colour (below) works with every theme. Saved on this device.')), tiles, customRow,
-    h('div', { class: 'row2' }, field(t('Corners'), radius), field(t('Spacing'), density)), field(t('Font'), font),
+    h('div', { class: 'theme-grid-row' }, field(t('Corners'), radius), field(t('Spacing'), density), field(t('Font'), font)),
     switchRow(t('Simple mode'), t('Hide explanatory text and keep only the controls.'), !!T.get().simple, (v) => T.set({ simple: v })), h('div', {}, reset));
 }
 
@@ -632,8 +637,7 @@ function foldify(panel, openFirst) {
 
 
 /* ---- Voice & audio settings tab ---- */
-function voiceTab() {
-  const box = h('div', { class: 'settings-tab' });
+function voiceTab(panel) {
   const card = h('section', { class: 'scard' });
   card.append(h('h3', { text: t('Audio devices') }),
     h('p', { class: 'muted small', text: t('Choose your microphone and speaker or headphones for voice chat.') }));
@@ -674,7 +678,7 @@ function voiceTab() {
       const an = actx.createAnalyser(); an.fftSize = 512; src.connect(an);
       const buf = new Uint8Array(an.frequencyBinCount);
       testMeterTimer = setInterval(() => {
-        if (!box.isConnected) {
+        if (!card.isConnected) {
           if (testStream) testStream.getTracks().forEach(t => t.stop());
           clearInterval(testMeterTimer);
           return;
@@ -717,8 +721,7 @@ function voiceTab() {
     )
   );
 
-  box.append(card);
-  return box;
+  panel.append(card);
 }
 
 /* ================= page ================= */

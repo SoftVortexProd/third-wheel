@@ -207,13 +207,11 @@ async function settings(slot) {
   let m, d;
   try { [m, d] = await Promise.all([meta(), api('GET', '/api/me/profile-extras')]); } catch { return; }
   if (settingsSlot !== slot) return;
-  gameHolder = h('div');
-  gameHolder.append(gameCard(m, d));
   const sf = styleForm(d);
   const save = btn('Save play style', { icon: 'check' });
   save.addEventListener('click', () => busy(save, async () => { await saveExtras(sf.value()); toast('Play style saved'); }));
   const seen = onlineSummary(d.online && d.online.blocks);
-  slot.replaceChildren(gameHolder, h('div', { class: 'card', style: 'padding:24px;display:flex;flex-direction:column;gap:16px' },
+  slot.replaceChildren(h('div', { class: 'card', style: 'padding:24px;display:flex;flex-direction:column;gap:16px' },
     h('div', {}, h('h3', { text: 'Play style & availability' }), h('p', { class: 'muted small', text: 'Used to match you with groups and people who play like you.' })),
     sf.el,
     seen ? h('p', { class: 'muted small', text: `We’ve noticed you’re usually online in the ${seen} (your time).` }) : null,
@@ -255,14 +253,7 @@ async function profileDetails(slot, id) {
     const tier = good >= 25 ? ['Legendary teammate', 'gold'] : good >= 10 ? ['Great teammate', 'silver'] : ['Good teammate', 'bronze'];
     secs.reputation = h('div', { class: 'section', 'data-sec': 'reputation' }, h('span', { class: 'rep-badge ' + tier[1], title: TW.t('{n} people said they were a good teammate', { n: good }) }, TW.icon('check', 14), TW.t(tier[0]), h('span', { class: 'muted small', text: '×' + good })));
   }
-  // Ranks, roles and hours: upgrade the plain favorite-game chips in place ("Valorant · Diamond · Controller · 120 h").
   const gamesSec = slot.parentElement && slot.parentElement.querySelector('[data-sec="games"]');
-  const by = new Map((d.games || []).map(g => [g.game, g]));
-  const fav = gamesSec && gamesSec.querySelector('.favgames');
-  if (fav && by.size) fav.querySelectorAll('.chip').forEach(c => {
-    const g = by.get(c.textContent); if (!g) return;
-    c.textContent = [T(g.game), T(g.rank), T(g.role), g.hours ? g.hours + ' h' : ''].filter(Boolean).join(' · '); c.classList.add('accent');
-  });
   if (gamesSec) secs.games = gamesSec;   // moved into the ordered list below
   const order = (d.layout && d.layout.order) || ['bio', 'games', 'tags', 'play', 'when', 'reputation'];
   const kids = order.map(id => secs[id]).filter(Boolean);

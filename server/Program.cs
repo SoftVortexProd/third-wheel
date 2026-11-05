@@ -184,8 +184,7 @@ api.MapPost("auth/login", (HttpContext c, Creds b) =>
     if (Convert.ToInt32(u["banned"]) == 1)
     {
         var why = u["banReason"] as string;
-        var bIp = ClientIp(c); var bDev = ClientDeviceId(c);
-        Db.Exec("INSERT OR IGNORE INTO banned_ips(ip, reason, bannedAt, bannedBy) VALUES(@ip, @r, @t, 0)", ("@ip", bIp), ("@r", "Suspended user: " + name), ("@t", Now()));
+        var bDev = ClientDeviceId(c);
         if (bDev != null) Db.Exec("INSERT OR IGNORE INTO banned_devices(deviceId, reason, bannedAt, bannedBy) VALUES(@d, @r, @t, 0)", ("@d", bDev), ("@r", "Suspended user: " + name), ("@t", Now()));
         return Results.Json(new { error = "This account has been suspended." + (string.IsNullOrEmpty(why) ? "" : " Reason: " + why), banned = true, reason = why, username = name }, statusCode: 403);
     }
@@ -504,8 +503,6 @@ api.MapPost("admin/users/{id:long}/ban", (HttpContext c, long id, BanIn b) => Wi
         Db.Exec("DELETE FROM sessions WHERE userId=@i", ("@i", id));
         Db.Exec("UPDATE users SET status='offline', playing=NULL WHERE id=@i", ("@i", id));
         var rsn = !string.IsNullOrWhiteSpace(b.Reason) ? b.Reason : "Suspended by admin";
-        if (u["lastIp"] is string uIp && !string.IsNullOrWhiteSpace(uIp))
-            Db.Exec("INSERT OR REPLACE INTO banned_ips(ip, reason, bannedAt, bannedBy) VALUES(@ip, @r, @t, @me)", ("@ip", uIp), ("@r", rsn), ("@t", Now()), ("@me", me));
         if (u["deviceId"] is string uDev && !string.IsNullOrWhiteSpace(uDev))
             Db.Exec("INSERT OR REPLACE INTO banned_devices(deviceId, reason, bannedAt, bannedBy) VALUES(@d, @r, @t, @me)", ("@d", uDev), ("@r", rsn), ("@t", Now()), ("@me", me));
     }
@@ -963,7 +960,8 @@ CREATE TABLE IF NOT EXISTS group_icons(groupId INTEGER PRIMARY KEY, mime TEXT NO
         if (!cols.Contains("deviceId")) Exec("ALTER TABLE users ADD COLUMN deviceId TEXT");
         if (!cols.Contains("suspendedUntil")) Exec("ALTER TABLE users ADD COLUMN suspendedUntil TEXT");
         Exec(@"CREATE TABLE IF NOT EXISTS banned_ips(ip TEXT PRIMARY KEY, reason TEXT, bannedAt TEXT, bannedBy INTEGER);
-CREATE TABLE IF NOT EXISTS banned_devices(deviceId TEXT PRIMARY KEY, reason TEXT, bannedAt TEXT, bannedBy INTEGER);");
+CREATE TABLE IF NOT EXISTS banned_devices(deviceId TEXT PRIMARY KEY, reason TEXT, bannedAt TEXT, bannedBy INTEGER);
+DELETE FROM banned_ips;");
         Exec("UPDATE users SET banned=0 WHERE banned IS NULL");
         Exec("UPDATE users SET isAdmin=0 WHERE isAdmin IS NULL");
         Exec(@"CREATE TABLE IF NOT EXISTS ban_appeals(id INTEGER PRIMARY KEY, userId INTEGER, username TEXT, reason TEXT, message TEXT, status TEXT DEFAULT 'pending', createdAt TEXT, reviewedAt TEXT, reviewedBy INTEGER);");

@@ -52,17 +52,10 @@ public static class Core
     public static bool IsBanned(HttpContext c, out string? reason)
     {
         reason = null;
-        var ip = ClientIp(c);
-        var r = Db.Row("SELECT reason FROM banned_ips WHERE ip=@ip", ("@ip", ip));
-        if (r != null)
-        {
-            var why = r["reason"] as string ?? "Network suspended"; reason = $"Your network has been suspended: {why}";
-            return true;
-        }
         var dev = ClientDeviceId(c);
         if (dev != null)
         {
-            r = Db.Row("SELECT reason FROM banned_devices WHERE deviceId=@d", ("@d", dev));
+            var r = Db.Row("SELECT reason FROM banned_devices WHERE deviceId=@d", ("@d", dev));
             if (r != null)
             {
                 var why = r["reason"] as string ?? "Device suspended"; reason = $"This device has been suspended: {why}";

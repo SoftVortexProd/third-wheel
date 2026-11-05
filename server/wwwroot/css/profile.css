@@ -34,3 +34,47 @@
 .rep-badge.bronze { color: #cd7f32; border-color: #cd7f32; }
 .rep-badge.silver { color: #9aa7b8; border-color: #9aa7b8; }
 .rep-badge.gold { color: #e6b422; border-color: #e6b422; }
+/* Favorite games chips & toggle (matching user theme) */
+.favgames {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+.favgames .chip.favgame-chip {
+  background: var(--color-surface, #14151a);
+  border: 1px solid var(--color-line-2, #26262e);
+  border-radius: 9999px;
+  padding: 4px 12px 4px 6px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--color-text, #e2e8f0);
+  font-size: var(--fs-sm, 13px);
+  font-weight: 500;
+  line-height: 1.2;
+}
+.favgames .chip.favgame-chip .gp-thumb,
+.favgames .chip.favgame-chip .gp-thumb img {
+  width: 22px;
+  height: 22px;
+  border-radius: 4px;
+  object-fit: cover;
+  flex: none;
+  display: block;
+}
+.favgames .toggle-more-games {
+  background: transparent !important;
+  border: 1.5px dashed var(--color-line-3, rgba(255,255,255,0.25)) !important;
+  border-radius: 9999px !important;
+  padding: 5px 14px !important;
+  color: var(--color-text, #fff) !important;
+  font-weight: 700 !important;
+  font-size: var(--fs-sm, 13px) !important;
+  cursor: pointer;
+  transition: all .15s ease;
+}
+.favgames .toggle-more-games:hover {
+  background: rgba(255, 255, 255, 0.08) !important;
+  border-color: var(--color-text-3, rgba(255,255,255,0.45)) !important;
+}

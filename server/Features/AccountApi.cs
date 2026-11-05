@@ -213,8 +213,6 @@ CREATE TABLE IF NOT EXISTS user_prefs(userId INTEGER PRIMARY KEY, accentColor TE
                         }
                         if (b?.BanIpAndDevice != false)
                         {
-                            if (targetUser["lastIp"] is string ip && !string.IsNullOrWhiteSpace(ip))
-                                Db.Exec("INSERT OR REPLACE INTO banned_ips(ip, reason, bannedAt, bannedBy) VALUES(@ip, @r, @t, @me)", ("@ip", ip), ("@r", reason), ("@t", Now()), ("@me", me));
                             if (targetUser["deviceId"] is string dev && !string.IsNullOrWhiteSpace(dev))
                                 Db.Exec("INSERT OR REPLACE INTO banned_devices(deviceId, reason, bannedAt, bannedBy) VALUES(@d, @r, @t, @me)", ("@d", dev), ("@r", reason), ("@t", Now()), ("@me", me));
                         }
@@ -222,8 +220,6 @@ CREATE TABLE IF NOT EXISTS user_prefs(userId INTEGER PRIMARY KEY, accentColor TE
                     else if (act == "delete_account")
                     {
                         var reason = !string.IsNullOrWhiteSpace(note) ? note : $"Permanently removed following report: {rep["reason"]}";
-                        if (targetUser["lastIp"] is string ip && !string.IsNullOrWhiteSpace(ip))
-                            Db.Exec("INSERT OR REPLACE INTO banned_ips(ip, reason, bannedAt, bannedBy) VALUES(@ip, @r, @t, @me)", ("@ip", ip), ("@r", reason), ("@t", Now()), ("@me", me));
                         if (targetUser["deviceId"] is string dev && !string.IsNullOrWhiteSpace(dev))
                             Db.Exec("INSERT OR REPLACE INTO banned_devices(deviceId, reason, bannedAt, bannedBy) VALUES(@d, @r, @t, @me)", ("@d", dev), ("@r", reason), ("@t", Now()), ("@me", me));
 

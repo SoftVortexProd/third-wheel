@@ -637,9 +637,10 @@ function gamePicker(opts = {}) {
 function field(label, input, hint) {
   const id = input.id || (input.id = nid('f'));
   const msg = h('div', { class: 'field-msg', id: id + '-m', 'aria-live': 'polite' }, hint || '');
+  if (!hint) msg.style.display = 'none';
   input.setAttribute('aria-describedby', id + '-m');
   const f = h('div', { class: 'field' }, h('label', { for: id, text: label }), input, msg);
-  f.setError = (m) => { f.classList.toggle('invalid', !!m); f.classList.remove('shake'); if (m) { void f.offsetWidth; f.classList.add('shake'); } msg.textContent = m || hint || ''; input.setAttribute('aria-invalid', m ? 'true' : 'false'); return !m; };
+  f.setError = (m) => { f.classList.toggle('invalid', !!m); f.classList.remove('shake'); if (m) { void f.offsetWidth; f.classList.add('shake'); } msg.textContent = m || hint || ''; msg.style.display = (m || hint) ? '' : 'none'; input.setAttribute('aria-invalid', m ? 'true' : 'false'); return !m; };
   return f;
 }
 function tabs(items, active, onChange, label) {
@@ -1012,7 +1013,12 @@ document.addEventListener('fullscreenchange', () => {
 });
 function openQuickStatus() {
   const me = S.me; if (!me) return;
+  const isDesktop = !!window.__TW_DESKTOP;
   const gp = gamePicker({ multi: false, value: T(me.playing || ''), placeholder: tr('Not playing anything') });
+  if (!isDesktop) {
+    gp.el.style.opacity = '0.6';
+    gp.el.style.pointerEvents = 'none';
+  }
   const statusSel = h('select', { class: 'select' },
     h('option', { value: 'online', text: tr('Online'), selected: (me.status || 'online') === 'online' }),
     h('option', { value: 'idle', text: tr('Idle / Away'), selected: me.status === 'idle' || me.status === 'away' }),
@@ -1020,14 +1026,16 @@ function openQuickStatus() {
     h('option', { value: 'offline', text: tr('Invisible / Offline'), selected: me.status === 'offline' })
   );
   const saveBtn = h('button', { class: 'btn primary', type: 'button', text: tr('Save changes') });
-  const clearBtn = h('button', { class: 'btn secondary', type: 'button', text: tr('Clear game'), onclick: () => { gp.value = ''; } });
+  const clearBtn = isDesktop ? h('button', { class: 'btn secondary', type: 'button', text: tr('Clear game'), onclick: () => { gp.value = ''; } }) : null;
 
   const sheet = modal(tr('Set Playing & Status'),
     h('div', { class: 'quick-status-sheet', style: 'display:flex;flex-direction:column;gap:14px;min-width:300px;padding:4px 0;' },
       h('div', {},
         h('label', { class: 'label', style: 'font-weight:600;margin-bottom:6px;display:block;', text: tr('Currently playing') }),
         gp,
-        h('div', { style: 'margin-top:6px;display:flex;justify-content:flex-end;' }, clearBtn)
+        !isDesktop
+          ? h('div', { style: 'margin-top:6px;' }, h('span', { class: 'muted small', style: 'color:var(--color-primary);font-weight:600;', text: tr('Requires desktop app to update currently playing') }))
+          : (clearBtn ? h('div', { style: 'margin-top:6px;display:flex;justify-content:flex-end;' }, clearBtn) : null)
       ),
       h('div', {},
         h('label', { class: 'label', style: 'font-weight:600;margin-bottom:6px;display:block;', text: tr('Status') }),
@@ -1043,14 +1051,16 @@ function openQuickStatus() {
   saveBtn.onclick = async () => {
     saveBtn.disabled = true;
     try {
-      const chosenGame = gp.value || '';
+      const chosenGame = isDesktop ? (gp.value || '') : (me.playing || '');
       const chosenStatus = statusSel.value;
-      await api('PUT', '/api/me/playing', { playing: chosenGame });
+      if (isDesktop) {
+        await api('PUT', '/api/me/playing', { playing: chosenGame });
+        me.playing = chosenGame;
+      }
       if (chosenStatus !== me.status) {
         await api('PUT', '/api/me/status', { status: chosenStatus });
         me.status = chosenStatus;
       }
-      me.playing = chosenGame;
       renderUserPanel();
       sheet.close();
       toast(tr('Status updated!'));
@@ -1468,13 +1478,12 @@ async function openProfile(id, opts) {
         chipsContainer.innerHTML = '';
         const visible = expanded ? games : games.slice(0, 5);
         for (const g of visible) {
-          chipsContainer.append(h('span', { class: 'chip', style: 'display:inline-flex;align-items:center;gap:4px;' }, gameThumb(g), h('span', { class: 'chip-txt', text: T(g) })));
+          chipsContainer.append(h('span', { class: 'chip favgame-chip' }, gameThumb(g), h('span', { class: 'chip-txt', text: T(g) })));
         }
         if (games.length > 5) {
           const toggleBtn = h('button', {
             class: 'chip toggle-more-games',
             type: 'button',
-            style: 'cursor:pointer;background:var(--color-surface);border:1px dashed var(--color-line-2);font-weight:600;',
             onclick: () => { expanded = !expanded; renderChips(); }
           }, expanded ? tr('Show less') : `+${games.length - 5} ${tr('more')}`);
           chipsContainer.append(toggleBtn);
@@ -1560,7 +1569,18 @@ async function dmView(id, tok) {
   chat.fill(first, 'Say hi 👋', 'This is the start of your chat with ' + nm(p) + '.');
   const page = h('div', { class: 'chat-page' }, head, ...(chat.tools ? [chat.tools] : []), chat.log, chat.composer);
   show(page);
-  chat.log.scrollTo({ top: chat.log.scrollHeight, behavior: 'instant' });
+  const scrollDown = () => {
+    if (chat.log) {
+      chat.log.scrollTop = chat.log.scrollHeight;
+      chat.log.scrollTo({ top: chat.log.scrollHeight, behavior: 'instant' });
+    }
+  };
+  scrollDown();
+  requestAnimationFrame(() => {
+    scrollDown();
+    setTimeout(scrollDown, 50);
+    setTimeout(scrollDown, 250);
+  });
   chat.done();
   S.chatTimer = every(() => { if (!document.hidden) { chat.poll(); paintSub(); } }, POLL_MS);
   if (window.TWRT) (S.rtOff = S.rtOff || []).push(TWRT.pokes('chat', () => { if (!document.hidden) { chat.poll(); paintSub(); } }, m => m.k === 'd' && String(m.id) === String(p.id)));

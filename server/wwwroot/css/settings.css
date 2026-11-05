@@ -142,3 +142,7 @@ h3 { line-height: calc(20px * var(--ts, 1)); }
 .verify-plat { display: flex; align-items: center; gap: 8px; }
 .verify-actions { display: flex; align-items: center; gap: 6px; margin-left: auto; }
 .pic-card .scard-title-row, .banner-card .scard-title-row, .logout-card .scard-title-row { display: flex; align-items: center; gap: 8px; margin-bottom: 2px; }
+/* Theme controls compact row */
+.theme-grid-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-top: 2px; }
+@media (max-width: 700px) { .theme-grid-row { grid-template-columns: 1fr; } }
+.fold-body .srow { padding: 4px 0; }
