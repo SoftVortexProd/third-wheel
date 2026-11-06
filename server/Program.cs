@@ -91,7 +91,7 @@ app.Use(async (ctx, next) =>
 
         // Maintenance mode / closed pages: everyone except admins gets a 503 with the admin's message.
         var path = ctx.Request.Path.Value ?? "";
-        var page = Site.PageOf(path);
+        var page = Site.PageOf(path) ?? (path == "/api/uploads" && ctx.Request.Query["kind"] == "p" ? "clips" : null);
         bool exempt = path is "/api/site" or "/api/me" or "/api/meta" or "/api/auth/login" or "/api/auth/logout"
             || path.StartsWith("/api/admin") || path.StartsWith("/api/avatars") || path.StartsWith("/api/banners") || path.StartsWith("/api/group-icons") || path.StartsWith("/api/games");
         if (!exempt && (Site.Maintenance || (page != null && Site.Closed.ContainsKey(page))))
@@ -833,7 +833,7 @@ record SiteIn(MaintIn? Maintenance, Dictionary<string, string>? Closed, bool? Ag
 // Site-wide switches: maintenance mode and per-page closures (persisted, cached in memory).
 static class Site
 {
-    public static readonly string[] Pages = { "feed", "search", "friends", "dms", "groups", "signup" };
+    public static readonly string[] Pages = { "feed", "search", "friends", "dms", "groups", "signup", "clips" };
     static readonly object L = new();
     public static bool Maintenance;
     /// <summary>Under-18s and adults can't see each other's groups or profiles. Admins can switch it off.</summary>
@@ -844,10 +844,20 @@ static class Site
     public static string? PageOf(string path) =>
         path.StartsWith("/api/feed") ? "feed" : path.StartsWith("/api/search") ? "search" :
         path.StartsWith("/api/friends") || path.StartsWith("/api/invites") ? "friends" : path.StartsWith("/api/dms") ? "dms" :
-        path.StartsWith("/api/groups") ? "groups" : path == "/api/auth/signup" ? "signup" : null;
+        path.StartsWith("/api/groups") ? "groups" : path == "/api/auth/signup" ? "signup" : path == "/api/me/clips" || path.StartsWith("/api/me/clips/") || (path.StartsWith("/api/users/") && path.EndsWith("/clips")) ? "clips" : null;
 
     public static void Load()
     {
+        // one-time default: the clip catcher starts switched off on servers that already exist (admins can open it again in the admin panel; this runs only once)
+        if (Db.Scalar("SELECT 1 FROM site WHERE key='clips_off_default'") == null)
+        {
+            Db.Exec("INSERT OR REPLACE INTO site(key,value) VALUES('clips_off_default','1')");
+            var cur = Db.Scalar("SELECT value FROM site WHERE key='state'") as string;
+            Dictionary<string, string> closed0 = new(); bool on0 = false; string msg0 = MaintenanceMessage; bool age0 = true;
+            try { if (!string.IsNullOrEmpty(cur)) { using var d0 = JsonDocument.Parse(cur); var r0 = d0.RootElement; on0 = r0.GetProperty("on").GetBoolean(); msg0 = r0.GetProperty("message").GetString() ?? msg0; age0 = !r0.TryGetProperty("ageSeparation", out var a0) || a0.GetBoolean(); closed0 = r0.GetProperty("closed").EnumerateObject().ToDictionary(p => p.Name, p => p.Value.GetString() ?? ""); } } catch { /* start fresh */ }
+            closed0["clips"] = "The clip catcher is switched off for now.";
+            Db.Exec("INSERT OR REPLACE INTO site(key,value) VALUES('state',@v)", ("@v", JsonSerializer.Serialize(new { on = on0, message = msg0, closed = closed0, ageSeparation = age0 })));
+        }
         var json = Db.Scalar("SELECT value FROM site WHERE key='state'") as string;
         if (string.IsNullOrEmpty(json)) return;
         try

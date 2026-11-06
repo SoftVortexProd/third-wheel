@@ -80,7 +80,13 @@ async function post(file, dest, trim, title, onPct) {
 
 async function myGroups() { try { return await api('GET', '/api/groups/mine'); } catch { return []; } }
 
+/* An admin can switch the clip catcher off for the whole site (admin panel -> Site -> "clips"). */
+async function siteOff() { try { const s = await api('GET', '/api/site'); return (s.closed && s.closed.clips) || ''; } catch { return ''; } }
+window.TWApp = window.TWApp || {};
+
 async function open(file) {
+  const off = await siteOff();
+  if (off && !(TW.me && TW.me.isAdmin)) { toast(T(off)); return; }
   const groups = await myGroups();
   const auto = store.get('dest', ''), askTrim = store.get('trim', '1') === '1';
   if (auto && !askTrim && (auto === 'profile' || groups.some(g => 'g:' + g.id === auto))) {
@@ -175,6 +181,7 @@ TW.clipSettingsCard = (card, cardHead) => {
     body.append(field(t('Post straight away to'), sel), h('label', { for: 'clip-trim', class: 'row', style: 'gap:8px;align-items:center;cursor:pointer' }, trim, h('span', { text: t('Show the trim window') })),
       h('p', { class: 'muted small', text: t('The clip catcher is on in the tray menu of the desktop app. It only records while a game is running.') }));
   });
+  siteOff().then(off => { if (off && !(TW.me && TW.me.isAdmin)) c.hidden = true; });
   return c;
 };
 })();
