@@ -135,7 +135,7 @@
 /* "Static profile pictures" in Settings, and the system's reduce-motion setting, freeze every frame (still drawn, no movement) */
 html.no-pfp-anim .framed, html.no-pfp-anim .framed::before, html.no-pfp-anim .framed::after { animation: none !important; }
 html[data-motion="off"] .framed, html[data-motion="off"] .framed::before, html[data-motion="off"] .framed::after { animation: none !important; }
-@media (prefers-reduced-motion: reduce) { html:not([data-motion="on"]) .framed, html:not([data-motion="on"]) .framed::before, html:not([data-motion="on"]) .framed::after { animation: none !important; } }
+/* Frames and profile effects are the person's own choice, so they keep moving even when Windows reports "reduce motion"; "Animations: Off" and "Static profile pictures" in Settings still freeze them. */
 
 /* Settings: frame picker */
 .frame-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: var(--space-4); }

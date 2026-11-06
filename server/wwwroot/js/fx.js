@@ -167,7 +167,7 @@ const E = {
   }
 };
 const IDS = Object.keys(E);
-const reduce = () => window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
+const reduce = () => document.documentElement.dataset.motion === 'off';   // the app's own "Animations: Off" (the OS setting is ignored: many PCs report it by default)
 
 /** Returns the overlay element. Put it inside a position:relative parent; it covers it and ignores the mouse. */
 function fx(id) {

@@ -331,6 +331,22 @@ CREATE TABLE IF NOT EXISTS user_prefs(userId INTEGER PRIMARY KEY, accentColor TE
             catch { /* fall through to the error below */ }
             return Err("Translation isn't available right now. Try again later.", 502);
         });        // ---- a user changes their own password ----
+        // Delete my own account. Asks for the password (or, for accounts that only sign in with Google/Discord, the username typed out) and removes everything.
+        api.MapPost("me/delete", (HttpContext c, DeleteIn b) => WithUser(c, uid =>
+        {
+            var key = $"del:{uid}";
+            if (Limited(key, 5, TimeSpan.FromMinutes(10), false)) return Err("Too many attempts. Wait a few minutes.", 429);
+            var u = Db.Row("SELECT * FROM users WHERE id=@i", ("@i", uid))!;
+            if (Convert.ToInt32(u["isAdmin"]) == 1) return Err("Admins can't delete their own account. Ask another admin to remove your admin role first.", 403);
+            bool oauth = Convert.ToInt32(u["oauthOnly"] ?? 0) == 1;
+            bool ok = oauth ? string.Equals((b.Confirm ?? "").Trim(), (string)u["username"]!, StringComparison.OrdinalIgnoreCase)
+                            : Db.Verify(b.Password ?? "", Convert.FromBase64String((string)u["salt"]!), Convert.FromBase64String((string)u["hash"]!));
+            if (!ok) { Limited(key, 5, TimeSpan.FromMinutes(10), true); return Err(oauth ? "Type your username exactly to confirm." : "That password is not right.", 403); }
+            DeleteAccount(uid);
+            c.Response.Cookies.Delete("tw_session", new CookieOptions { Path = "/" });
+            return Results.Json(new { ok = true });
+        }));
+
         api.MapPost("me/password", (HttpContext c, PasswordIn b) => WithUser(c, uid =>
         {
             var key = $"pw:{uid}";
@@ -532,4 +548,5 @@ public record AdminPasswordIn(string? Password);
 public record GroupRenameIn(string? Name);
 public record PrefsIn(string? AccentColor, double? FontScale, string? Language, bool? NsfwFilter, bool? ProfanityFilter, string[]? FavGifs, Dictionary<string, string>? GamerTags, bool? DisablePfpAnimation = null);
 public record ReportIn(long? ReportedUserId, long? MessageId, long? GroupId, string? Reason, string? Details, string? MessageKind = null);
-public record TranslateIn(string? Text, string? ToLang);
+public record DeleteIn(string? Password, string? Confirm);
+ public record TranslateIn(string? Text, string? ToLang);

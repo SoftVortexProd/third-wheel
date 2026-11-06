@@ -158,3 +158,7 @@ html.simple .page-head p.muted, html.simple .field-msg, html.simple .fold-body >
   .settings-nav { position: sticky; top: 0; flex-direction: row; overflow-x: auto; overflow-y: hidden; white-space: nowrap; }
   .settings-nav .snav { flex: none; }
 }
+
+/* voice bar: avatar rings need room, or neighbours' rings touch */
+.vc-faces { gap: 14px; padding: 0 6px; }
+.vc-faces .framed { margin: 0 2px; }

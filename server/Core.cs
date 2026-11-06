@@ -252,6 +252,17 @@ public static class Core
         Db.Exec("DELETE FROM group_bans WHERE userId=@i", ps);
         Db.Exec("DELETE FROM group_mutes WHERE userId=@i", ps);
         Db.Exec("DELETE FROM join_requests WHERE userId=@i", ps);
+        // uploaded files (also the ones pinned to the profile) and the rest of the person's data
+        foreach (var f in Db.Rows("SELECT path FROM files WHERE ownerId=@i", ps)) { try { File.Delete((string)f["path"]!); } catch { /* already gone */ } }
+        foreach (var sql in new[] {
+            "DELETE FROM profile_clips WHERE userId=@i", "DELETE FROM files WHERE ownerId=@i", "DELETE FROM oauth_accounts WHERE userId=@i", "DELETE FROM email_tokens WHERE userId=@i",
+            "DELETE FROM banners WHERE userId=@i", "DELETE FROM user_prefs WHERE userId=@i", "DELETE FROM notifications WHERE userId=@i OR fromId=@i", "DELETE FROM push_subs WHERE userId=@i",
+            "DELETE FROM profile_extras WHERE userId=@i", "DELETE FROM reads WHERE userId=@i", "DELETE FROM session_players WHERE userId=@i", "DELETE FROM session_ratings WHERE fromId=@i OR toId=@i",
+            "DELETE FROM user_blocks WHERE userId=@i OR blockedId=@i", "DELETE FROM user_games WHERE userId=@i", "DELETE FROM verified_tags WHERE userId=@i", "DELETE FROM activity WHERE userId=@i",
+            "DELETE FROM lfg_responses WHERE userId=@i", "DELETE FROM lfg_posts WHERE userId=@i", "DELETE FROM notify_init WHERE userId=@i" })
+        {
+            try { Db.Exec(sql, ps); } catch { /* table or column missing in an older database: nothing to remove */ }
+        }
         foreach (var sql in new[] {
             "DELETE FROM reactions WHERE kind='g' AND msgId IN (SELECT id FROM messages WHERE userId=@i)",
             "DELETE FROM reactions WHERE kind='d' AND msgId IN (SELECT id FROM dms WHERE a=@i OR b=@i)",

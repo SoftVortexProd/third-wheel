@@ -721,6 +721,24 @@ function languageTab(panel) {
 }
 
 /* ---- Account & security ---- */
+TWPrefs.addStrings('sv', {"Delete account":"Ta bort konto","Permanently delete your account and everything on it: messages, friends, files and clips. This can’t be undone.":"Ta bort ditt konto och allt på det för alltid: meddelanden, vänner, filer och klipp. Det går inte att ångra.","Delete my account":"Ta bort mitt konto","Password":"Lösenord","If you only sign in with Google or Discord, type your username instead.":"Om du bara loggar in med Google eller Discord, skriv ditt användarnamn istället.","Your account was deleted.":"Ditt konto togs bort.","Delete your account?":"Ta bort ditt konto?"});
+TWPrefs.addStrings('de', {"Delete account":"Konto löschen","Permanently delete your account and everything on it: messages, friends, files and clips. This can’t be undone.":"Lösche dein Konto und alles darauf für immer: Nachrichten, Freunde, Dateien und Clips. Das lässt sich nicht rückgängig machen.","Delete my account":"Mein Konto löschen","Password":"Passwort","If you only sign in with Google or Discord, type your username instead.":"Wenn du dich nur mit Google oder Discord anmeldest, gib stattdessen deinen Benutzernamen ein.","Your account was deleted.":"Dein Konto wurde gelöscht.","Delete your account?":"Dein Konto löschen?"});
+TWPrefs.addStrings('es', {"Delete account":"Eliminar cuenta","Permanently delete your account and everything on it: messages, friends, files and clips. This can’t be undone.":"Elimina para siempre tu cuenta y todo lo que contiene: mensajes, amigos, archivos y clips. No se puede deshacer.","Delete my account":"Eliminar mi cuenta","Password":"Contraseña","If you only sign in with Google or Discord, type your username instead.":"Si solo inicias sesión con Google o Discord, escribe tu nombre de usuario.","Your account was deleted.":"Tu cuenta fue eliminada.","Delete your account?":"¿Eliminar tu cuenta?"});
+TWPrefs.addStrings('fi', {"Delete account":"Poista tili","Permanently delete your account and everything on it: messages, friends, files and clips. This can’t be undone.":"Poista tilisi ja kaikki sen tiedot pysyvästi: viestit, ystävät, tiedostot ja klipit. Tätä ei voi perua.","Delete my account":"Poista tilini","Password":"Salasana","If you only sign in with Google or Discord, type your username instead.":"Jos kirjaudut vain Googlella tai Discordilla, kirjoita sen sijaan käyttäjätunnuksesi.","Your account was deleted.":"Tilisi poistettiin.","Delete your account?":"Poistetaanko tilisi?"});
+
+/* Delete my account: asks for the password (or the username, for Google/Discord-only accounts). */
+function deleteCard() {
+  const out = btn(t('Delete account'), { cls: 'danger' });
+  out.addEventListener('click', () => {
+    const pw = h('input', { class: 'input', type: 'password', autocomplete: 'current-password', maxlength: 128 });
+    TW.confirmSheet(t('Delete your account?'), t('Permanently delete your account and everything on it: messages, friends, files and clips. This can’t be undone.'), t('Delete my account'),
+      async () => { await api('POST', '/api/me/delete', { password: pw.value, confirm: pw.value }); toast(t('Your account was deleted.')); TW.loggedOut(); },
+      field(t('Password'), pw, t('If you only sign in with Google or Discord, type your username instead.')));
+  });
+  return h('div', { class: 'card scard logout-card' }, h('div', {}, h('div', { class: 'scard-title-row' }, ico('logout', 20), h('h3', { text: t('Delete account') })),
+    h('p', { class: 'muted small', text: t('Permanently delete your account and everything on it: messages, friends, files and clips. This can’t be undone.') })), out);
+}
+
 function accountTab(panel) {
   const out = btn(t('Log out'), { cls: 'danger', onclick: async () => { try { await api('POST', '/api/auth/logout'); } catch { /* ignore */ } TW.loggedOut(); } });
   const legalRow = h('div', { class: 'srow-legal', style: 'display:flex;gap:12px;align-items:center;margin-top:8px;font-size:12px;color:var(--color-text-3);' },
@@ -732,7 +750,7 @@ function accountTab(panel) {
   );
   panel.append(window.TWAccount ? TWAccount.card() : h('span'), emailCard(),
     h('div', { class: 'card scard logout-card' }, h('div', {}, h('div', { class: 'scard-title-row' }, ico('logout', 20), h('h3', { text: t('Log out') })), h('p', { class: 'muted small', text: t('You’ll need your password to come back.') })), out),
-    legalRow);
+    deleteCard(), legalRow);
 }
 
 /* Folding rows: every settings card becomes one line (its title) that opens when you click it. Works on cards built by other modules too (RCKT, password, ...). */
