@@ -326,10 +326,10 @@ function gamerTagsCard() {
     h('div', { class: 'row tag-form' }, field(t('Platform'), platform), fh), h('div', {}, add));
 }
 
-/* Sign-in methods: Google / Apple / Discord linked to this account (sign in without a password). */
+/* Sign-in methods: Google / Discord linked to this account (sign in without a password). */
 function signinCard() {
   const list = h('div', { class: 'stack', style: 'gap:10px' });
-  const BRAND = { google: 'Google', apple: 'Apple', discord: 'Discord' };
+  const BRAND = { google: 'Google', discord: 'Discord' };
   async function load() {
     let r; try { r = await api('GET', '/api/me/signin-methods'); } catch { return; }
     list.replaceChildren(...r.methods.map(m => {

@@ -54,9 +54,8 @@ Without the SSH setup, update manually by repeating steps 1–3 above (data is k
 - **Voice chat:** peer-to-peer WebRTC, up to 6 people per group. Browsers only allow the microphone over HTTPS (or in the desktop app), so use `-Domain` for web users. People behind strict networks need a TURN relay: install coturn and set `TW_TURN_URL` (for example `turn:your.domain:3478`), `TW_TURN_USER` and `TW_TURN_PASS` as service variables.
 - **Verify Discord:** `-DiscordClientId` / `-DiscordSecret` (see install-server.ps1). **Steam library import** works from a verified Steam account with a public game list; set `TW_STEAM_API_KEY` to use the official Steam API instead of the public profile page.
 
-## Sign in with Google / Apple / Discord
+## Sign in with Google / Discord
 Buttons appear on the login screen only for providers you have configured. Copy `deploy\server-secrets.example.env` to `deploy\server-secrets.env`, fill in what you use, and run `.\deploy\sync.ps1`: the settings are sent to the server and kept.
 - **Google:** create an OAuth client (type Web application) at console.cloud.google.com. Redirect URI: `https://YOUR-ADDRESS/auth/google/callback`.
 - **Discord:** uses the same app as "Verify Discord". Add a second redirect: `https://YOUR-ADDRESS/auth/discord/callback`.
-- **Apple:** needs the paid Apple Developer Program. Create a Services ID (return URL `https://YOUR-ADDRESS/auth/apple/callback`), a Sign in with Apple key (.p8), and put the text Apple gives you for domain verification into `<server data folder>\apple-domain-association.txt` (the server serves it at `/.well-known/apple-developer-domain-association.txt`).
 - New people can sign up with a provider only from the Sign up tab (after ticking the terms box); the Log in tab only signs in people who already have an account. In the desktop app the sign-in happens in the system browser and the app picks it up by itself.
