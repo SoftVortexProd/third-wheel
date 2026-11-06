@@ -527,6 +527,7 @@ function make(cfg) {
         log.append(el); made.push(el);
       }
       els.set(m.id, el);
+      if (autoOn) autoQueue(m);
     }
     paintSeen();
     if (made.length && near) log.scrollTo({ top: log.scrollHeight, behavior: fromRect || initial ? 'instant' : 'smooth' });
@@ -561,7 +562,14 @@ function make(cfg) {
   const searchBtn = h('button', { class: 'chat-tool', type: 'button', 'aria-label': TW.t('Search messages'), title: TW.t('Search messages'), onclick: () => openSearch() }, ico('search', 16), h('span', { text: TW.t('Search') }));
   const pinsBtn = h('button', { class: 'chat-tool', type: 'button', 'aria-label': TW.t('Pinned messages'), title: TW.t('Pinned messages'), onclick: () => openPins() }, ico('pin', 16), h('span', { text: TW.t('Pinned') }), pinCount);
   const olderBtn = h('button', { class: 'chat-tool older', type: 'button', hidden: true, onclick: () => loadOlder() }, TW.t('Load earlier messages'));
-  const tools = h('div', { class: 'chat-tools' }, searchBtn, pinsBtn, olderBtn);
+  /* Auto-translate: for groups where people write in different languages. Per person and per chat (kept on this device). Translated text replaces the original
+     in place, with "Show original" under it, exactly like the globe button on a single message. */
+  const autoKey = 'tw.autotr.' + k + '.' + cid;
+  let autoOn = false; try { autoOn = localStorage.getItem(autoKey) === '1'; } catch { /* storage blocked */ }
+  const autoBtn = h('button', { class: 'chat-tool', type: 'button', 'aria-pressed': String(autoOn), title: TW.t('Translate messages from others into your language automatically.'), onclick: () => setAuto(!autoOn) },
+    ico('globe', 16), h('span', { text: TW.t('Auto-translate') }));
+  autoBtn.classList.toggle('on', autoOn);
+  const tools = h('div', { class: 'chat-tools' }, searchBtn, pinsBtn, autoBtn, olderBtn);
   const paintPins = () => { pinCount.hidden = !pins.size; pinCount.textContent = String(pins.size); };
   function trackPin(m) { if (m.pinned) pins.set(m.id, m); else pins.delete(m.id); paintPins(); }
   api('GET', base + '/pins').then(list => { list.forEach(m => pins.set(m.id, m)); paintPins(); }).catch(() => {});
@@ -783,6 +791,43 @@ function make(cfg) {
       redraw(m.id);
     } catch (e) { toast(e.message || 'Couldn’t translate that.', 'error'); }
     finally { if (trBtn && trBtn.isConnected) { trBtn.disabled = false; trBtn.classList.remove('loading'); trBtn.removeAttribute('aria-busy'); } }
+  }
+
+  const autoWait = []; let autoBusy = false;
+  const autoEligible = (m) => !!m && !m.deleted && m.userId !== TW.me.id && m.text && !gifOf(m.text) && !lobbyOf(m.text) && /\p{L}/u.test(T(m.text)) && T(m.text).length <= 450;
+  function autoQueue(m) {
+    if (!autoEligible(m)) return;
+    const st = trState.get(m.id); if (st && st.src === T(m.text)) return;
+    if (autoWait.some(x => x.id === m.id)) return;
+    autoWait.push(m); if (autoWait.length > 40) autoWait.shift();
+    if (!autoBusy) autoRun();
+  }
+  async function autoRun() {
+    autoBusy = true;
+    while (autoWait.length && autoOn && instance.log.isConnected) {
+      const m = data.get(autoWait.pop().id);   // newest first: what people just wrote matters most
+      if (!m || !autoEligible(m)) continue;
+      const src = T(m.text); const st = trState.get(m.id); if (st && st.src === src) continue;
+      try {
+        const to = await userLang();
+        const r = await api('POST', '/api/translate', { text: src, toLang: to });
+        if (!autoOn) break;
+        if (r.unchanged || !r.text) trState.set(m.id, { src, text: src, to, unchanged: true, shown: false });
+        else trState.set(m.id, { src, text: T(r.text), from: r.from || '', to, shown: true, auto: true });
+        redraw(m.id);
+      } catch (e) {
+        trState.set(m.id, { src, text: src, to: '', unchanged: true, shown: false });   // don't retry this one
+        if (e && e.status === 429) { await new Promise(r => setTimeout(r, 15000)); }
+      }
+      await new Promise(r => setTimeout(r, 1500));   // the server allows 40 a minute
+    }
+    autoBusy = false;
+  }
+  function setAuto(on) {
+    autoOn = on; autoBtn.setAttribute('aria-pressed', String(on)); autoBtn.classList.toggle('on', on);
+    try { localStorage.setItem(autoKey, on ? '1' : '0'); } catch { /* ignore */ }
+    if (on) { [...data.values()].slice(-15).forEach(autoQueue); toast(TW.t('Auto-translate is on for this chat.')); }
+    else { autoWait.length = 0; for (const [id, st] of trState) if (st.auto && st.shown) { st.shown = false; redraw(id); } toast(TW.t('Auto-translate is off.')); }
   }
 
   /* ----- report ----- */

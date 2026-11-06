@@ -703,7 +703,7 @@ function safetyTab(panel) {
 }
 
 /* ---- Language ---- */
-const LANGS = [['en', 'English', 'English'], ['sv', 'Svenska', 'Swedish']];
+const LANGS = [['en', 'English', 'English'], ['sv', 'Svenska', 'Swedish'], ['de', 'Deutsch', 'German'], ['es', 'Español', 'Spanish'], ['fi', 'Suomi', 'Finnish']];
 function languageTab(panel) {
   const group = h('div', { class: 'lang-grid', role: 'radiogroup', 'aria-label': t('Language') });
   const cards = LANGS.map(([code, native, english]) => {

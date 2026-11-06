@@ -4,7 +4,7 @@
 'use strict';
 const KEY = 'tw_prefs';
 const DEFAULT_ACCENT = '#7c8cff';     // what the server stores by default; it means "use the built-in indigo"
-const LANGS = ['en', 'sv'];
+const LANGS = ['en', 'sv', 'de', 'es', 'fi'];
 const root = document.documentElement;
 
 const prefs = { accentColor: DEFAULT_ACCENT, fontScale: 1, language: 'en', nsfwFilter: true, profanityFilter: true, disablePfpAnimation: false, favGifs: [], gamerTags: {} };
