@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="760" height="324" viewBox="0 0 760 324" font-family="Segoe UI, Arial, sans-serif">
+<rect width="760" height="324" rx="14" fill="#0f1115"/>
+<text x="20" y="34" fill="#fafafa" font-size="18" font-weight="700">Third Wheel: language breakdown</text>
+<text x="20" y="54" fill="#a3a3ad" font-size="12">18,090 non-empty lines in 61 source files</text>
+<clipPath id="bar"><rect x="20" y="68" width="720" height="16" rx="8"/></clipPath><g clip-path="url(#bar)"><rect x="20.0" y="68" width="387.7" height="16" fill="#f1c40f"/><rect x="407.7" y="68" width="213.9" height="16" fill="#9b4f96"/><rect x="621.7" y="68" width="66.7" height="16" fill="#563d7c"/><rect x="688.4" y="68" width="34.5" height="16" fill="#3572a5"/><rect x="722.9" y="68" width="15.1" height="16" fill="#012456"/><rect x="738.0" y="68" width="2.0" height="16" fill="#e34c26"/></g><circle cx="28" cy="108" r="6" fill="#f1c40f"/><text x="44" y="112" fill="#fafafa" font-size="14">JavaScript</text>
+<rect x="190" y="100" width="330.0" height="12" rx="6" fill="#f1c40f" opacity=".9"/>
+<text x="740" y="112" fill="#a3a3ad" font-size="13" text-anchor="end">53.9%  ·  9,742 lines</text><circle cx="28" cy="142" r="6" fill="#9b4f96"/><text x="44" y="146" fill="#fafafa" font-size="14">C#</text>
+<rect x="190" y="134" width="182.1" height="12" rx="6" fill="#9b4f96" opacity=".9"/>
+<text x="740" y="146" fill="#a3a3ad" font-size="13" text-anchor="end">29.7%  ·  5,375 lines</text><circle cx="28" cy="176" r="6" fill="#563d7c"/><text x="44" y="180" fill="#fafafa" font-size="14">CSS</text>
+<rect x="190" y="168" width="56.8" height="12" rx="6" fill="#563d7c" opacity=".9"/>
+<text x="740" y="180" fill="#a3a3ad" font-size="13" text-anchor="end">9.3%  ·  1,677 lines</text><circle cx="28" cy="210" r="6" fill="#3572a5"/><text x="44" y="214" fill="#fafafa" font-size="14">Python</text>
+<rect x="190" y="202" width="29.3" height="12" rx="6" fill="#3572a5" opacity=".9"/>
+<text x="740" y="214" fill="#a3a3ad" font-size="13" text-anchor="end">4.8%  ·  866 lines</text><circle cx="28" cy="244" r="6" fill="#012456"/><text x="44" y="248" fill="#fafafa" font-size="14">PowerShell</text>
+<rect x="190" y="236" width="12.8" height="12" rx="6" fill="#012456" opacity=".9"/>
+<text x="740" y="248" fill="#a3a3ad" font-size="13" text-anchor="end">2.1%  ·  379 lines</text><circle cx="28" cy="278" r="6" fill="#e34c26"/><text x="44" y="282" fill="#fafafa" font-size="14">HTML</text>
+<rect x="190" y="270" width="2.0" height="12" rx="6" fill="#e34c26" opacity=".9"/>
+<text x="740" y="282" fill="#a3a3ad" font-size="13" text-anchor="end">0.3%  ·  51 lines</text></svg>
