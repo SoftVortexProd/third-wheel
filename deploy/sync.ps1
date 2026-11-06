@@ -26,7 +26,7 @@ if ($DiscordClientId -and $DiscordClientId -notmatch '^\d{5,25}$') { throw "The 
 if ($DiscordSecret -and $DiscordSecret -notmatch '^[A-Za-z0-9_\-]{10,120}$') { throw "That doesn't look like a Discord client secret." }
 if (-not $SteamApiKey) { $SteamApiKey = if ($cfg.steamApiKey) { $cfg.steamApiKey } else { $env:TW_STEAM_API_KEY } }
 if ($SteamApiKey -and $SteamApiKey -notmatch '^[A-Za-z0-9]{16,64}$') { throw "That doesn't look like a Steam API key." }
-# Optional extra server settings (Google sign-in, TURN, ...) from deploy\server-secrets.env: one TW_NAME=value per line. The file never leaves your PC except as part of the install command, and is gitignored.
+# Optional extra server settings (Google / Apple sign-in, TURN, ...) from deploy\server-secrets.env: one TW_NAME=value per line. The file never leaves your PC except as part of the install command, and is gitignored.
 $extraB64 = ""
 $envFile = Join-Path $PSScriptRoot "server-secrets.env"
 if (Test-Path $envFile) {
