@@ -51,7 +51,7 @@ if ($ExtraEnv) {
         $extra[$p.Name] = [string]$p.Value
     }
 }
-$kept = @((Get-ItemProperty $svcKey -Name Environment -ErrorAction SilentlyContinue).Environment) | Where-Object { $_ -match '^TW_(GOOGLE|APPLE|TURN)_' -and -not $extra.ContainsKey(($_ -split '=', 2)[0]) }
+$kept = @((Get-ItemProperty $svcKey -Name Environment -ErrorAction SilentlyContinue).Environment) | Where-Object { $_ -match '^TW_(GOOGLE|APPLE|DISCORD|TURN|SMTP|MAIL)_' -and -not $extra.ContainsKey(($_ -split '=', 2)[0]) }
 $vars += $kept
 foreach ($k in $extra.Keys) { $vars += "$k=$($extra[$k])" }
 Set-ItemProperty $svcKey -Name Environment -Type MultiString -Value $vars

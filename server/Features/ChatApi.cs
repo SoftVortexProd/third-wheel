@@ -38,6 +38,7 @@ public static class ChatApi
 CREATE TABLE IF NOT EXISTS files(id INTEGER PRIMARY KEY, ownerId INTEGER, name TEXT, mime TEXT, size INTEGER, kind TEXT, path TEXT, convKind TEXT, convKey TEXT, msgId INTEGER, createdAt TEXT, deletedAt TEXT);");
         Directory.CreateDirectory(UploadDir);
         if (!Db.Rows("PRAGMA table_info(files)").Any(r => (string)r["name"]! == "conv")) Db.Exec("ALTER TABLE files ADD COLUMN conv TEXT");   // video conversion: null / pending / done / failed
+        if (!Db.Rows("PRAGMA table_info(files)").Any(r => (string)r["name"]! == "trimStart")) { Db.Exec("ALTER TABLE files ADD COLUMN trimStart REAL"); Db.Exec("ALTER TABLE files ADD COLUMN trimEnd REAL"); }   // clip trimming, applied while converting
         // Clean up reactions that no longer belong to a message (ids get reused after deletes, so a new message could inherit them),
         // and ones from people who aren't in that conversation.
         Db.Exec(@"DELETE FROM reactions WHERE kind='g' AND (msgId NOT IN (SELECT id FROM messages)
@@ -364,9 +365,9 @@ DELETE FROM reactions WHERE kind='d' AND (msgId NOT IN (SELECT id FROM dms)
         {
             var uid = CurrentUser(c);
             if (uid is null) return Err("Not signed in.", 401);
-            if (kind is not ("g" or "d")) return Err("Bad upload target.");
-            var cv = new Conv(kind, id, uid.Value);
-            if (!cv.Allowed) return Err(kind == "g" ? "Join the group to share files." : "You can only share files with friends.", 403);
+            if (kind is not ("g" or "d" or "p")) return Err("Bad upload target.");
+            var cv = kind == "p" ? new Conv("g", 0, uid.Value) : new Conv(kind, id, uid.Value);   // "p": a clip for the sender's own profile, not tied to a chat
+            if (kind != "p" && !cv.Allowed) return Err(kind == "g" ? "Join the group to share files." : "You can only share files with friends.", 403);
             if (Limited($"up:{uid}", 40, TimeSpan.FromHours(1), true)) return Err("Too many uploads. Try again later.", 429);
             bool rckt = IsRcktUser(uid.Value);
             long limit = rckt ? RcktLimit : NormalLimit;
@@ -407,7 +408,15 @@ DELETE FROM reactions WHERE kind='d' AND (msgId NOT IN (SELECT id FROM dms)
             if (fkind == "gif" && !rckt) { File.Delete(path); return Err("GIFs need RCKT. Ask an admin for RCKT.", 403); }
             var fid = Db.Insert("INSERT INTO files(ownerId,name,mime,size,kind,path,convKind,convKey,createdAt) VALUES(@o,@n,@m,@s,@k,@p,@ck,@cy,@c)",
                 ("@o", uid.Value), ("@n", name), ("@m", mime), ("@s", size), ("@k", fkind), ("@p", path), ("@ck", cv.K), ("@cy", cv.Key), ("@c", Now()));
-            if (fkind == "video") VideoConvert.Enqueue(fid);   // converted to WebM in the background (needs ffmpeg on the server)
+            if (fkind == "video")
+            {
+                // optional trim from the clip window: "start,end" in seconds, applied while converting (needs ffmpeg on the server)
+                var tr = c.Request.Headers["X-Trim"].ToString().Split(',');
+                if (tr.Length == 2 && double.TryParse(tr[0], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var ts) && double.TryParse(tr[1], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var te)
+                    && ts >= 0 && te - ts >= 1 && te <= 3600)
+                    Db.Exec("UPDATE files SET trimStart=@a, trimEnd=@b WHERE id=@i", ("@a", ts), ("@b", te), ("@i", fid));
+                VideoConvert.Enqueue(fid);   // converted to WebM in the background (needs ffmpeg on the server)
+            }
             return Results.Json(new { id = fid, name, size, kind = fkind, url = $"/api/files/{fid}" });
         });
 
@@ -425,7 +434,7 @@ DELETE FROM reactions WHERE kind='d' AND (msgId NOT IN (SELECT id FROM dms)
             var f = Db.Row("SELECT * FROM files WHERE id=@i AND deletedAt IS NULL", ("@i", id));
             if (f == null || !File.Exists((string)f["path"]!)) return null;
             bool ok;
-            if (f["msgId"] == null) ok = (long)f["ownerId"]! == uid;
+            if (f["msgId"] == null) ok = (long)f["ownerId"]! == uid || ClipsApi.PublicClip(id, uid);
             else if ((string)f["convKind"]! == "g") ok = long.TryParse((string)f["convKey"]!, out var gid) && IsMember(gid, uid);
             else { var p = ((string)f["convKey"]!).Split(':'); ok = p.Length == 2 && (p[0] == uid.ToString() || p[1] == uid.ToString()); }
             return ok ? f : null;
@@ -462,7 +471,7 @@ DELETE FROM reactions WHERE kind='d' AND (msgId NOT IN (SELECT id FROM dms)
         if (DateTime.UtcNow - lastOrphanSweep < TimeSpan.FromMinutes(10)) return;
         lastOrphanSweep = DateTime.UtcNow;
         var cutoff = DateTime.UtcNow.AddHours(-2).ToString("o");
-        foreach (var f in Db.Rows("SELECT id,path FROM files WHERE msgId IS NULL AND deletedAt IS NULL AND createdAt<@c", ("@c", cutoff)))
+        foreach (var f in Db.Rows("SELECT id,path FROM files WHERE msgId IS NULL AND deletedAt IS NULL AND createdAt<@c AND id NOT IN (SELECT fileId FROM profile_clips)", ("@c", cutoff)))
         {
             try { File.Delete((string)f["path"]!); } catch { /* ignore */ }
             Db.Exec("UPDATE files SET deletedAt=@n WHERE id=@i", ("@n", Now()), ("@i", f["id"]));

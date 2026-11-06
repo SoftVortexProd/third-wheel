@@ -85,12 +85,14 @@ public static class VideoConvert
         var v = Regex.Match(info, @"Stream #\d+:\d+.*?: Video: (\w+)");
         if (!v.Success) { Finish(id, null, "failed"); return; }
         var webmInput = Regex.IsMatch(info, @"Input #0, (matroska,)?webm");
+        var ts = f["trimStart"] is double a0 ? a0 : (double?)null; var te = f["trimEnd"] is double b0 ? b0 : (double?)null;
+        var trim = ts.HasValue && te.HasValue ? string.Format(System.Globalization.CultureInfo.InvariantCulture, "-ss {0:0.###} -to {1:0.###} ", ts.Value, te.Value) : "";
         var vcodec = v.Groups[1].Value.ToLowerInvariant();
         var acodec = Regex.Match(info, @"Stream #\d+:\d+.*?: Audio: (\w+)") is { Success: true } a ? a.Groups[1].Value.ToLowerInvariant() : "";
-        if (webmInput && vcodec is "vp8" or "vp9" or "av1" && acodec is "" or "opus" or "vorbis") { Finish(id, null, "done"); return; }   // already plays everywhere
+        if (trim == "" && webmInput && vcodec is "vp8" or "vp9" or "av1" && acodec is "" or "opus" or "vorbis") { Finish(id, null, "done"); return; }   // already plays everywhere
 
         var dst = src + ".webm";
-        var args = $"-hide_banner -nostdin -y -i \"{src}\" -map 0:v:0 -map 0:a:0? -c:v libvpx-vp9 -b:v 0 -crf 34 -deadline realtime -cpu-used 6 -row-mt 1 -threads 2 " +
+        var args = $"-hide_banner -nostdin -y {trim}-i \"{src}\" -map 0:v:0 -map 0:a:0? -c:v libvpx-vp9 -b:v 0 -crf 34 -deadline realtime -cpu-used 6 -row-mt 1 -threads 2 " +
                    "-vf \"scale='min(1280,iw)':-2\" -pix_fmt yuv420p -c:a libopus -b:a 96k -ac 2 -f webm \"" + dst + "\"";
         var (code, err) = await Run(args, Limit);
         if (code != 0 || !File.Exists(dst) || new FileInfo(dst).Length == 0)

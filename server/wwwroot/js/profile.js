@@ -253,9 +253,10 @@ async function profileDetails(slot, id) {
     const tier = good >= 25 ? ['Legendary teammate', 'gold'] : good >= 10 ? ['Great teammate', 'silver'] : ['Good teammate', 'bronze'];
     secs.reputation = h('div', { class: 'section', 'data-sec': 'reputation' }, h('span', { class: 'rep-badge ' + tier[1], title: TW.t('{n} people said they were a good teammate', { n: good }) }, TW.icon('check', 14), TW.t(tier[0]), h('span', { class: 'muted small', text: '×' + good })));
   }
+  if (TW.clipsSection) { const cs = await TW.clipsSection(id, String(id) === String(TW.me.id) || id === 'me'); if (cs) secs.clips = cs; }
   const gamesSec = slot.parentElement && slot.parentElement.querySelector('[data-sec="games"]');
   if (gamesSec) secs.games = gamesSec;   // moved into the ordered list below
-  const order = (d.layout && d.layout.order) || ['bio', 'games', 'tags', 'play', 'when', 'reputation'];
+  const order = (d.layout && d.layout.order) || ['bio', 'games', 'tags', 'play', 'when', 'reputation', 'clips'];
   const kids = order.map(id => secs[id]).filter(Boolean);
   if (!kids.length) return;
   slot.replaceChildren(...kids);

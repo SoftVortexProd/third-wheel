@@ -289,7 +289,7 @@ function profileTab(panel, ctx) {
 
 /* ---- Profile look: frame + the order of the sections on your profile ---- */
 function lookTab(panel) {
-  panel.append(framesCard(), effectsCard(), layoutCard());
+  panel.append(framesCard(), effectsCard(), layoutCard(), ...(TW.clipSettingsCard ? [TW.clipSettingsCard(card, cardHead)] : []));
 }
 
 /* ---- Connections: gamer tags, verified Steam / Discord, Steam import ---- */
@@ -461,7 +461,7 @@ function effectsCard() {
 }
 
 /* Profile layout: the order of the sections on your profile, and which ones everybody else can see. */
-const SECTION_NAMES = { bio: 'About me', games: 'Favorite games', tags: 'Gamer tags', play: 'How you play', when: 'When you play', reputation: 'Good teammate badge' };
+const SECTION_NAMES = { bio: 'About me', games: 'Favorite games', tags: 'Gamer tags', play: 'How you play', when: 'When you play', reputation: 'Good teammate badge', clips: 'Clips' };
 function layoutCard() {
   const list = h('div', { class: 'stack layout-list', style: 'gap:8px' });
   let order = [], hidden = new Set(), saveT = 0, dragging = null;

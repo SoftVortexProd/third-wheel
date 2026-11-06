@@ -311,3 +311,14 @@
 }
 
 .chat-tool.on { color: var(--color-text); border-color: var(--color-accent); background: color-mix(in srgb, var(--color-accent) 16%, var(--color-raised)); }
+
+/* clips */
+.clip-video { width: 100%; max-height: 46vh; background: #000; border-radius: var(--radius, 12px); }
+.clip-range { width: 100%; accent-color: var(--color-accent); }
+.clip-times { font-variant-numeric: tabular-nums; }
+.upload-bar { height: 6px; border-radius: 99px; background: var(--color-border); overflow: hidden; }
+.upload-bar i { display: block; height: 100%; width: 0; background: var(--color-accent); transition: width .15s linear; }
+.clip-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 10px; }
+.clip-card { display: flex; flex-direction: column; gap: 6px; }
+.clip-card video { width: 100%; border-radius: 10px; background: #000; aspect-ratio: 16/9; }
+.clip-wait { display: grid; place-items: center; aspect-ratio: 16/9; border: 1px dashed var(--color-border); border-radius: 10px; }

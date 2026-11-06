@@ -18,7 +18,7 @@ public static class CosmeticsApi
         ("scanlines", "Retro CRT"), ("flame", "Flame Aura")
     };
     /// <summary>Sections of a profile, in the default order. "reputation" is the good-teammate badge.</summary>
-    public static readonly string[] Sections = { "bio", "games", "tags", "play", "when", "reputation" };
+    public static readonly string[] Sections = { "bio", "games", "tags", "play", "when", "reputation", "clips" };
 
     public record FrameIn(string? Frame);
     public record EffectIn(string? Effect);
