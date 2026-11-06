@@ -481,7 +481,7 @@ api.MapGet("admin/stats", (HttpContext c) => WithAdmin(c, _ => Results.Json(new
 api.MapGet("admin/users", (HttpContext c, string? q, bool? flagged) => WithAdmin(c, _ =>
 {
     var like = "%" + (q ?? "").Trim().Replace("\\", "\\\\").Replace("%", "\\%").Replace("_", "\\_") + "%";
-    var rows = Db.Rows(@"SELECT u.id,u.username,u.display,u.avatarVer,u.color,u.isAdmin,u.banned,u.banReason,u.created,u.status,
+    var rows = Db.Rows(@"SELECT u.id,u.username,u.display,u.avatarVer,u.color,u.isAdmin,u.banned,u.banReason,u.created,u.status,u.deviceName,
         (SELECT COUNT(*) FROM members m WHERE m.userId=u.id) groups FROM users u WHERE u.username LIKE @q ESCAPE '\' ORDER BY u.id DESC LIMIT " + (flagged == true ? "2000" : "100"), ("@q", like));
     // flagged=true: only accounts whose username or display name would be refused by the troll-name filter today (old accounts keep their names until an admin acts).
     if (flagged == true)
@@ -491,7 +491,8 @@ api.MapGet("admin/users", (HttpContext c, string? q, bool? flagged) => WithAdmin
     {
         id = (long)r["id"]!, username = (string)r["username"]!, displayName = r["display"] as string, avatar = AvatarUrl((long)r["id"]!, r["avatarVer"]),
         avatarColor = (string)r["color"]!, isAdmin = Convert.ToInt32(r["isAdmin"]) == 1, banned = Convert.ToInt32(r["banned"]) == 1,
-        banReason = r["banReason"] as string, created = (string)r["created"]!, status = (string)r["status"]!, groups = Convert.ToInt32(r["groups"])
+        banReason = r["banReason"] as string, created = (string)r["created"]!, status = (string)r["status"]!, groups = Convert.ToInt32(r["groups"]),
+        device = Convert.ToInt32(r["isAdmin"]) == 1 ? null : r["deviceName"] as string
     }));
 }));
 
@@ -530,7 +531,7 @@ api.MapPost("admin/users/{id:long}/role", (HttpContext c, long id, RoleIn b) => 
     var u = Db.Row("SELECT username FROM users WHERE id=@i", ("@i", id));
     if (u == null) return Err("User not found.", 404);
     if (id == me) return Err("You can't change your own role.");
-    Db.Exec("UPDATE users SET isAdmin=@a WHERE id=@i", ("@a", b.IsAdmin ? 1 : 0), ("@i", id));
+    Db.Exec("UPDATE users SET isAdmin=@a, deviceName=CASE WHEN @a=1 THEN NULL ELSE deviceName END WHERE id=@i", ("@a", b.IsAdmin ? 1 : 0), ("@i", id));
     Audit(me, b.IsAdmin ? "made admin" : "removed admin", (string)u["username"]!);
     return Results.Json(new { ok = true });
 }));
@@ -966,6 +967,8 @@ CREATE TABLE IF NOT EXISTS group_icons(groupId INTEGER PRIMARY KEY, mime TEXT NO
         if (!cols.Contains("birthDate")) Exec("ALTER TABLE users ADD COLUMN birthDate TEXT");
         if (!cols.Contains("lastIp")) Exec("ALTER TABLE users ADD COLUMN lastIp TEXT");
         if (!cols.Contains("deviceId")) Exec("ALTER TABLE users ADD COLUMN deviceId TEXT");
+        if (!cols.Contains("deviceName")) Exec("ALTER TABLE users ADD COLUMN deviceName TEXT");
+        Exec("UPDATE users SET deviceName=NULL WHERE COALESCE(isAdmin,0)=1");   // never kept for admins
         if (!cols.Contains("suspendedUntil")) Exec("ALTER TABLE users ADD COLUMN suspendedUntil TEXT");
         if (!cols.Contains("tosAccepted")) Exec("ALTER TABLE users ADD COLUMN tosAccepted INTEGER DEFAULT 0");
         Exec(@"CREATE TABLE IF NOT EXISTS banned_ips(ip TEXT PRIMARY KEY, reason TEXT, bannedAt TEXT, bannedBy INTEGER);

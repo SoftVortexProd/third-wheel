@@ -93,8 +93,20 @@ public static class Core
         return fallback;
     }
     public static string Sha(string s) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(s)));
+    /// <summary>A short, readable device label from the browser's own User-Agent ("Chrome on Windows"). Nothing like a computer name is collected.</summary>
+    public static string DeviceName(HttpContext c)
+    {
+        var ua = c.Request.Headers.UserAgent.ToString();
+        if (ua.Length == 0) return "Unknown device";
+        string os = ua.Contains("iPhone") ? "iPhone" : ua.Contains("iPad") ? "iPad" : ua.Contains("Android") ? "Android" : ua.Contains("Windows") ? "Windows" : ua.Contains("Mac OS X") || ua.Contains("Macintosh") ? "macOS" : ua.Contains("CrOS") ? "ChromeOS" : ua.Contains("Linux") ? "Linux" : "";
+        string app = ua.Contains("QtWebEngine") ? "Third Wheel desktop app" : ua.Contains("Edg/") ? "Edge" : ua.Contains("OPR/") || ua.Contains("Opera") ? "Opera" : ua.Contains("Firefox/") ? "Firefox"
+            : ua.Contains("Chrome/") || ua.Contains("CriOS/") ? "Chrome" : ua.Contains("Safari/") ? "Safari" : "Browser";
+        return os.Length > 0 ? app + " on " + os : app;
+    }
     public static void StartSession(HttpContext c, long uid)
     {
+        // admins are not tracked: only members' devices are recorded for the admin page
+        Db.Exec("UPDATE users SET deviceName=@d WHERE id=@i AND COALESCE(isAdmin,0)=0", ("@d", DeviceName(c)), ("@i", uid));
         var tok = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32)).Replace('+', '-').Replace('/', '_').TrimEnd('=');
         Db.Exec("INSERT INTO sessions(tokenHash,userId,created) VALUES(@t,@u,@c)", ("@t", Sha(tok)), ("@u", uid), ("@c", Now()));
         c.Response.Cookies.Append("tw_session", tok, new CookieOptions { HttpOnly = true, Secure = c.Request.IsHttps, SameSite = SameSiteMode.Strict, Path = "/", MaxAge = TimeSpan.FromDays(30), IsEssential = true });

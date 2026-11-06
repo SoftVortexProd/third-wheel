@@ -406,11 +406,30 @@ class ClipCatcher(QObject):
         self.busy = False
         self.downloading = False
         self.enabled = bool(main_win.settings.value("clips/enabled", True, type=bool))
+        self.always = bool(main_win.settings.value("clips/always", False, type=bool))   # record even when no known game is detected
+        self.force = False                                                              # F8 pressed while nothing was recording: keep recording until switched off
         self.ffmpeg_path = self.find_ffmpeg()
         self.ready.connect(self._deliver)
         self.notice.connect(lambda t, m: self.main.tray.showMessage(t, m, QSystemTrayIcon.MessageIcon.Information, 4000))
         self.ffmpeg_ready.connect(lambda ok: self.refresh())
-        QTimer.singleShot(0, self.sweep_old)
+        self.sweep_old()
+
+    def log(self, text):
+        try:
+            self.home.mkdir(parents=True, exist_ok=True)
+            with open(self.home / "clip.log", "a", encoding="utf-8") as f:
+                f.write(time.strftime("%H:%M:%S ") + text + "\n")
+        except OSError:
+            pass
+
+    def say(self, text):
+        """A message that can't be missed (the tray balloon alone is easy to overlook, or hidden by a game)."""
+        self.log(text)
+        self.notice.emit("Third Wheel Clip Catcher", text)
+        box = QMessageBox(QMessageBox.Icon.Information, "Clip catcher", text, QMessageBox.StandardButton.Ok, self.main)
+        box.setWindowModality(Qt.WindowModality.NonModal)
+        box.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+        box.show()
 
     # ---- ffmpeg ----
     def find_ffmpeg(self) -> str | None:
@@ -468,17 +487,27 @@ class ClipCatcher(QObject):
     # ---- on/off ----
     def set_enabled(self, on: bool):
         self.enabled = on
+        if not on:
+            self.force = False
         self.main.settings.setValue("clips/enabled", on)
         if on and not self.ffmpeg_path:
             self.download_ffmpeg()
         self.refresh()
 
+    def set_always(self, on: bool):
+        self.always = on
+        self.main.settings.setValue("clips/always", on)
+        if not on:
+            self.force = False
+        self.refresh()
+
     def set_game(self, game):
         self.game = game
+        self.log(f"game: {game}")
         self.refresh()
 
     def refresh(self):
-        want = bool(self.enabled and self.game and self.ffmpeg_path)
+        want = bool(self.enabled and (self.game or self.always or self.force) and self.ffmpeg_path)
         if want and (self.proc is None or self.proc.poll() is not None):
             self.start()
         elif not want and self.proc is not None:
@@ -517,8 +546,9 @@ class ClipCatcher(QObject):
     def capture(self):
         if self.busy:
             return
+        self.log("F8 pressed")
         if not self.enabled:
-            self.notice.emit("Third Wheel Clip Catcher", "The clip catcher is off. Turn it on from the tray icon.")
+            self.say("The clip catcher is off. Turn it on from the tray icon menu.")
             return
         if not self.ffmpeg_path:
             ans = QMessageBox.question(self.main, "Clip catcher", "The clip catcher needs a small video tool (ffmpeg, about 90 MB). Download it now from gyan.dev? It is checked against its published checksum.")
@@ -526,14 +556,21 @@ class ClipCatcher(QObject):
                 self.download_ffmpeg()
             return
         if self.proc is None or self.proc.poll() is not None:
-            self.notice.emit("Third Wheel Clip Catcher", "Start a game first: clips are only recorded while a game is running.")
+            # nothing is being recorded (no known game detected): start now so the next F8 has something to save
+            self.force = True
+            self.refresh()
+            if self.proc is None:
+                self.say("Couldn't start recording. Is ffmpeg working? See clip.log in %LOCALAPPDATA%\\ThirdWheel.")
+            else:
+                self.say("No game detected, so nothing had been recorded yet. Recording has started now: press F8 again in a few seconds to save the last 30 seconds. (Turn on 'Always record' in the tray menu to record all the time.)")
             return
         segs = sorted([p for p in self.ring.glob("seg*.ts") if p.stat().st_size > 0], key=lambda p: p.stat().st_mtime)
         if len(segs) < 2:
-            self.notice.emit("Third Wheel Clip Catcher", "Not enough gameplay recorded yet. Try again in a few seconds.")
+            self.say("Not enough recorded yet (it needs about 10 seconds). Try again in a moment.")
             return
         segs = segs[-(self.CLIP_SECONDS // self.SEG_SECONDS + 1):]
         self.busy = True
+        self.log(f"saving {len(segs)} segments")
         self.notice.emit("Third Wheel Clip", "Saving the last 30 seconds...")
         threading.Thread(target=self._encode, args=(segs,), daemon=True).start()
 
@@ -553,6 +590,7 @@ class ClipCatcher(QObject):
                    "-c:v", "libvpx", "-deadline", "realtime", "-cpu-used", "6", "-b:v", "2M", "-crf", "20", "-an", "-f", "webm", str(dst)]
             flags = 0x08000000 if os.name == "nt" else 0
             subprocess.run(cmd, creationflags=flags, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=90)
+            self.log(f"encode done: exists={dst.exists()} size={dst.stat().st_size if dst.exists() else 0}")
             if dst.exists() and dst.stat().st_size > 0:
                 keep = Path.home() / "Videos" / "ThirdWheel Clips"
                 keep.mkdir(parents=True, exist_ok=True)
@@ -717,17 +755,26 @@ class Main(QMainWindow):
         menu = QMenu()
         act_show = menu.addAction("Open Third Wheel")
         act_show.triggered.connect(lambda: self.focus_window(False))
-        self.act_clips = menu.addAction("Clip catcher (records while a game runs; F8 saves 30 s)")
+        self.act_clips = menu.addAction("Clip catcher (F8 or Ctrl+Shift+F8 saves 30 s)")
         self.act_clips.setCheckable(True)
         self.act_clips.setChecked(self.clip_catcher.enabled)
         self.act_clips.toggled.connect(self.clip_catcher.set_enabled)
+        self.act_always = menu.addAction("Always record (even when no game is detected)")
+        self.act_always.setCheckable(True)
+        self.act_always.setChecked(self.clip_catcher.always)
+        self.act_always.toggled.connect(self.clip_catcher.set_always)
         menu.addSeparator()
         menu.addAction("Quit").triggered.connect(self.close)
         self.tray_menu = menu
         self.tray.setContextMenu(menu)
         if os.name == "nt":
             self.hotkey_clip_id = 1088
-            ctypes.windll.user32.RegisterHotKey(int(self.winId()), self.hotkey_clip_id, 0, 0x77)  # F8
+            ok8 = ctypes.windll.user32.RegisterHotKey(int(self.winId()), self.hotkey_clip_id, 0, 0x77)  # F8
+            self.hotkey_clip2_id = 1091
+            ok8b = ctypes.windll.user32.RegisterHotKey(int(self.winId()), self.hotkey_clip2_id, 0x0006, 0x77)  # Ctrl+Shift+F8 (backup)
+            self.clip_catcher.log(f"hotkeys: F8={bool(ok8)} Ctrl+Shift+F8={bool(ok8b)}")
+            if not ok8:
+                QTimer.singleShot(2500, lambda: self.tray.showMessage("Third Wheel", "F8 is already used by another program. Use Ctrl+Shift+F8 to save a clip.", QSystemTrayIcon.MessageIcon.Warning, 8000))
             self.hotkey_mute_id = 1089
             ctypes.windll.user32.RegisterHotKey(int(self.winId()), self.hotkey_mute_id, 0x0006, 0x4D)  # Ctrl+Shift+M
             self.hotkey_deaf_id = 1090
@@ -925,7 +972,7 @@ class Main(QMainWindow):
                 import ctypes.wintypes
                 msg = ctypes.wintypes.MSG.from_address(int(message))
                 if msg.message == 0x0312:  # WM_HOTKEY
-                    if msg.wParam == 1088:
+                    if msg.wParam in (1088, 1091):
                         self.clip_catcher.capture()
                         return True, 0
                     elif msg.wParam == 1089:
@@ -946,7 +993,7 @@ class Main(QMainWindow):
         except Exception:
             pass
         if os.name == "nt":
-            for hid in (getattr(self, "hotkey_clip_id", None), getattr(self, "hotkey_mute_id", None), getattr(self, "hotkey_deaf_id", None)):
+            for hid in (getattr(self, "hotkey_clip_id", None), getattr(self, "hotkey_clip2_id", None), getattr(self, "hotkey_mute_id", None), getattr(self, "hotkey_deaf_id", None)):
                 if hid:
                     try:
                         ctypes.windll.user32.UnregisterHotKey(int(self.winId()), hid)

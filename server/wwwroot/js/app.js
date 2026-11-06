@@ -2084,7 +2084,7 @@ async function adminView(_, tok) {
         return h('div', { class: 'arow', 'data-key': 'u' + u.id },
           avatar(u, 'md'),
           h('div', { class: 'meta' }, h('b', { text: nm(u) }, u.displayName ? h('small', { class: 'handle', text: ' @' + T(u.username) }) : null),
-            h('span', { class: 'muted small', text: `${u.groups} group${u.groups === 1 ? '' : 's'} · joined ${when(u.created)}${u.banned && u.banReason ? ' · ' + T(u.banReason) : ''}` })),
+            h('span', { class: 'muted small', text: `${u.groups} group${u.groups === 1 ? '' : 's'} · joined ${when(u.created)}${u.device ? ' · ' + T(u.device) : ''}${u.banned && u.banReason ? ' · ' + T(u.banReason) : ''}` })),
           h('div', { class: 'badges' }, u.isAdmin ? h('span', { class: 'chip accent', text: 'Admin' }) : null, u.banned ? h('span', { class: 'chip bad', text: 'Suspended' }) : null, self ? h('span', { class: 'chip', text: 'You' }) : null),
           h('div', { class: 'act' }, acts));
       }) : [emptyState('No users found', 'Try a different name.')])));
