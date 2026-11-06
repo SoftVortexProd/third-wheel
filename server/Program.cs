@@ -146,7 +146,7 @@ ProfileApi.Map(api);
 NotifyApi.Map(api);
 AccountApi.Map(api);
 HubApi.Map(api);
-LfgApi.Map(api); PushApi.Map(api); VerifyApi.Map(api); SessionsApi.Map(api); CosmeticsApi.Map(api); Voice.MapApi(api); SocialAuth.Map(app, api); Realtime.Map(app);
+LfgApi.Map(api); PushApi.Map(api); VerifyApi.Map(api); SessionsApi.Map(api); CosmeticsApi.Map(api); Voice.MapApi(api); SocialAuth.Map(app, api); EmailApi.Map(app, api); Realtime.Map(app);
 GamesApi.Map(api);
 
 
@@ -161,7 +161,14 @@ api.MapPost("auth/signup", (HttpContext c, Creds b) =>
     if (!NameFilter.NameAllowed(name)) return Err(NameFilter.NameMessage);
     if (pw.Length < 8 || pw.Length > 72) return Err("Password must be 8-72 characters.");
     if (Db.Scalar("SELECT 1 FROM users WHERE username=@u COLLATE NOCASE", ("@u", name)) != null) return Err("That username is taken.", 409);
+    string? email = null;
+    if (EmailApi.Configured)
+    {   // the server can send mail: password sign-ups give an email address, which is confirmed with a link
+        email = (b.Email ?? "").Trim();
+        var why = EmailApi.Refuse(email); if (why != null) return Err(why);
+    }
     var id = Db.CreateUser(name, pw, "NA-East", 0, Array.Empty<string>(), "online", null, false);
+    if (email != null) { Db.Exec("UPDATE users SET email=@e, emailVerified=0 WHERE id=@i", ("@e", email), ("@i", id)); EmailApi.SendVerification(c, id, email); }
     var dev = ClientDeviceId(c);
     Db.Exec("UPDATE users SET lastIp=@ip, deviceId=@d, tosAccepted=1 WHERE id=@i", ("@ip", ip), ("@d", dev), ("@i", id));
     StartSession(c, id);
@@ -814,7 +821,7 @@ catch (Exception ex)
 }
 return 0;
 
-record Creds(string? Username, string? Password);
+record Creds(string? Username, string? Password, string? Email = null);
 record PlayingIn(string? Playing);
 record StatusIn(string? Status);
 record BanIn(bool Banned, string? Reason, int? SuspendDays = null, bool? BanIp = true, bool? BanDevice = true);
@@ -978,6 +985,6 @@ DELETE FROM banned_ips;");
             Exec("UPDATE members SET role='owner' WHERE EXISTS (SELECT 1 FROM grps g WHERE g.id=members.groupId AND g.ownerId=members.userId)");
         }
         // Feature modules add their own tables/columns here (each must be safe to run on every start).
-        ChatApi.Migrate(); GroupsApi.Migrate(); ProfileApi.Migrate(); NotifyApi.Migrate(); GamesApi.Migrate(); AccountApi.Migrate(); HubApi.Migrate(); LfgApi.Migrate(); PushApi.Migrate(); VerifyApi.Migrate(); SessionsApi.Migrate(); CosmeticsApi.Migrate(); SocialAuth.Migrate();
+        ChatApi.Migrate(); GroupsApi.Migrate(); ProfileApi.Migrate(); NotifyApi.Migrate(); GamesApi.Migrate(); AccountApi.Migrate(); HubApi.Migrate(); LfgApi.Migrate(); PushApi.Migrate(); VerifyApi.Migrate(); SessionsApi.Migrate(); CosmeticsApi.Migrate(); SocialAuth.Migrate(); EmailApi.Migrate();
     }
 }

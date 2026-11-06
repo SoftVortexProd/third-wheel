@@ -543,7 +543,29 @@ function drawBar() {
   room.screenBtn.setAttribute('aria-label', room.screen ? t('Stop sharing screen') : t('Share screen'));
   room.screenBtn.title = room.screen ? t('Stop sharing screen') : t('Share screen');
 
-  room.facesContainer.replaceChildren(...people.map(face));
+  // Update the avatars in place. Rebuilding them (this used to run several times a second while anyone spoke) swaps the element under the mouse,
+  // which flickers the pictures and makes hover tooltips / controls jump around.
+  room.faceEls = room.faceEls || new Map();
+  const keep = new Set(), ordered = [];
+  for (const x of people) {
+    const key = String(x.uid); keep.add(key);
+    const sig = (x.u.avatar || '') + '|' + (x.u.frame || '') + '|' + (x.u.avatarColor || '') + '|' + nm(x.u);
+    let el = room.faceEls.get(key);
+    if (!el || el.dataset.sig !== sig) { el = face(x); el.dataset.sig = sig; room.faceEls.set(key, el); }
+    else {
+      el.classList.toggle('muted', !!x.muted);
+      el.classList.toggle('speaking', !!(x.self ? room.speaking : x.speaking));
+      el.classList.toggle('connecting', !!(!x.self && x.state && x.state !== 'connected'));
+      el.title = nm(x.u) + (x.muted ? ' · ' + t('Muted') : '');
+      const badge = el.querySelector('.vc-mute');
+      if (x.muted && !badge) el.append(h('span', { class: 'vc-mute' }, icon('mic', 10)));
+      else if (!x.muted && badge) badge.remove();
+    }
+    ordered.push(el);
+  }
+  for (const [k, el] of room.faceEls) if (!keep.has(k)) { el.remove(); room.faceEls.delete(k); }
+  const now = [...room.facesContainer.children];
+  if (now.length !== ordered.length || now.some((n, i) => n !== ordered[i])) room.facesContainer.replaceChildren(...ordered);
 }
 
 /* ---------- audio level (shows who is talking) ---------- */

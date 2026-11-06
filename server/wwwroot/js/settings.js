@@ -326,6 +326,52 @@ function gamerTagsCard() {
     h('div', { class: 'row tag-form' }, field(t('Platform'), platform), fh), h('div', {}, add));
 }
 
+TWPrefs.addStrings('sv', {
+  'Email': 'E-post', 'Email address': 'E-postadress', 'Confirmed': 'Bekräftad', 'Not confirmed yet': 'Inte bekräftad än', 'Waiting for confirmation: {email}': 'Väntar på bekräftelse: {email}',
+  'Send confirmation again': 'Skicka bekräftelsen igen', 'Save email': 'Spara e-post', 'Confirmation sent. Check your inbox.': 'Bekräftelse skickad. Kolla din inkorg.',
+  'Used to confirm it’s you and to reset your password.': 'Används för att bekräfta att det är du och för att återställa ditt lösenord.',
+  'Your password': 'Ditt lösenord', 'Enter a valid email address.': 'Ange en giltig e-postadress.', 'Email isn’t set up on this server.': 'E-post är inte konfigurerat på den här servern.',
+  'We send a link to confirm it. It also lets you reset your password.': 'Vi skickar en länk för att bekräfta den. Den låter dig också återställa lösenordet.',
+  'Forgot password?': 'Glömt lösenordet?', 'Reset password': 'Återställ lösenord', 'Send link': 'Skicka länk', 'Change password': 'Byt lösenord', 'New password': 'Nytt lösenord',
+  'Choose a new password': 'Välj ett nytt lösenord', 'Password changed': 'Lösenordet är bytt', 'You can log in with your new password now.': 'Du kan logga in med ditt nya lösenord nu.',
+  'Enter the email on your account. If it is confirmed, we send a link to choose a new password.': 'Ange e-postadressen på ditt konto. Om den är bekräftad skickar vi en länk för att välja ett nytt lösenord.',
+  'If that address belongs to an account, a reset link is on its way. Check your inbox (and spam).': 'Om adressen tillhör ett konto är en återställningslänk på väg. Kolla inkorgen (och skräpposten).',
+  'Please confirm your email: we sent you a link.': 'Bekräfta din e-post: vi har skickat en länk.', 'Resend': 'Skicka igen'
+});
+
+/* Email on the account: confirmed with a link, used for password reset. Google/Discord sign-ups arrive already confirmed. */
+function emailCard() {
+  const body = h('div', { class: 'stack', style: 'gap:10px' });
+  const c = card(cardHead(t('Email address'), t('Used to confirm it’s you and to reset your password.')), body);
+  c.hidden = true;
+  async function load() {
+    let r; try { r = await api('GET', '/api/me/email'); } catch { return; }
+    if (!r.canSend && !r.email) { c.hidden = true; return; }
+    c.hidden = false;
+    const kids = [];
+    if (r.email) kids.push(h('div', { class: 'verify-row' }, h('b', { text: r.email }), r.verified ? h('span', { class: 'chip ok' }, TW.icon('check', 12), t('Confirmed')) : h('span', { class: 'chip', text: t('Not confirmed yet') })));
+    if (r.pending) kids.push(h('p', { class: 'muted small', text: t('Waiting for confirmation: {email}', { email: r.pending }) }));
+    if (r.canSend) {
+      if (r.pending || (r.email && !r.verified)) {
+        const again = btn(t('Send confirmation again'), { cls: 'small ghost' });
+        again.addEventListener('click', () => busy(again, async () => { try { await api('POST', '/api/me/email/resend'); toast(t('Confirmation sent. Check your inbox.')); } catch (ex) { toast(T(ex.message), 'error'); } }));
+        kids.push(again);
+      }
+      const em = h('input', { class: 'input', type: 'email', autocomplete: 'email', maxlength: 120, placeholder: 'you@example.com' });
+      const pw = h('input', { class: 'input', type: 'password', autocomplete: 'current-password', maxlength: 128 });
+      const save = btn(t('Save email'), { cls: 'small' });
+      save.addEventListener('click', () => busy(save, async () => {
+        try { await api('PUT', '/api/me/email', { email: em.value.trim(), password: pw.value }); toast(t('Confirmation sent. Check your inbox.')); em.value = ''; pw.value = ''; load(); }
+        catch (ex) { toast(T(ex.message), 'error'); }
+      }));
+      kids.push(field(t('Email'), em), r.oauthOnly ? h('span') : field(t('Your password'), pw), h('div', {}, save));
+    }
+    body.replaceChildren(...kids);
+  }
+  load();
+  return c;
+}
+
 /* Sign-in methods: Google / Discord linked to this account (sign in without a password). */
 function signinCard() {
   const list = h('div', { class: 'stack', style: 'gap:10px' });
@@ -684,7 +730,7 @@ function accountTab(panel) {
     h('span', { text: '·' }),
     h('a', { href: '#', text: t('Cookie Policy'), onclick: (e) => { e.preventDefault(); if (TW.showCookiePolicy) TW.showCookiePolicy(); } })
   );
-  panel.append(window.TWAccount ? TWAccount.card() : h('span'),
+  panel.append(window.TWAccount ? TWAccount.card() : h('span'), emailCard(),
     h('div', { class: 'card scard logout-card' }, h('div', {}, h('div', { class: 'scard-title-row' }, ico('logout', 20), h('h3', { text: t('Log out') })), h('p', { class: 'muted small', text: t('You’ll need your password to come back.') })), out),
     legalRow);
 }

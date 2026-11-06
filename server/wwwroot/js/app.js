@@ -880,11 +880,20 @@ function socialButtons(getMode, needTos, onError) {
 
 function renderAuth() {
   clearTimers(); S.me = null;
+  { const m = /^#\/reset\/([\w-]{20,100})$/.exec(location.hash || ''); if (m) { renderReset(m[1]); return; } }
   let mode = 'login';
   const user = h('input', { class: 'input', type: 'text', autocomplete: 'username', maxlength: 20, autocapitalize: 'none', spellcheck: 'false', placeholder: tr('your_name') });
   const pass = h('input', { class: 'input', type: 'password', autocomplete: 'current-password', maxlength: 128, placeholder: tr('At least 8 characters') });
   const fu = field(tr('Username'), user, tr('3–20 letters, numbers, . _ -'));
   const fp = field(tr('Password'), pass);
+  const emailIn = h('input', { class: 'input', type: 'email', autocomplete: 'email', maxlength: 120, autocapitalize: 'none', spellcheck: 'false', placeholder: 'you@example.com' });
+  const fe = field(tr('Email'), emailIn, tr('We send a link to confirm it. It also lets you reset your password.'));
+  fe.hidden = true;
+  const forgot = h('a', { href: '#', class: 'auth-forgot', text: tr('Forgot password?'), onclick: (e) => { e.preventDefault(); showForgot(user.value.includes('@') ? user.value : ''); } });
+  forgot.hidden = true;
+  let mailOn = false;
+  const syncMail = () => { fe.hidden = !(mailOn && mode === 'signup'); forgot.hidden = !(mailOn && mode === 'login'); };
+  api('GET', '/api/auth/providers').then(pr => { mailOn = !!pr.email; syncMail(); }).catch(() => {});
   const err = h('div', { class: 'form-error', role: 'alert' });
   const submit = h('button', { class: 'btn block', type: 'submit' }, tr('Log in'));
 
@@ -902,20 +911,23 @@ function renderAuth() {
     pass.autocomplete = k === 'login' ? 'current-password' : 'new-password';
     fu.setError(''); fp.setError('');
     tosRow.style.display = (mode === 'signup' ? 'flex' : 'none');
+    syncMail();
   }, tr('Account'));
   const form = h('form', { novalidate: true, onsubmit: async (e) => {
     e.preventDefault(); err.textContent = '';
     const u = user.value.trim(), p = pass.value;
     const okU = fu.setError(USER_RE.test(u) ? '' : tr('Use 3–20 letters, numbers, . _ or -'));
     const okP = fp.setError(p.length >= 8 ? '' : tr('Password must be at least 8 characters'));
-    if (!okU || !okP) return;
+    const em = emailIn.value.trim();
+    const okE = fe.hidden ? true : fe.setError(/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(em) ? '' : tr('Enter a valid email address.'));
+    if (!okU || !okP || !okE) return;
     if (mode === 'signup' && !tosCheck.checked) {
       err.textContent = tr('You must agree to the Terms of Service, Privacy Policy, and Cookies to sign up.');
       return;
     }
     submit.disabled = true; const idle = TWM.busyBtn(submit);
     try {
-      const r = await api('POST', '/api/auth/' + mode, { username: u, password: p });
+      const r = await api('POST', '/api/auth/' + mode, mode === 'signup' && !fe.hidden ? { username: u, password: p, email: em } : { username: u, password: p });
       S.me = r.user || r; await start();
     } catch (ex) {
       if ((ex.data && ex.data.banned) || (ex.status === 403 && /suspended|banned/i.test(ex.message))) {
@@ -925,7 +937,7 @@ function renderAuth() {
       err.textContent = T(ex.message);
     }
     finally { submit.disabled = false; idle(); }
-  } }, fu, fp, tosRow, err, submit);
+  } }, fu, fe, fp, h('div', { class: 'auth-forgot-row' }, forgot), tosRow, err, submit);
   document.title = 'Third Wheel';
   const card = h('div', { class: 'card auth-card' },
     h('div', { class: 'brand' }, h('img', { src: 'icon.svg', alt: '', width: 32, height: 32 }), 'Third Wheel'),
@@ -938,6 +950,40 @@ function renderAuth() {
     const q = new URLSearchParams(location.search), code = q.get('auth_error');
     if (code) { if (code === 'noaccount') tb.set('signup', true); err.textContent = tr(OA_ERR[code] || OA_ERR.failed); history.replaceState(null, '', location.pathname + location.hash); }
   } catch { /* ignore */ }
+}
+
+/* ================= forgot / reset password ================= */
+function showForgot(prefill) {
+  const email = h('input', { class: 'input', type: 'email', autocomplete: 'email', maxlength: 120, autocapitalize: 'none', value: prefill || '', placeholder: 'you@example.com' });
+  const err = h('div', { class: 'form-error', role: 'alert' });
+  const send = btn(tr('Send link'), { cls: 'primary' });
+  const body = h('div', { class: 'stack' }, h('p', { class: 'muted', text: tr('Enter the email on your account. If it is confirmed, we send a link to choose a new password.') }), field(tr('Email'), email), err, send);
+  const sh = openSheet(tr('Reset password'), body);
+  send.addEventListener('click', async () => {
+    err.textContent = '';
+    const v = email.value.trim(); if (!v) { err.textContent = tr('Enter a valid email address.'); return; }
+    send.disabled = true;
+    try { await api('POST', '/api/auth/forgot', { email: v }); body.replaceChildren(h('p', { text: tr('If that address belongs to an account, a reset link is on its way. Check your inbox (and spam).') })); send.remove(); }
+    catch (ex) { err.textContent = T(ex.message); send.disabled = false; }
+  });
+  return sh;
+}
+function renderReset(token) {
+  clearTimers(); S.me = null;
+  const pw = h('input', { class: 'input', type: 'password', autocomplete: 'new-password', maxlength: 72, placeholder: tr('At least 8 characters') });
+  const fp = field(tr('New password'), pw);
+  const err = h('div', { class: 'form-error', role: 'alert' });
+  const submit = h('button', { class: 'btn block', type: 'submit' }, tr('Change password'));
+  const form = h('form', { novalidate: true, onsubmit: async (e) => {
+    e.preventDefault(); err.textContent = '';
+    if (!fp.setError(pw.value.length >= 8 ? '' : tr('Password must be at least 8 characters'))) return;
+    submit.disabled = true;
+    try { await api('POST', '/api/auth/reset', { token, password: pw.value }); history.replaceState(null, '', location.pathname); location.hash = '#/find'; card.replaceChildren(h('h2', { text: tr('Password changed') }), h('p', { class: 'muted', text: tr('You can log in with your new password now.') }), h('button', { class: 'btn block', onclick: () => renderAuth() }, tr('Log in'))); }
+    catch (ex) { err.textContent = T(ex.message); submit.disabled = false; }
+  } }, fp, err, submit);
+  const card = h('div', { class: 'card auth-card' }, h('div', { class: 'brand' }, h('img', { src: 'icon.svg', alt: '', width: 32, height: 32 }), 'Third Wheel'), h('h2', { text: tr('Choose a new password') }), form);
+  $('#app').replaceChildren(h('main', { class: 'center-screen' }, card));
+  pw.focus();
 }
 
 /* ================= onboarding ================= */

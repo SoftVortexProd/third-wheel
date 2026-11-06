@@ -125,7 +125,7 @@ CREATE INDEX IF NOT EXISTS ix_oauth_user ON oauth_accounts(userId);");
 
     public static void Map(WebApplication app, RouteGroupBuilder api)
     {
-        api.MapGet("auth/providers", () => Results.Json(new { google = Configured("google"), discord = Configured("discord") }));
+        api.MapGet("auth/providers", () => Results.Json(new { google = Configured("google"), discord = Configured("discord"), email = EmailApi.Configured }));
 
         // the desktop app collects a sign-in that was finished in the system browser
         api.MapPost("auth/handoff", (HttpContext c, HandoffIn b) =>
@@ -191,6 +191,7 @@ CREATE INDEX IF NOT EXISTS ix_oauth_user ON oauth_accounts(userId);");
             {
                 if (existing != null && Convert.ToInt64(existing) != st.L) return Results.Redirect("/?auth_error=taken#/settings/connections", false);
                 Db.Exec("INSERT OR IGNORE INTO oauth_accounts(provider,extId,userId,email,createdAt) VALUES(@p,@e,@u,@m,@t)", ("@p", provider), ("@e", extId), ("@u", st.L), ("@m", email), ("@t", Now()));
+                if (email.Length > 0) EmailApi.AdoptVerified(st.L, email);
                 return Results.Redirect("/#/settings/connections", false);
             }
             if (existing != null) uid = Convert.ToInt64(existing);
@@ -203,6 +204,7 @@ CREATE INDEX IF NOT EXISTS ix_oauth_user ON oauth_accounts(userId);");
                 Db.Exec("UPDATE users SET tosAccepted=1, oauthOnly=1, lastIp=@ip, deviceId=@d WHERE id=@i", ("@ip", ClientIp(c)), ("@d", ClientDeviceId(c)), ("@i", uid));
                 Db.Exec("INSERT INTO oauth_accounts(provider,extId,userId,email,createdAt) VALUES(@p,@e,@u,@m,@t)", ("@p", provider), ("@e", extId), ("@u", uid), ("@m", email), ("@t", Now()));
             }
+            if (email.Length > 0) EmailApi.AdoptVerified(uid, email);   // the provider already confirmed it
             var u = Db.Row("SELECT banned FROM users WHERE id=@i", ("@i", uid));
             if (u == null || Convert.ToInt32(u["banned"]) == 1) return st.H != null ? Page("Account suspended", "This account has been suspended.") : Back("banned");
             Db.Exec("UPDATE users SET status='online', lastIp=@ip, deviceId=COALESCE(@d, deviceId) WHERE id=@i", ("@ip", ClientIp(c)), ("@d", ClientDeviceId(c)), ("@i", uid));
