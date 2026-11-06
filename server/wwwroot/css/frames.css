@@ -1,5 +1,20 @@
-/* RCKT avatar frames: an animated ring around the profile picture. Ring = a rotating gradient seen through a ring-shaped mask. */
+/* RCKT avatar frames. A ring (a conic gradient seen through a ring-shaped mask) sits just outside the picture, with a small gap and a soft glow.
+   Each frame only sets a few variables (--ring colours, --glow, --spin speed); the decorated ones (halo, horns, stars ...) add a second layer on ::after.
+   The sizes (.sm .md .lg .xl) set the ring thickness (--fw) and the gap to the picture (--gap). */
+@property --fa { syntax: "<angle>"; inherits: false; initial-value: 0deg; }
+@keyframes fr-spin { to { --fa: 360deg; } }
+@keyframes fr-spin-rev { from { --fa: 360deg; } to { --fa: 0deg; } }
+@keyframes fr-orbit { to { transform: rotate(360deg); } }
+@keyframes fr-orbit-rev { to { transform: rotate(-360deg); } }
+@keyframes fr-glow { 0%, 100% { box-shadow: 0 0 calc(var(--fw) * 2) calc(var(--fw) * .2) var(--glow); } 50% { box-shadow: 0 0 calc(var(--fw) * 4) calc(var(--fw) * .7) var(--glow); } }
+@keyframes fr-beat { 0%, 100% { transform: scale(1); } 14% { transform: scale(1.08); } 28% { transform: scale(1); } 42% { transform: scale(1.05); } 70% { transform: scale(1); } }
+@keyframes fr-twinkle { 0%, 100% { opacity: .35; } 50% { opacity: 1; } }
+@keyframes fr-bob { 0%, 100% { transform: translate(-50%, 0); } 50% { transform: translate(-50%, -2px); } }
+@keyframes fr-glitch { 0%, 90%, 100% { transform: translate(0, 0); } 92% { transform: translate(-2px, 1px); } 95% { transform: translate(2px, -1px); } 97% { transform: translate(-1px, 0); } }
+@keyframes fr-flick { 0%, 100% { opacity: 1; } 8% { opacity: .55; } 12% { opacity: 1; } 55% { opacity: .85; } 60% { opacity: 1; } }
+
 .framed {
+  --fw: 3px; --gap: 1.5px; --spin: 6s; --glow: transparent; --ring: #9ca3af, #e5e7eb, #9ca3af;
   position: relative;
   display: inline-flex;
   align-items: center;
@@ -8,76 +23,110 @@
   border-radius: 50%;
   line-height: 1;
   box-sizing: border-box;
+  box-shadow: 0 0 calc(var(--fw) * 3) calc(var(--fw) * .35) var(--glow);
 }
-.framed.sm { width: 28px; height: 28px; --fw: 2px; }
-.framed.md { width: 40px; height: 40px; --fw: 3px; }
-.framed.lg { width: 64px; height: 64px; --fw: 4px; }
-.framed.xl { width: 96px; height: 96px; --fw: 5px; }
+.framed.sm { width: 28px; height: 28px; --fw: 2px; --gap: 1px; }
+.framed.md { width: 40px; height: 40px; --fw: 3px; --gap: 1.5px; }
+.framed.lg { width: 64px; height: 64px; --fw: 4px; --gap: 2px; }
+.framed.xl { width: 96px; height: 96px; --fw: 6px; --gap: 3px; }
 
-.framed > .avatar {
-  width: 100% !important;
-  height: 100% !important;
-  border-radius: 50%;
-  z-index: 0;
-  display: inline-grid;
-  place-items: center;
-}
+.framed > .avatar { width: 100% !important; height: 100% !important; border-radius: 50%; z-index: 0; display: inline-grid; place-items: center; }
 
-.framed::before, .framed::after {
-  content: "";
-  position: absolute;
-  inset: calc(var(--fw) * -1);
-  border-radius: 50%;
-  pointer-events: none;
+.framed::before, .framed::after { content: ""; position: absolute; pointer-events: none; box-sizing: border-box; border-radius: 50%; }
+.framed::before {
+  inset: calc((var(--fw) + var(--gap)) * -1);
   z-index: 2;
-  box-sizing: border-box;
-  -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - var(--fw) - 0.5px), #000 calc(100% - var(--fw)));
-  mask: radial-gradient(farthest-side, transparent calc(100% - var(--fw) - 0.5px), #000 calc(100% - var(--fw)));
+  background: conic-gradient(from var(--fa), var(--ring));
+  -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - var(--fw) - .5px), #000 calc(100% - var(--fw)));
+  mask: radial-gradient(farthest-side, transparent calc(100% - var(--fw) - .5px), #000 calc(100% - var(--fw)));
+  animation: fr-spin var(--spin) linear infinite;
 }
 .framed::after { display: none; }
 
-@keyframes fr-rot { to { transform: rotate(360deg); } }
-@keyframes fr-rot-rev { to { transform: rotate(-360deg); } }
-@keyframes fr-glow-orange { 0%,100% { box-shadow: 0 0 4px 0 rgba(255,110,0,.55); } 40% { box-shadow: 0 0 9px 1px rgba(255,190,0,.7); } 70% { box-shadow: 0 0 5px 0 rgba(255,80,0,.5); } }
-@keyframes fr-glow-cyan { 0%,100% { box-shadow: 0 0 3px 0 rgba(34,211,238,.6); } 50% { box-shadow: 0 0 12px 2px rgba(34,211,238,.85); } }
-@keyframes fr-glow-green { 0%,100% { box-shadow: 0 0 3px 0 rgba(132,204,22,.5); } 50% { box-shadow: 0 0 11px 2px rgba(163,230,53,.8); } }
-@keyframes fr-glow-purple { 0%,100% { box-shadow: 0 0 4px 0 rgba(124,58,237,.6); } 50% { box-shadow: 0 0 12px 2px rgba(168,85,247,.85); } }
-@keyframes fr-beat { 0%,100% { transform: scale(1); } 14% { transform: scale(1.1); } 28% { transform: scale(1); } 42% { transform: scale(1.07); } 70% { transform: scale(1); } }
-@keyframes fr-jit-a { 0%,100% { transform: translate(0,0); } 25% { transform: translate(1.5px,-1px); } 50% { transform: translate(-1px,1px); } 75% { transform: translate(1px,1px); } }
-@keyframes fr-jit-b { 0%,100% { transform: translate(0,0); } 25% { transform: translate(-1.5px,1px); } 50% { transform: translate(1px,-1px); } 75% { transform: translate(-1px,-1px); } }
+/* ---- plain rings ---- */
+.framed[data-frame="aurora"]  { --ring: #34d399, #38bdf8, #a78bfa, #f0abfc, #34d399; --glow: rgba(56, 189, 248, .45); --spin: 7s; }
+.framed[data-frame="ember"]   { --ring: #7f1d1d, #ef4444, #f97316, #fde047, #f97316, #ef4444, #7f1d1d; --glow: rgba(249, 115, 22, .55); --spin: 2.6s; animation: fr-flick 2.2s infinite; }
+.framed[data-frame="neon"]    { --ring: #22d3ee, #e879f9, #22d3ee; --glow: rgba(34, 211, 238, .7); --spin: 5s; animation: fr-glow 1.8s ease-in-out infinite; }
+.framed[data-frame="royal"]   { --ring: #fff3b0, #e0a526, #8a5a00, #f5d76e, #fff3b0, #b8860b, #fff3b0; --glow: rgba(245, 196, 66, .45); --spin: 9s; }
+.framed[data-frame="frost"]   { --ring: #e0f2fe, #7dd3fc, #fff, #bae6fd, #e0f2fe; --glow: rgba(125, 211, 252, .55); --spin: 10s; }
+.framed[data-frame="toxic"]   { --ring: #a3e635, #16a34a, #facc15, #16a34a, #a3e635; --glow: rgba(132, 204, 22, .55); --spin: 4s; animation: fr-glow 1.4s ease-in-out infinite; }
+.framed[data-frame="void"]    { --ring: #1e1b4b, #7c3aed, #0b0b12, #6d28d9, #1e1b4b; --glow: rgba(124, 58, 237, .65); --spin: 6s; animation: fr-glow 3s ease-in-out infinite; }
+.framed[data-frame="void"]::before { animation-name: fr-spin-rev; }
+.framed[data-frame="rainbow"] { --ring: #ef4444, #f59e0b, #eab308, #22c55e, #06b6d4, #6366f1, #d946ef, #ef4444; --glow: rgba(255, 255, 255, .16); --spin: 3.5s; }
+.framed[data-frame="pulse"]   { --ring: #fb7185, #e11d48, #fb7185; --glow: rgba(244, 63, 94, .55); animation: fr-glow 1.3s ease-in-out infinite; }
+.framed[data-frame="pulse"]::before { animation: fr-beat 1.3s ease-in-out infinite; }
 
-.framed[data-frame="aurora"]::before { background: conic-gradient(#6ee7b7, #3b82f6, #a855f7, #6ee7b7); animation: fr-rot 4s linear infinite; }
-.framed[data-frame="ember"]::before { background: conic-gradient(#ff6a00, #ffd000, #ff3d00, #ff6a00); animation: fr-rot 2.2s linear infinite; }
-.framed[data-frame="ember"] { animation: fr-glow-orange 1.4s ease-in-out infinite; }
-.framed[data-frame="neon"]::before { background: #22d3ee; }
-.framed[data-frame="neon"] { animation: fr-glow-cyan 1.8s ease-in-out infinite; }
-.framed[data-frame="glitch"]::before { background: #ff2bd6; animation: fr-jit-a .9s steps(2, end) infinite; }
-.framed[data-frame="glitch"]::after { display: block; background: #22e5ff; mix-blend-mode: screen; animation: fr-jit-b .9s steps(2, end) infinite; }
-.framed[data-frame="royal"]::before { background: conic-gradient(#f5d76e, #b8860b, #fff3b0, #b8860b, #f5d76e); animation: fr-rot 5s linear infinite; }
-.framed[data-frame="frost"]::before { background: conic-gradient(#e6f9ff, #7dd3fc, #ffffff, #7dd3fc, #e6f9ff); animation: fr-rot 6s linear infinite; }
-.framed[data-frame="toxic"]::before { background: conic-gradient(#a3e635, #16a34a, #d9f99d, #16a34a, #a3e635); animation: fr-rot 3s linear infinite; }
-.framed[data-frame="toxic"] { animation: fr-glow-green 2s ease-in-out infinite; }
-.framed[data-frame="void"]::before { background: conic-gradient(#312e81, #7c3aed, #0b0b12, #a855f7, #312e81); animation: fr-rot-rev 3.5s linear infinite; }
-.framed[data-frame="void"] { animation: fr-glow-purple 2.4s ease-in-out infinite; }
-.framed[data-frame="rainbow"]::before { background: conic-gradient(#ff3b3b, #ffd23b, #3bff6e, #3bd9ff, #6b3bff, #ff3bd9, #ff3b3b); animation: fr-rot 3s linear infinite; }
-.framed[data-frame="pulse"]::before { background: #ef4444; animation: fr-beat 1.3s ease-in-out infinite; }
+/* glitch: a white ring with a cyan and a magenta copy that jump sideways now and then */
+.framed[data-frame="glitch"]  { --ring: #fff, #d1d5db, #fff; }
+.framed[data-frame="glitch"]::before { animation: none; }
+.framed[data-frame="glitch"]::after {
+  display: block; inset: calc((var(--fw) + var(--gap)) * -1); z-index: 3; mix-blend-mode: screen;
+  background: conic-gradient(from 90deg, #22d3ee 0 25%, #f43f5e 25% 50%, #22d3ee 50% 75%, #f43f5e 75% 100%);
+  -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - var(--fw) - .5px), #000 calc(100% - var(--fw)));
+  mask: radial-gradient(farthest-side, transparent calc(100% - var(--fw) - .5px), #000 calc(100% - var(--fw)));
+  opacity: .8; animation: fr-glitch 3s steps(1) infinite;
+}
 
-/* Icon & Partial Avatar Frames */
-@keyframes fr-halo-float { 0%, 100% { transform: translateX(-50%) translateY(0) rotateX(65deg); } 50% { transform: translateX(-50%) translateY(-3px) rotateX(65deg); } }
-.framed[data-frame="halo"]::before { inset: auto; top: -7px; left: 50%; transform: translateX(-50%) rotateX(65deg); width: 84%; height: 26%; border: 3px solid #ffd700; border-radius: 50%; box-shadow: 0 0 10px #ffd700, inset 0 0 6px #ffe066; mask: none; -webkit-mask: none; animation: fr-halo-float 2.4s ease-in-out infinite; }
+/* ---- ringed + decorated ---- */
+/* Angel halo: gold ring and a floating halo above the head */
+.framed[data-frame="halo"]   { --ring: #fde68a, #f59e0b, #fde68a; --glow: rgba(253, 224, 71, .4); --spin: 8s; }
+.framed[data-frame="halo"]::after {
+  display: block; left: 50%; top: calc(var(--fw) * -3.2); width: 62%; height: 20%; z-index: 3; border-radius: 50%;
+  border: calc(var(--fw) * .8) solid #fde68a; box-shadow: 0 0 8px #fbbf24, inset 0 0 5px rgba(251, 191, 36, .7);
+  transform: translate(-50%, 0); animation: fr-bob 2.6s ease-in-out infinite;
+}
+/* Demon horns: dark red ring with two curved horns */
+.framed[data-frame="horns"]  { --ring: #450a0a, #dc2626, #450a0a, #991b1b, #450a0a; --glow: rgba(220, 38, 38, .5); --spin: 7s; }
+.framed[data-frame="horns"]::after {
+  display: block; left: 2%; right: 2%; top: calc(var(--fw) * -4.2); height: 40%; z-index: 3; border-radius: 0;
+  background: linear-gradient(180deg, #7f1d1d, #ef4444 60%, #fca5a5);
+  clip-path: polygon(12% 100%, 6% 62%, 9% 6%, 30% 44%, 38% 100%, 62% 100%, 70% 44%, 91% 6%, 94% 62%, 88% 100%);
+  filter: drop-shadow(0 0 3px rgba(239, 68, 68, .8));
+}
+/* Golden stars: gold ring and four sparkles circling it */
+.framed[data-frame="stars"]  { --ring: #fde047, #f59e0b, #fff7ae, #f59e0b, #fde047; --glow: rgba(250, 204, 21, .4); --spin: 8s; }
+.framed[data-frame="stars"]::after {
+  display: block; inset: calc((var(--fw) + var(--gap)) * -2.1); z-index: 3;
+  background:
+    radial-gradient(circle calc(var(--fw) * .9) at 50% 2%, #fff7ae 55%, transparent 100%),
+    radial-gradient(circle calc(var(--fw) * .7) at 98% 50%, #fde047 55%, transparent 100%),
+    radial-gradient(circle calc(var(--fw) * .9) at 50% 98%, #fff7ae 55%, transparent 100%),
+    radial-gradient(circle calc(var(--fw) * .7) at 2% 50%, #fde047 55%, transparent 100%);
+  animation: fr-orbit 9s linear infinite, fr-twinkle 1.6s ease-in-out infinite;
+}
+/* Cyber crosshair: a dashed cyan ring and a thin inner line */
+.framed[data-frame="cyber"]  { --glow: rgba(34, 211, 238, .5); --spin: 5s; }
+.framed[data-frame="cyber"]::before { background: repeating-conic-gradient(from var(--fa), #22d3ee 0 16deg, transparent 16deg 30deg); }
+.framed[data-frame="cyber"]::after {
+  display: block; inset: calc(var(--gap) * -1); z-index: 3; border: 1px solid rgba(34, 211, 238, .85); animation: fr-twinkle 2s ease-in-out infinite;
+}
+/* Pixel hearts: pink ring with three hearts circling it */
+.framed[data-frame="hearts"] { --ring: #fb7185, #f472b6, #fda4af, #f472b6, #fb7185; --glow: rgba(244, 114, 182, .45); --spin: 6s; }
+.framed[data-frame="hearts"]::after {
+  display: block; inset: calc((var(--fw) + var(--gap)) * -2); z-index: 3;
+  background:
+    radial-gradient(circle calc(var(--fw) * .9) at 50% 3%, #fff 35%, #f43f5e 40%, transparent 100%),
+    radial-gradient(circle calc(var(--fw) * .9) at 91% 77%, #fff 35%, #f43f5e 40%, transparent 100%),
+    radial-gradient(circle calc(var(--fw) * .9) at 9% 77%, #fff 35%, #f43f5e 40%, transparent 100%);
+  animation: fr-orbit-rev 10s linear infinite;
+}
+/* Cherry blossoms: soft pink ring with petals drifting round it */
+.framed[data-frame="sakura"] { --ring: #fbcfe8, #f9a8d4, #fff1f2, #f9a8d4, #fbcfe8; --glow: rgba(249, 168, 212, .45); --spin: 12s; }
+.framed[data-frame="sakura"]::after {
+  display: block; inset: calc((var(--fw) + var(--gap)) * -2.2); z-index: 3;
+  background:
+    radial-gradient(ellipse calc(var(--fw) * 1.1) calc(var(--fw) * .6) at 50% 2%, #ffe4ec 60%, transparent 100%),
+    radial-gradient(ellipse calc(var(--fw) * 1.1) calc(var(--fw) * .6) at 95% 68%, #fbcfe8 60%, transparent 100%),
+    radial-gradient(ellipse calc(var(--fw) * 1.1) calc(var(--fw) * .6) at 14% 80%, #ffe4ec 60%, transparent 100%);
+  animation: fr-orbit 14s linear infinite;
+}
+/* Electric sparks: a fast blue ring that flickers */
+.framed[data-frame="sparks"] { --ring: #0ea5e9, #e0f2fe, #38bdf8, #0c4a6e, #7dd3fc, #0ea5e9; --glow: rgba(56, 189, 248, .6); --spin: 1.3s; animation: fr-flick 1.1s infinite; }
+.framed[data-frame="sparks"]::after {
+  display: block; inset: calc((var(--fw) + var(--gap)) * -1.7); z-index: 3;
+  border: 1px dashed rgba(224, 242, 254, .9); animation: fr-orbit 4s linear infinite, fr-twinkle .5s steps(2) infinite;
+}
 
-.framed[data-frame="horns"]::before { inset: auto; top: -6px; left: 2px; width: 10px; height: 14px; background: linear-gradient(135deg, #ff1a40, #5c000e); clip-path: polygon(100% 0, 0 100%, 100% 100%); mask: none; -webkit-mask: none; filter: drop-shadow(0 0 4px #ff1a40); }
-.framed[data-frame="horns"]::after { display: block; inset: auto; top: -6px; right: 2px; width: 10px; height: 14px; background: linear-gradient(225deg, #ff1a40, #5c000e); clip-path: polygon(0 0, 0 100%, 100% 100%); mask: none; -webkit-mask: none; filter: drop-shadow(0 0 4px #ff1a40); }
-
-.framed[data-frame="stars"]::before { inset: -4px; border-radius: 50%; mask: none; -webkit-mask: none; background: radial-gradient(circle at 15% 15%, #ffd700 3px, transparent 4px), radial-gradient(circle at 85% 20%, #ffd700 3px, transparent 4px), radial-gradient(circle at 50% 92%, #ffd700 3.5px, transparent 4.5px); animation: fr-rot 8s linear infinite; filter: drop-shadow(0 0 4px #ffd700); }
-
-.framed[data-frame="cyber"]::before { inset: -3px; border-radius: 6px; mask: none; -webkit-mask: none; background: linear-gradient(to right, #00f0ff 5px, transparent 5px) 0 0, linear-gradient(to left, #00f0ff 5px, transparent 5px) 100% 0, linear-gradient(to right, #00f0ff 5px, transparent 5px) 0 100%, linear-gradient(to left, #00f0ff 5px, transparent 5px) 100% 100%, linear-gradient(to bottom, #00f0ff 5px, transparent 5px) 0 0, linear-gradient(to bottom, #00f0ff 5px, transparent 5px) 100% 0, linear-gradient(to top, #00f0ff 5px, transparent 5px) 0 100%, linear-gradient(to top, #00f0ff 5px, transparent 5px) 100% 100%; background-repeat: no-repeat; background-size: 8px 8px; filter: drop-shadow(0 0 4px #00f0ff); animation: fr-beat 2.2s ease-in-out infinite; }
-
-.framed[data-frame="hearts"]::before { inset: -5px; border-radius: 50%; mask: none; -webkit-mask: none; background: radial-gradient(circle at 4% 50%, #ff4d8d 4px, transparent 5px), radial-gradient(circle at 96% 50%, #ff4d8d 4px, transparent 5px); animation: fr-beat 1.6s ease-in-out infinite; filter: drop-shadow(0 0 4px #ff4d8d); }
-
-.framed[data-frame="sakura"]::before { inset: -5px; border-radius: 50%; mask: none; -webkit-mask: none; background: radial-gradient(circle at 20% 10%, #ffb7c5 4px, transparent 5px), radial-gradient(circle at 80% 85%, #ffb7c5 4px, transparent 5px), radial-gradient(circle at 90% 25%, #ff94a8 3px, transparent 4px); animation: fr-rot 6s linear infinite; filter: drop-shadow(0 0 3px #ffb7c5); }
-
-.framed[data-frame="sparks"]::before { background: conic-gradient(from 45deg, #38bdf8 0deg, transparent 40deg, #38bdf8 90deg, transparent 130deg, #38bdf8 180deg, transparent 220deg, #38bdf8 270deg, transparent 310deg); animation: fr-rot 1s steps(6, end) infinite; filter: drop-shadow(0 0 5px #38bdf8); }
 
 /* Profile Ambient Effects */
 .profile-effect { position: absolute; inset: 0; pointer-events: none; border-radius: inherit; overflow: hidden; z-index: 1; }

@@ -4,7 +4,7 @@ import { execSync } from 'node:child_process';
 import fs from 'node:fs';
 
 const LANGS = { '.cs': ['C#', '#9b4f96'], '.js': ['JavaScript', '#f1c40f'], '.css': ['CSS', '#563d7c'], '.html': ['HTML', '#e34c26'], '.py': ['Python', '#3572a5'], '.ps1': ['PowerShell', '#012456'], '.sql': ['SQL', '#e38c00'] };
-const SKIP = /(^|\/)(dist|bin|obj|node_modules|\.venv|docs\/screenshots)\//;
+const SKIP = /(^|\/)(dist|bin|obj|node_modules|\.venv|docs\/(screenshots|database))\//;
 const files = execSync('git ls-files', { encoding: 'utf8', maxBuffer: 1 << 26 }).split('\n').filter(Boolean).filter(f => !SKIP.test(f));
 const tot = {};
 for (const f of files) {

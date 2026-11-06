@@ -680,7 +680,7 @@ api.MapGet("users/{id:long}", (HttpContext c, long id) => WithUser(c, uid =>
         id, username = (string)u["username"]!, displayName = u["display"] as string, avatar = AvatarUrl(id, u["avatarVer"]),
         avatarColor = (string)u["color"]!, frame = FrameOf(u), status = (string)u["status"]!, playing = u["playing"] as string,
         playingWith = PlayingPartyCount(id, u["playing"] as string),
-        banner = BannerUrl(id, u["bannerVer"]),
+        banner = BannerUrl(id, u["bannerVer"]), effect = u["effect"] as string,
         region = (string)u["region"]!, ageRange = AgeRange(Convert.ToInt32(u["age"])), favoriteGames = (id != uid && CosmeticsApi.LayoutOf(id).Hidden.Contains("games")) ? Array.Empty<string>() : games,
         isFriend = friend, isMe = id == uid, joined = (string)u["created"]!, rckt = IsRckt(u["rcktUntil"])
     });
