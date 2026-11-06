@@ -158,10 +158,27 @@ public static class Voice
     public static List<long> Present(long gid) { lock (Gate) return Rooms.TryGetValue(gid, out var r) ? r.Peers.Select(p => p.Uid).Distinct().ToList() : new(); }
     public static Dictionary<long, List<long>> All() { lock (Gate) return Rooms.Where(kv => kv.Value.Peers.Count > 0).ToDictionary(kv => kv.Key, kv => kv.Value.Peers.Select(p => p.Uid).Distinct().ToList()); }
 
+    // A call between two friends is a room with a negative id: -(smaller id * 2^32 + larger id). Group rooms use the (positive) group id.
+    public static long DmRoomId(long a, long b) => -(Math.Min(a, b) * 4294967296L + Math.Max(a, b));
+    static bool DmPair(long gid, out long a, out long b) { a = b = 0; if (gid >= 0) return false; var v = -gid; a = v >> 32; b = v & 0xFFFFFFFFL; return a > 0 && b > a; }
+    static int MaxFor(long gid) => gid < 0 ? 2 : MaxPeople;
+    /// <summary>Null when this person may be in the room, otherwise what to tell them.</summary>
+    static string? Deny(long gid, long uid)
+    {
+        if (gid > 0) return IsMember(gid, uid) ? Core.GroupPostBlock(gid, uid) : "Join the group to use its voice chat.";   // banned / muted people don't get to talk either
+        if (!DmPair(gid, out var a, out var b) || (uid != a && uid != b)) return "That call isn't available.";
+        if (!Core.AreFriends(a, b)) return "You can only call friends.";
+        if (Core.IsBlocked(a, b)) return "You can't call this person.";
+        return null;
+    }
+    static List<long> Audience(long gid) => gid > 0
+        ? Db.Rows("SELECT userId FROM members WHERE groupId=@g", ("@g", gid)).Select(r => (long)r["userId"]!).ToList()
+        : DmPair(gid, out var a, out var b) ? new List<long> { a, b } : new();
+
     static void Update(long gid)
     {
         var ids = Present(gid);
-        var members = Db.Rows("SELECT userId FROM members WHERE groupId=@g", ("@g", gid)).Select(r => (long)r["userId"]!).ToList();
+        var members = Audience(gid);
         var people = ids.Count == 0 ? new List<object>() : Db.Rows($"SELECT * FROM users WHERE id IN ({string.Join(",", ids)})").Select(u => (object)Core.PersonObj(u, false)).ToList();
         Realtime.ToUsers(members, new { t = "vc.update", gid, who = ids, people });
     }
@@ -171,8 +188,8 @@ public static class Voice
         long gid = m.TryGetProperty("gid", out var g) && g.TryGetInt64(out var gv) ? gv : 0;
         if (t == "vc.join")
         {
-            if (gid <= 0 || !IsMember(gid, uid)) { toConn(conn, J(new { t = "vc.error", gid, error = "Join the group to use its voice chat." })); return; }
-            var blocked = Core.GroupPostBlock(gid, uid);   // banned / muted people don't get to talk either
+            if (gid == 0) { toConn(conn, J(new { t = "vc.error", gid, error = "That voice chat isn't available." })); return; }
+            var blocked = Deny(gid, uid);
             if (blocked != null) { toConn(conn, J(new { t = "vc.error", gid, error = blocked })); return; }
             if (Limit($"vcj:{uid}", 30)) { toConn(conn, J(new { t = "vc.error", gid, error = "Slow down a little." })); return; }
             List<long> others;
@@ -182,7 +199,7 @@ public static class Voice
                 foreach (var (og, rm) in Rooms) if (og != gid && rm.Peers.Any(p => p.Uid == uid)) LeaveLocked(og, uid, null);
                 var room = Rooms.GetOrAdd(gid, _ => new Room());
                 if (room.Peers.Any(p => p.Uid == uid)) room.Peers.RemoveAll(p => p.Uid == uid);   // rejoining from another tab/device replaces the old one
-                if (room.Peers.Count >= MaxPeople) { toConn(conn, J(new { t = "vc.error", gid, error = $"This voice chat is full ({MaxPeople} people)." })); return; }
+                if (room.Peers.Count >= MaxFor(gid)) { toConn(conn, J(new { t = "vc.error", gid, error = $"This voice chat is full ({MaxFor(gid)} people)." })); return; }
                 others = room.Peers.Select(p => p.Uid).ToList();
                 room.Peers.Add(new Peer(uid, conn, DateTime.UtcNow));
                 room.Everyone.Add(uid);
@@ -191,6 +208,13 @@ public static class Voice
             // the newcomer gets the list and calls everybody; the others wait for those calls
             toConn(conn, J(new { t = "vc.joined", gid, peers = others.Select(o => new { uid = o, name = Who(o) }).ToList(), max = MaxPeople }));
             foreach (var o in others) toUser(o, J(new { t = "vc.peer", gid, uid, name = Who(uid) }));
+            if (gid < 0 && others.Count == 0 && DmPair(gid, out var da, out var db))
+            {   // start of a call between friends: ring the other person (in the app, and as a notification if they're away)
+                var callee = uid == da ? db : da;
+                var me = Db.Row("SELECT * FROM users WHERE id=@i", ("@i", uid));
+                if (me != null) toUser(callee, J(new { t = "vc.ring", gid, from = Core.PersonObj(me, true) }));
+                PushApi.Notify(callee, Who(uid), "is calling you on Third Wheel", $"/#/dm/{uid}", $"call:{uid}");
+            }
             Update(gid);
         }
         else if (t == "vc.leave") { lock (Gate) LeaveLocked(gid, uid, conn); Update(gid); }
@@ -203,9 +227,13 @@ public static class Voice
         }
         else if (t == "vc.state")   // mute / speaking flags: shown next to names
         {
-            var muted = m.TryGetProperty("muted", out var mu) && mu.ValueKind == JsonValueKind.True;
+            // forward only what the sender actually reported (mute and/or screen sharing)
+            var msg = new Dictionary<string, object> { ["t"] = "vc.state", ["gid"] = gid, ["uid"] = uid };
+            if (m.TryGetProperty("muted", out var mu) && mu.ValueKind is JsonValueKind.True or JsonValueKind.False) msg["muted"] = mu.ValueKind == JsonValueKind.True;
+            if (m.TryGetProperty("screen", out var sc) && sc.ValueKind is JsonValueKind.True or JsonValueKind.False) msg["screen"] = sc.ValueKind == JsonValueKind.True;
             List<long> peers; lock (Gate) { if (!Rooms.TryGetValue(gid, out var room) || !room.Peers.Any(p => p.Uid == uid)) return; peers = room.Peers.Select(p => p.Uid).Where(x => x != uid).ToList(); }
-            foreach (var p in peers) toUser(p, J(new { t = "vc.state", gid, uid, muted }));
+            var json = J(msg);
+            foreach (var p in peers) toUser(p, json);
         }
     }
 
@@ -219,6 +247,16 @@ public static class Voice
             if (!string.IsNullOrWhiteSpace(turn) && !string.IsNullOrWhiteSpace(user) && !string.IsNullOrWhiteSpace(pass))
                 servers.Add(new { urls = turn.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries), username = user, credential = pass });
             return Results.Json(new { iceServers = servers, max = MaxPeople });
+        }));
+
+        // who is in a call with this friend right now (for the Call button in the chat header)
+        api.MapGet("dms/{id:long}/voice", (HttpContext c, long id) => Core.WithUser(c, me =>
+        {
+            var room = DmRoomId(me, id);
+            if (Deny(room, me) != null) return Core.Err("You can only call friends.", 403);
+            var ids = Present(room);
+            var people = ids.Count == 0 ? new List<object>() : Db.Rows($"SELECT * FROM users WHERE id IN ({string.Join(",", ids)})").Select(u => (object)Core.PersonObj(u, true)).ToList();
+            return Results.Json(new { room, max = 2, people });
         }));
 
         // who is in a group's voice chat right now (for the "Voice" button and the member list)
@@ -248,7 +286,7 @@ public static class Voice
         {
             var start = room.SessionStart.Value; var who = room.Everyone.ToList(); room.SessionStart = null;
             if (room.Peers.Count == 0) { room.Everyone.Clear(); Rooms.TryRemove(gid, out _); } else { room.Everyone.Clear(); foreach (var p in room.Peers) room.Everyone.Add(p.Uid); }
-            if (DateTime.UtcNow - start >= TimeSpan.FromMinutes(2) && who.Count >= 2) _ = Task.Run(() => SessionsApi.Record("voice", gid, start, DateTime.UtcNow, who));   // history
+            if (DateTime.UtcNow - start >= TimeSpan.FromMinutes(2) && who.Count >= 2) _ = Task.Run(() => SessionsApi.Record("voice", gid > 0 ? gid : 0, start, DateTime.UtcNow, who));   // history
         }
         else if (room.Peers.Count == 0) Rooms.TryRemove(gid, out _);
     }

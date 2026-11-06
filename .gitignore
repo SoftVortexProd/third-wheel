@@ -17,3 +17,6 @@ deploy/sync.config.json
 
 # ffmpeg is downloaded by deploy\get-ffmpeg.ps1 (about 180 MB), never committed
 deploy/ffmpeg/
+
+# server secrets for sync.ps1 (Google / Apple sign-in etc.)
+deploy/server-secrets.env

@@ -294,7 +294,7 @@ function lookTab(panel) {
 
 /* ---- Connections: gamer tags, verified Steam / Discord, Steam import ---- */
 function connectionsTab(panel) {
-  panel.append(gamerTagsCard());
+  panel.append(gamerTagsCard(), signinCard());
 }
 
 /* gamer tags: platform -> handle, saved with the preferences */
@@ -324,6 +324,29 @@ function gamerTagsCard() {
   draw();
   return card(cardHead(t('Gamer tags'), t('Show friends where to find you on supported platforms: Steam and Discord.')), verifyBlock(), list,
     h('div', { class: 'row tag-form' }, field(t('Platform'), platform), fh), h('div', {}, add));
+}
+
+/* Sign-in methods: Google / Apple / Discord linked to this account (sign in without a password). */
+function signinCard() {
+  const list = h('div', { class: 'stack', style: 'gap:10px' });
+  const BRAND = { google: 'Google', apple: 'Apple', discord: 'Discord' };
+  async function load() {
+    let r; try { r = await api('GET', '/api/me/signin-methods'); } catch { return; }
+    list.replaceChildren(...r.methods.map(m => {
+      const row = h('div', { class: 'verify-row' }, h('b', { text: m.label }));
+      if (m.linked) {
+        const un = btn(t('Unlink'), { cls: 'small ghost' });
+        un.addEventListener('click', () => busy(un, async () => { await api('DELETE', '/api/me/signin-methods/' + m.id); toast(t('Unlinked')); load(); }));
+        row.append(h('span', { class: 'chip ok' }, TW.icon('check', 12), t('Linked')), un);
+      } else if (!m.available) row.append(h('span', { class: 'muted small', text: t('Not set up on this server') }));
+      else if (window.__TW_DESKTOP) row.append(h('span', { class: 'muted small', text: t('Link accounts from the website in your browser.') }));
+      else row.append(btn(t('Link'), { cls: 'small', onclick: () => { location.href = '/auth/' + m.id + '/start?mode=link'; } }));
+      return row;
+    }));
+  }
+  load();
+  addEventListener('focus', () => { if (list.isConnected) load(); });
+  return card(cardHead(t('Sign-in methods'), t('Use these to sign in without a password.')), list);
 }
 
 /* Avatar frames: animated rings around your picture. Exclusive to RCKT (everyone can look; only RCKT can wear one). */

@@ -146,7 +146,7 @@ ProfileApi.Map(api);
 NotifyApi.Map(api);
 AccountApi.Map(api);
 HubApi.Map(api);
-LfgApi.Map(api); PushApi.Map(api); VerifyApi.Map(api); SessionsApi.Map(api); CosmeticsApi.Map(api); Voice.MapApi(api); Realtime.Map(app);
+LfgApi.Map(api); PushApi.Map(api); VerifyApi.Map(api); SessionsApi.Map(api); CosmeticsApi.Map(api); Voice.MapApi(api); SocialAuth.Map(app, api); Realtime.Map(app);
 GamesApi.Map(api);
 
 
@@ -978,6 +978,6 @@ DELETE FROM banned_ips;");
             Exec("UPDATE members SET role='owner' WHERE EXISTS (SELECT 1 FROM grps g WHERE g.id=members.groupId AND g.ownerId=members.userId)");
         }
         // Feature modules add their own tables/columns here (each must be safe to run on every start).
-        ChatApi.Migrate(); GroupsApi.Migrate(); ProfileApi.Migrate(); NotifyApi.Migrate(); GamesApi.Migrate(); AccountApi.Migrate(); HubApi.Migrate(); LfgApi.Migrate(); PushApi.Migrate(); VerifyApi.Migrate(); SessionsApi.Migrate(); CosmeticsApi.Migrate();
+        ChatApi.Migrate(); GroupsApi.Migrate(); ProfileApi.Migrate(); NotifyApi.Migrate(); GamesApi.Migrate(); AccountApi.Migrate(); HubApi.Migrate(); LfgApi.Migrate(); PushApi.Migrate(); VerifyApi.Migrate(); SessionsApi.Migrate(); CosmeticsApi.Migrate(); SocialAuth.Migrate();
     }
 }

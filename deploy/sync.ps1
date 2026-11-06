@@ -26,6 +26,18 @@ if ($DiscordClientId -and $DiscordClientId -notmatch '^\d{5,25}$') { throw "The 
 if ($DiscordSecret -and $DiscordSecret -notmatch '^[A-Za-z0-9_\-]{10,120}$') { throw "That doesn't look like a Discord client secret." }
 if (-not $SteamApiKey) { $SteamApiKey = if ($cfg.steamApiKey) { $cfg.steamApiKey } else { $env:TW_STEAM_API_KEY } }
 if ($SteamApiKey -and $SteamApiKey -notmatch '^[A-Za-z0-9]{16,64}$') { throw "That doesn't look like a Steam API key." }
+# Optional extra server settings (Google / Apple sign-in, TURN, ...) from deploy\server-secrets.env: one TW_NAME=value per line. The file never leaves your PC except as part of the install command, and is gitignored.
+$extraB64 = ""
+$envFile = Join-Path $PSScriptRoot "server-secrets.env"
+if (Test-Path $envFile) {
+    $extra = [ordered]@{}
+    foreach ($line in Get-Content $envFile) {
+        $l = $line.Trim(); if (-not $l -or $l.StartsWith("#")) { continue }
+        if ($l -notmatch '^(TW_[A-Z0-9_]{2,60})=(.*)$') { throw "server-secrets.env: this line isn't NAME=value: $($l.Split('=')[0])" }
+        $extra[$Matches[1]] = $Matches[2].Trim().Trim('"')
+    }
+    if ($extra.Count) { $extraB64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes(($extra | ConvertTo-Json -Compress))) }
+}
 $cfg.port = [int]$cfg.port
 $target = "$($cfg.user)@$($cfg.server)"
 
@@ -63,6 +75,7 @@ function Deploy {
     & (Join-Path $PSScriptRoot "publish.ps1") -NoFfmpeg:$hasFfmpeg | Out-Null
     $zip = Join-Path $root "dist\ThirdWheel-server.zip"
     $installArgs = "-Port $($cfg.port)" + $(if ($cfg.domain) { " -Domain $($cfg.domain)" } else { "" }) + $(if ($cfg.domain -and $cfg.keepPlainPort) { " -KeepPlainPort" } else { "" }) + $(if ($KlipyKey) { " -KlipyKey $KlipyKey" } else { "" }) + $(if ($DiscordClientId -and $DiscordSecret) { " -DiscordClientId $DiscordClientId -DiscordSecret $DiscordSecret" } else { "" }) + $(if ($SteamApiKey) { " -SteamApiKey $SteamApiKey" } else { "" })
+    if ($extraB64) { $installArgs += " -ExtraEnv $extraB64" }
     $remote = @"
 `$ErrorActionPreference='Stop'; `$d='C:\ThirdWheel\incoming'
 Remove-Item "`$d\pkg" -Recurse -Force -ErrorAction SilentlyContinue
@@ -73,7 +86,7 @@ Set-Location "`$d\pkg"; .\install-server.ps1 $installArgs
         Write-Host ("Package: {0} ({1:N0} MB)" -f $zip, ((Get-Item $zip).Length / 1MB))
         Write-Host "Would run:  ssh $target  (create C:\ThirdWheel\incoming)"
         Write-Host "Would run:  scp $zip ${target}:C:/ThirdWheel/incoming/pkg.zip"
-        $shown = $remote; if ($KlipyKey) { $shown = $shown.Replace($KlipyKey, "<hidden>") }; if ($DiscordSecret) { $shown = $shown.Replace($DiscordSecret, "<hidden>") }; if ($SteamApiKey) { $shown = $shown.Replace($SteamApiKey, "<hidden>") }   # never print secrets
+        $shown = $remote; if ($extraB64) { $shown = $shown.Replace($extraB64, "<hidden>") }; if ($KlipyKey) { $shown = $shown.Replace($KlipyKey, "<hidden>") }; if ($DiscordSecret) { $shown = $shown.Replace($DiscordSecret, "<hidden>") }; if ($SteamApiKey) { $shown = $shown.Replace($SteamApiKey, "<hidden>") }   # never print secrets
         Write-Host "Would run on the server:`n$shown"
         return
     }

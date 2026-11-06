@@ -17,12 +17,11 @@ TWPrefs.addStrings('sv', {
   'Default speaker / headphones': 'Standardhörlurar / högtalare', 'Select where you want to hear incoming voice audio.': 'Välj var du vill höra inkommande röster.',
   'Done': 'Klar', 'Audio & Voice Settings': 'Ljud- & röstinställningar',
   'Camera': 'Kamera', 'Turn on camera': 'Slå på kamera', 'Turn off camera': 'Stäng av kamera',
-  'Could not access camera.': 'Kunde inte komma åt kameran.'
+  'Could not access camera.': 'Kunde inte komma åt kameran.',
+  'Call': 'Ring', 'Leave call': 'Avsluta samtal', 'Join call': 'Gå med i samtalet', 'is calling you': 'ringer dig', '{name} is calling you': '{name} ringer dig', 'Answer': 'Svara', 'Decline': 'Avvisa'
 });
 
 let ice = null, room = null;                      // room: { gid, name, stream, peers: Map(uid -> peer), muted, deaf, bar }
-const present = new Map();                         // gid -> [uid]   who is in each group's voice chat (from the server)
-const btns = new Set();                            // "Voice" buttons on screen
 
 async function iceServers() {
   if (ice) return ice;
@@ -176,7 +175,8 @@ function paintOne(wrap) {
   const n = who.length;
   const inRoom = room && room.gid === gid;
   b.classList.toggle('vc-live', n > 0);
-  b.replaceChildren(icon('mic', 16), inRoom ? t('Leave voice') : (n ? t('In voice: {n}', { n }) : t('Join voice')));
+  const dm = gid < 0;   // a call with a friend (group voice chats have positive ids)
+  b.replaceChildren(icon('mic', 16), inRoom ? t(dm ? 'Leave call' : 'Leave voice') : (n ? t(dm ? 'Join call' : 'In voice: {n}', { n }) : t(dm ? 'Call' : 'Join voice')));
   b.setAttribute('aria-pressed', String(!!inRoom));
 
   if (stack) {
@@ -220,6 +220,34 @@ function button(g) {
   }).catch(() => {});
   return wrap;
 }
+
+/* A call between two friends: a button for the top of the chat (js/app.js dmView). Same room code as groups, with a negative id built from both user ids. */
+const dmRoomId = (a, b) => -(Math.min(a, b) * 4294967296 + Math.max(a, b));
+function dmButton(peer) {
+  const gid = dmRoomId(TW.me.id, peer.id);
+  const wrap = h('div', { class: 'vc-btn-wrap', 'data-gid': gid });
+  const b = h('button', { class: 'btn small vc-btn', type: 'button', 'data-gid': gid });
+  b.addEventListener('click', () => { if (room && room.gid === gid) leave(); else join(gid, nm(peer), peer.id); });
+  wrap.append(b, h('div', { class: 'vc-avatar-stack' }));
+  btns.add(wrap); paintOne(wrap);
+  api('GET', '/api/dms/' + peer.id + '/voice').then(r => { present.set(gid, (r.people || []).map(p => p.id)); presentUsers.set(gid, r.people || []); paintButtons(); }).catch(() => {});
+  return wrap;
+}
+/* Someone is calling you: a small card with Answer / Decline (goes away by itself after 30 s). */
+let ringCard = null;
+function showRing(m) {
+  if (room || !m.from) return;
+  if (ringCard) ringCard.remove();
+  const who = m.from;
+  const close = () => { if (ringCard) { ringCard.remove(); ringCard = null; } clearTimeout(timer); };
+  const timer = setTimeout(close, 30000);
+  ringCard = h('div', { class: 'vc-ring', role: 'alertdialog', 'aria-label': t('{name} is calling you', { name: nm(who) }) },
+    avatar(who, 'md'), h('div', { class: 'vc-ring-text' }, h('b', { text: nm(who) }), h('span', { class: 'muted small', text: t('is calling you') })),
+    h('button', { class: 'btn small primary', type: 'button', onclick: () => { close(); join(m.gid, nm(who), who.id); } }, icon('mic', 16), t('Answer')),
+    h('button', { class: 'btn small ghost', type: 'button', onclick: close }, t('Decline')));
+  document.body.append(ringCard);
+}
+TWRT.on('vc.ring', showRing);
 
 function openCinema(sourceVideo, title) {
   const modal = h('div', { class: 'vc-cinema-modal' });
@@ -439,7 +467,7 @@ function drawBar() {
 
   if (!room.bar) {
     room.bar = h('div', { class: 'vc-bar', role: 'region', 'aria-label': t('Voice chat') });
-    room.nameLink = h('a', { class: 'vc-name', href: '#/group/' + TW.enc(room.gid) },
+    room.nameLink = h('a', { class: 'vc-name', href: room.gid < 0 ? '#/dm/' + TW.enc(room.peerId) : '#/group/' + TW.enc(room.gid) },
       h('b', { text: room.name }),
       h('span', { class: 'muted small', text: room.joined ? t('Voice chat') : t('Connecting…') })
     );
@@ -622,7 +650,7 @@ async function onSignal(m) {
 }
 
 /* ---------- join / leave ---------- */
-async function join(gid, name) {
+async function join(gid, name, peerId) {
   if (room) { if (room.gid === gid) return; await leave(); }
   if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia || !window.RTCPeerConnection) { toast(t('Voice chat needs a secure connection (https) or the desktop app.'), 'error'); return; }
   if (!TWRT.connected()) { toast(t('Live connection is down. Voice chat needs it.'), 'error'); return; }
@@ -643,7 +671,7 @@ async function join(gid, name) {
     }
   }
   room = {
-    gid, name, stream, peers: new Map(),
+    gid, name, peerId, stream, peers: new Map(),
     muted: false, deaf: false, cam: false, screen: false,
     joined: false, speaking: false,
     bar: null, stopMeter: null,
@@ -737,7 +765,7 @@ window.addEventListener('keydown', (e) => {
 });
 
 window.TWVoice = {
-  button, join, leave,
+  button, dmButton, dmRoomId, join, leave,
   active: () => (room ? room.gid : null),
   openSettings: openAudioSettings,
   toggleMute, toggleDeafen,
