@@ -141,3 +141,10 @@ html.simple .page-head p.muted, html.simple .field-msg, html.simple .fold-body >
 .brand-ico { display: inline-grid; line-height: 0; }
 .form-error.info { color: var(--color-text-2); }
 .install-steps[hidden] { display: none; }
+
+/* sign-in card: never cut off, hidden fields really hidden */
+.auth-card, .ob-card { max-height: none !important; }
+.center-screen { place-items: safe center; height: 100dvh; overflow-y: auto; }
+.auth-card [hidden] { display: none !important; }
+.auth-forgot-row { margin: -4px 0 0; }
+.auth-forgot { font-size: var(--fs-sm, 13px); color: var(--color-text-2); text-decoration: underline; }
