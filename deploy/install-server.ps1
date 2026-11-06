@@ -3,7 +3,7 @@
 #   .\install-server.ps1 -Domain play.example.com  -> server listens on localhost, Caddy provides HTTPS
 #       No domain? Use your IP with sslip.io, e.g. for 5.83.140.216:  -Domain 5-83-140-216.sslip.io  (it resolves to that IP, and Caddy gets a real certificate for it).
 #       Add -KeepPlainPort to ALSO keep the old http://IP:<Port> address working (old app versions, and a fallback while you check that HTTPS works).
-#   -ExtraEnv <base64 json> sets more TW_* service settings (sync.ps1 builds it from deploy\server-secrets.env: Google / Apple sign-in, TURN, ...). Settings are kept on later updates.
+#   -ExtraEnv <base64 json> sets more TW_* service settings (sync.ps1 builds it from deploy\server-secrets.env: Google sign-in, TURN, ...). Settings are kept on later updates.
 #   Add -KlipyKey <key> once to enable the GIF picker (stored as a service setting; later updates keep it). -TenorKey is the old name and still works.
 #   Add -DiscordClientId <id> -DiscordSecret <secret> once to enable "Verify Discord" (create an app at discord.com/developers, add the redirect https://YOUR-ADDRESS/api/verify/discord/callback).
 param([string]$Domain = "", [switch]$KeepPlainPort, [int]$Port = 1732, [string]$KlipyKey = "", [string]$TenorKey = "", [string]$DiscordClientId = "", [string]$DiscordSecret = "", [string]$SteamApiKey = "", [string]$ExtraEnv = "")
@@ -41,7 +41,7 @@ else { $vars += @((Get-ItemProperty $svcKey -Name Environment -ErrorAction Silen
 if ($SteamApiKey -and $SteamApiKey -notmatch '^[A-Za-z0-9]{16,64}$') { throw "The Steam API key doesn't look valid." }
 if ($SteamApiKey) { $vars += "TW_STEAM_API_KEY=$SteamApiKey" }
 else { $vars += @((Get-ItemProperty $svcKey -Name Environment -ErrorAction SilentlyContinue).Environment) | Where-Object { $_ -like "TW_STEAM_API_KEY=*" } }
-# Any other TW_* setting (Google / Apple sign-in, TURN relay, ...) sent by sync.ps1 as base64 JSON; earlier ones are kept unless replaced.
+# Any other TW_* setting (Google sign-in, TURN relay, ...) sent by sync.ps1 as base64 JSON; earlier ones are kept unless replaced.
 $extra = @{}
 if ($ExtraEnv) {
     $obj = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($ExtraEnv)) | ConvertFrom-Json
@@ -51,7 +51,7 @@ if ($ExtraEnv) {
         $extra[$p.Name] = [string]$p.Value
     }
 }
-$kept = @((Get-ItemProperty $svcKey -Name Environment -ErrorAction SilentlyContinue).Environment) | Where-Object { $_ -match '^TW_(GOOGLE|APPLE|DISCORD|TURN|SMTP|MAIL)_' -and -not $extra.ContainsKey(($_ -split '=', 2)[0]) }
+$kept = @((Get-ItemProperty $svcKey -Name Environment -ErrorAction SilentlyContinue).Environment) | Where-Object { $_ -match '^TW_(GOOGLE|DISCORD|TURN|SMTP|MAIL)_' -and -not $extra.ContainsKey(($_ -split '=', 2)[0]) }
 $vars += $kept
 foreach ($k in $extra.Keys) { $vars += "$k=$($extra[$k])" }
 Set-ItemProperty $svcKey -Name Environment -Type MultiString -Value $vars

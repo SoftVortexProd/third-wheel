@@ -1,20 +1,16 @@
 using System.Collections.Concurrent;
-using System.IdentityModel.Tokens.Jwt;
 using System.Net;
-using System.Security.Claims;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
-using Microsoft.IdentityModel.Tokens;
 using static Core;
 
 /// <summary>
-/// Sign up / sign in with Google, Discord or Apple. The person signs in on the provider's own site; we only get a stable id (and name/email) back.
+/// Sign up / sign in with Google or Discord. The person signs in on the provider's own site; we only get a stable id (and name/email) back.
 /// A provider shows up on the login screen only when the server owner has configured it (see deploy/README.md):
 ///   Google : TW_GOOGLE_CLIENT_ID, TW_GOOGLE_CLIENT_SECRET          redirect: https://YOUR-ADDRESS/auth/google/callback
 ///   Discord: TW_DISCORD_CLIENT_ID, TW_DISCORD_CLIENT_SECRET        redirect: https://YOUR-ADDRESS/auth/discord/callback  (add it next to the verify one)
-///   Apple  : TW_APPLE_CLIENT_ID (Services ID), TW_APPLE_TEAM_ID, TW_APPLE_KEY_ID, TW_APPLE_PRIVATE_KEY (the .p8 text)   redirect: https://YOUR-ADDRESS/auth/apple/callback
 /// The state that travels through the provider is signed and short-lived, so the callback needs no cookie (it works from any browser).
 /// The desktop app opens the system browser for this; it then collects the finished sign-in with a one-time hand-off code.
 /// </summary>
@@ -31,14 +27,12 @@ public static class SocialAuth
     {
         ["google"] = new("google", "Google", "https://accounts.google.com/o/oauth2/v2/auth", "https://oauth2.googleapis.com/token", "openid email profile"),
         ["discord"] = new("discord", "Discord", "https://discord.com/oauth2/authorize", "https://discord.com/api/oauth2/token", "identify email"),
-        ["apple"] = new("apple", "Apple", "https://appleid.apple.com/auth/authorize", "https://appleid.apple.com/auth/token", "name email"),
     };
-    static string ClientId(string p) => p switch { "google" => Env("TW_GOOGLE_CLIENT_ID"), "discord" => Env("TW_DISCORD_CLIENT_ID"), "apple" => Env("TW_APPLE_CLIENT_ID"), _ => "" };
+    static string ClientId(string p) => p switch { "google" => Env("TW_GOOGLE_CLIENT_ID"), "discord" => Env("TW_DISCORD_CLIENT_ID"), _ => "" };
     static bool Configured(string p) => p switch
     {
         "google" => Env("TW_GOOGLE_CLIENT_ID").Length > 0 && Env("TW_GOOGLE_CLIENT_SECRET").Length > 0,
         "discord" => Env("TW_DISCORD_CLIENT_ID").Length > 0 && Env("TW_DISCORD_CLIENT_SECRET").Length > 0,
-        "apple" => Env("TW_APPLE_CLIENT_ID").Length > 0 && Env("TW_APPLE_TEAM_ID").Length > 0 && Env("TW_APPLE_KEY_ID").Length > 0 && (Env("TW_APPLE_PRIVATE_KEY").Length > 0 || File.Exists(Env("TW_APPLE_KEY_FILE"))),
         _ => false
     };
 
@@ -81,25 +75,12 @@ CREATE INDEX IF NOT EXISTS ix_oauth_user ON oauth_accounts(userId);");
         return Results.Content($"<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>{t}</title><style>body{{margin:0;min-height:100vh;display:grid;place-items:center;background:#000;color:#fafafa;font:16px system-ui,sans-serif}}.c{{max-width:420px;margin:24px;padding:28px;border:1px solid #26262c;border-radius:16px;background:#111114;text-align:center}}h1{{font-size:22px;margin:0 0 10px}}p{{color:#a3a3ad;line-height:1.5}}</style></head><body><div class=\"c\"><h1>{t}</h1><p>{m}</p></div></body></html>", "text/html; charset=utf-8");
     }
 
-    // ---------- Apple needs a client secret that is a short-lived signed token ----------
-    static string AppleSecret()
-    {
-        var pem = Env("TW_APPLE_PRIVATE_KEY"); if (pem.Length == 0 && File.Exists(Env("TW_APPLE_KEY_FILE"))) pem = File.ReadAllText(Env("TW_APPLE_KEY_FILE"));
-        pem = pem.Replace("\\n", "\n");
-        using var ec = ECDsa.Create(); ec.ImportFromPem(pem);
-        var key = new ECDsaSecurityKey(ec) { KeyId = Env("TW_APPLE_KEY_ID") };
-        var now = DateTime.UtcNow;
-        var jwt = new JwtSecurityToken(issuer: Env("TW_APPLE_TEAM_ID"), audience: "https://appleid.apple.com", claims: new[] { new Claim("sub", Env("TW_APPLE_CLIENT_ID")) },
-            notBefore: now, expires: now.AddMinutes(5), signingCredentials: new SigningCredentials(key, SecurityAlgorithms.EcdsaSha256));
-        return new JwtSecurityTokenHandler().WriteToken(jwt);
-    }
-
     /// <summary>Trade the one-time code for who this is: (stable id, name, email).</summary>
-    static async Task<(string Id, string Name, string Email)?> Identify(string p, string code, string redirect, string nonce, string? appleIdToken)
+    static async Task<(string Id, string Name, string Email)?> Identify(string p, string code, string redirect, string nonce)
     {
         var prov = Provs[p];
         var form = new Dictionary<string, string> { ["client_id"] = ClientId(p), ["code"] = code, ["grant_type"] = "authorization_code", ["redirect_uri"] = redirect };
-        form["client_secret"] = p == "apple" ? AppleSecret() : Env(p == "google" ? "TW_GOOGLE_CLIENT_SECRET" : "TW_DISCORD_CLIENT_SECRET");
+        form["client_secret"] = Env(p == "google" ? "TW_GOOGLE_CLIENT_SECRET" : "TW_DISCORD_CLIENT_SECRET");
         using var r = await Http.PostAsync(prov.TokenUrl, new FormUrlEncodedContent(form));
         if (!r.IsSuccessStatusCode) return null;
         var tok = JsonDocument.Parse(await r.Content.ReadAsStringAsync()).RootElement;
@@ -115,15 +96,13 @@ CREATE INDEX IF NOT EXISTS ix_oauth_user ON oauth_accounts(userId);");
             var email = u.TryGetProperty("email", out var em) && em.ValueKind == JsonValueKind.String && u.TryGetProperty("verified", out var vf) && vf.ValueKind == JsonValueKind.True ? em.GetString() ?? "" : "";
             return Regex.IsMatch(id, @"^\d{5,25}$") ? (id, name, email) : null;
         }
-        // Google / Apple return an OpenID token straight from their token endpoint over TLS, which is allowed to be trusted without re-checking its signature
+        // Google returns an OpenID token straight from their token endpoint over TLS, which is allowed to be trusted without re-checking its signature
         var idToken = tok.GetProperty("id_token").GetString() ?? "";
         var seg = idToken.Split('.'); if (seg.Length < 2) return null;
         var c = JsonDocument.Parse(UnB64(seg[1])).RootElement;
         var aud = c.TryGetProperty("aud", out var a) ? a.GetString() : null; var iss = c.TryGetProperty("iss", out var i) ? i.GetString() : null;
         if (aud != ClientId(p)) return null;
         if (p == "google" && iss is not ("https://accounts.google.com" or "accounts.google.com")) return null;
-        if (p == "apple" && iss != "https://appleid.apple.com") return null;
-        if (p == "apple" && (!c.TryGetProperty("nonce", out var nn) || nn.GetString() != nonce)) return null;
         if (!c.TryGetProperty("exp", out var ex) || ex.GetInt64() < DateTimeOffset.UtcNow.ToUnixTimeSeconds()) return null;
         var sub = c.TryGetProperty("sub", out var sb) ? sb.GetString() ?? "" : ""; if (sub.Length == 0 || sub.Length > 100) return null;
         var mail = c.TryGetProperty("email", out var e1) && e1.ValueKind == JsonValueKind.String && (!c.TryGetProperty("email_verified", out var ev) || ev.ValueKind == JsonValueKind.True || ev.ValueKind == JsonValueKind.String && ev.GetString() == "true") ? e1.GetString() ?? "" : "";
@@ -146,7 +125,7 @@ CREATE INDEX IF NOT EXISTS ix_oauth_user ON oauth_accounts(userId);");
 
     public static void Map(WebApplication app, RouteGroupBuilder api)
     {
-        api.MapGet("auth/providers", () => Results.Json(new { google = Configured("google"), discord = Configured("discord"), apple = Configured("apple"), email = EmailApi.Configured }));
+        api.MapGet("auth/providers", () => Results.Json(new { google = Configured("google"), discord = Configured("discord"), email = EmailApi.Configured }));
 
         // the desktop app collects a sign-in that was finished in the system browser
         api.MapPost("auth/handoff", (HttpContext c, HandoffIn b) =>
@@ -174,13 +153,6 @@ CREATE INDEX IF NOT EXISTS ix_oauth_user ON oauth_accounts(userId);");
             return Results.Json(new { ok = true });
         }));
 
-        // Apple shows its sites only for domains it knows: the owner puts the verification file text in <data>/apple-domain-association.txt
-        app.MapGet("/.well-known/apple-developer-domain-association.txt", () =>
-        {
-            var f = Path.Combine(Environment.GetEnvironmentVariable("TW_DATA") ?? AppContext.BaseDirectory, "apple-domain-association.txt");
-            return File.Exists(f) ? Results.Text(File.ReadAllText(f), "text/plain") : Results.NotFound();
-        });
-
         app.MapGet("/auth/{provider}/start", (HttpContext c, string provider, string? mode, string? tos, string? h) =>
         {
             if (!Provs.ContainsKey(provider) || !Configured(provider)) return Back("unavailable");
@@ -195,7 +167,6 @@ CREATE INDEX IF NOT EXISTS ix_oauth_user ON oauth_accounts(userId);");
             var q = new List<string> { $"client_id={Uri.EscapeDataString(ClientId(provider))}", "response_type=code", $"scope={Uri.EscapeDataString(prov.Scope)}", $"redirect_uri={Uri.EscapeDataString(redirect)}", $"state={Uri.EscapeDataString(MakeState(st))}" };
             if (provider == "google") q.Add("prompt=select_account");
             if (provider == "discord") q.Add("prompt=consent");
-            if (provider == "apple") { q.Add("response_mode=form_post"); q.Add($"nonce={Uri.EscapeDataString(st.N)}"); }
             return Results.Redirect(prov.AuthUrl + "?" + string.Join("&", q), false);
         });
 
@@ -210,7 +181,7 @@ CREATE INDEX IF NOT EXISTS ix_oauth_user ON oauth_accounts(userId);");
             if (code.Length == 0 || code.Length > 2000) return Back("denied");
             if (Limited("oac:" + ClientIp(c), 40, TimeSpan.FromMinutes(10), true)) return Back("failed");
             (string Id, string Name, string Email)? who;
-            try { who = await Identify(provider, code, $"{Origin(c)}/auth/{provider}/callback", st.N, null); } catch { who = null; }
+            try { who = await Identify(provider, code, $"{Origin(c)}/auth/{provider}/callback", st.N); } catch { who = null; }
             if (who == null) return st.H != null ? Page("Couldn't sign you in", "Something went wrong talking to " + Provs[provider].Label + ". Close this tab and try again in the app.") : Back("failed");
             var (extId, name, email) = who.Value;
 
@@ -246,6 +217,5 @@ CREATE INDEX IF NOT EXISTS ix_oauth_user ON oauth_accounts(userId);");
             return Results.Redirect("/#/feed", false);
         }
         app.MapGet("/auth/{provider}/callback", (HttpContext c, string provider) => Callback(c, provider));
-        app.MapPost("/auth/{provider}/callback", (HttpContext c, string provider) => Callback(c, provider));   // Apple answers with a form post
     }
 }
