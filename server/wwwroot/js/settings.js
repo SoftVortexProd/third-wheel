@@ -441,7 +441,7 @@ function effectsCard() {
         class: 'effect-preview-box ' + (id || 'none'),
         style: 'width:48px;height:48px;border-radius:12px;background:var(--color-surface);border:1px solid var(--color-border);display:flex;align-items:center;justify-content:center;position:relative;overflow:hidden;'
       },
-        id ? h('div', { class: 'profile-effect ' + id }) : ico('sparkles', 20)
+        id ? TW.fx(id) : ico('sparkles', 20)
       ),
       h('span', { text: name }));
       b.addEventListener('click', () => busy(b, async () => {

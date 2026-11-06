@@ -1695,7 +1695,7 @@ async function openProfile(id, opts) {
     more.addEventListener('click', () => TWG.profileMenu(more, p, opts, () => close()));
   }
   const bannerHeader = p.banner ? h('div', { class: 'profile-banner', style: 'background-image:url(\'' + p.banner + '\');background-size:cover;background-position:center;' }) : null;
-  const effectOverlay = p.effect ? h('div', { class: 'profile-effect ' + p.effect }) : null;
+  const effectOverlay = p.effect && window.TW && window.TW.fx ? window.TW.fx(p.effect) : null;
   const body = h('div', { class: 'profile' },
     effectOverlay,
     bannerHeader,

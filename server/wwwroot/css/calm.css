@@ -148,3 +148,13 @@ html.simple .page-head p.muted, html.simple .field-msg, html.simple .fold-body >
 .auth-card [hidden] { display: none !important; }
 .auth-forgot-row { margin: -4px 0 0; }
 .auth-forgot { font-size: var(--fs-sm, 13px); color: var(--color-text-2); text-decoration: underline; }
+
+/* group header: the ... button stays a small square next to the voice button */
+.group-actions > .icon-btn { flex: 0 0 auto; width: 40px; height: 40px; min-width: 0; padding: 0; display: inline-grid; place-items: center; border-radius: var(--radius-md, 12px); }
+.group-actions > .btn { flex: 0 0 auto; white-space: nowrap; min-width: max-content; }
+/* settings on phones: the category list is a scrollable strip above the page again (calm.css's two-column rule had overridden it) */
+@media (max-width: 899px) {
+  .settings-layout { grid-template-columns: minmax(0, 1fr); gap: var(--space-4); }
+  .settings-nav { position: sticky; top: 0; flex-direction: row; overflow-x: auto; overflow-y: hidden; white-space: nowrap; }
+  .settings-nav .snav { flex: none; }
+}

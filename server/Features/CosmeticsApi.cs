@@ -14,8 +14,9 @@ public static class CosmeticsApi
 
     public static readonly (string Id, string Name)[] Effects =
     {
-        ("sakura", "Falling Sakura"), ("matrix", "Digital Rain"), ("fireflies", "Glow Fireflies"),
-        ("scanlines", "Retro CRT"), ("flame", "Flame Aura")
+        ("sakura", "Falling Sakura"), ("matrix", "Digital Rain"), ("fireflies", "Glow Fireflies"), ("scanlines", "Retro CRT"), ("flame", "Flame Aura"),
+        ("snow", "Snowfall"), ("rain", "Rainstorm"), ("embers", "Rising Embers"), ("stars", "Starfield"), ("bubbles", "Bubbles"),
+        ("confetti", "Confetti"), ("hearts", "Floating Hearts"), ("sparks", "Lightning"), ("aurora", "Aurora"), ("autumn", "Autumn Leaves")
     };
     /// <summary>Sections of a profile, in the default order. "reputation" is the good-teammate badge.</summary>
     public static readonly string[] Sections = { "bio", "games", "tags", "play", "when", "reputation", "clips" };

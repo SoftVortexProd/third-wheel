@@ -81,15 +81,7 @@
 
 /* Profile Ambient Effects */
 .profile-effect { position: absolute; inset: 0; pointer-events: none; border-radius: inherit; overflow: hidden; z-index: 1; }
-.profile-effect.sakura { background-image: radial-gradient(#ffb7c5 1.5px, transparent 2px), radial-gradient(#f472b6 1px, transparent 1.5px); background-size: 32px 32px, 48px 48px; background-position: 0 0, 16px 24px; animation: eff-fall 10s linear infinite; opacity: 0.7; }
-.profile-effect.matrix { background: linear-gradient(rgba(14,15,20,0) 80%, rgba(34,197,94,0.18) 100%), repeating-linear-gradient(0deg, transparent, transparent 3px, rgba(34,197,94,0.08) 3px, rgba(34,197,94,0.08) 4px); animation: eff-matrix 6s linear infinite; }
-.profile-effect.fireflies { background-image: radial-gradient(circle, #facc15 1.5px, transparent 3px), radial-gradient(circle, #fbbf24 1px, transparent 2px); background-size: 60px 60px, 90px 90px; animation: eff-float 8s ease-in-out infinite alternate; opacity: 0.65; }
-.profile-effect.scanlines { background: linear-gradient(rgba(18, 16, 16, 0) 50%, rgba(0, 0, 0, 0.25) 50%), linear-gradient(90deg, rgba(255, 0, 0, 0.04), rgba(0, 255, 0, 0.02), rgba(0, 0, 255, 0.04)); background-size: 100% 3px, 4px 100%; }
-.profile-effect.flame { box-shadow: inset 0 0 24px rgba(239,68,68,0.25), inset 0 0 8px rgba(249,115,22,0.3); animation: fr-glow-orange 2s ease-in-out infinite; }
 
-@keyframes eff-fall { from { background-position: 0 0, 16px 24px; } to { background-position: 120px 400px, 136px 424px; } }
-@keyframes eff-matrix { from { background-position: 0 0; } to { background-position: 0 100px; } }
-@keyframes eff-float { 0% { transform: translateY(0) scale(1); } 100% { transform: translateY(-12px) scale(1.05); } }
 
 /* "Static profile pictures" in Settings, and the system's reduce-motion setting, freeze every frame (still drawn, no movement) */
 html.no-pfp-anim .framed, html.no-pfp-anim .framed::before, html.no-pfp-anim .framed::after { animation: none !important; }
@@ -103,3 +95,5 @@ html[data-motion="off"] .framed, html[data-motion="off"] .framed::before, html[d
 .frame-tile:hover { border-color: var(--color-line-3); }
 .frame-tile[disabled] { cursor: not-allowed; }
 .frame-lock { padding: 12px 14px; border: 1px dashed var(--color-line-2); border-radius: var(--radius-md); color: var(--color-text-2); }
+.profile-effect canvas { display: block; width: 100%; height: 100%; }
+.profile { position: relative; }
